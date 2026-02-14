@@ -1,0 +1,46 @@
+id: "<WORKFLOW_ID>"
+name: "<Workflow Name>"
+version: "0.1"
+owner_roles:
+  - "Process-Guardian"
+states:
+  - id: "intake"
+    description: "接收与澄清"
+  - id: "plan"
+    description: "计划与风险闸门"
+  - id: "todo"
+    description: "TODO 列表与并行化"
+  - id: "work"
+    description: "实施"
+  - id: "test"
+    description: "测试与证据"
+  - id: "release"
+    description: "发布与回滚"
+  - id: "observe"
+    description: "观测与验收"
+  - id: "retro"
+    description: "复盘与自我升级"
+  - id: "closed"
+    description: "关闭"
+steps:
+  - id: "step-1"
+    state: "intake"
+    role: "PM-Intake"
+    inputs:
+      - ".team-os/ledger/tasks/<TASK_ID>.yaml"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+    gates:
+      - "R2/R3 actions require approval"
+    exit_criteria:
+      - "scope clarified"
+artifacts:
+  required:
+    - "task_ledger"
+    - "task_logs_00_07"
+gates:
+  - id: "no-secrets"
+    rule: "no secrets in git"
+  - id: "approval"
+    rule: "risky actions require approval"
+

@@ -1,0 +1,24 @@
+id: "<TASK_ID>"
+title: "<TITLE>"
+status: "intake" # intake|plan|todo|work|test|release|observe|retro|closed
+risk_level: "R1" # R0|R1|R2|R3
+approvals_required:
+  - "R2/R3 actions"
+owners:
+  - "PM-Intake"
+roles_involved:
+  - "PM-Intake"
+workflows:
+  - "Genesis"
+created_at: "<YYYY-MM-DDTHH:MM:SSZ>"
+updated_at: "<YYYY-MM-DDTHH:MM:SSZ>"
+links:
+  pr: ""
+  issue: ""
+artifacts:
+  ledger: ".team-os/ledger/tasks/<TASK_ID>.yaml"
+  logs_dir: ".team-os/logs/tasks/<TASK_ID>/"
+evidence:
+  - type: "log"
+    path: ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+

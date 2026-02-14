@@ -1,0 +1,60 @@
+id: "Incident"
+name: "Incident (事故处理)"
+version: "0.1"
+description: "止血 -> 根因 -> 修复 -> 复盘 -> Playbook"
+owner_roles:
+  - "Release-Ops"
+gates:
+  - id: "safety"
+    rule: "止血操作可能高风险，必须明确审批/授权边界"
+  - id: "evidence"
+    rule: "全过程记录命令、日志与时间线"
+state_machine:
+  initial: "intake"
+  states:
+    - id: "intake"
+      next: ["work"]
+    - id: "work"
+      next: ["test"]
+    - id: "test"
+      next: ["retro"]
+    - id: "retro"
+      next: ["closed"]
+    - id: "closed"
+steps:
+  - id: "inc-00"
+    name: "接警与定级"
+    state: "intake"
+    role: "Release-Ops"
+    outputs:
+      - ".team-os/logs/incidents/<INCIDENT_ID>/00_intake.md"
+    exit_criteria:
+      - "影响范围与止血目标明确"
+  - id: "inc-01"
+    name: "止血与恢复服务"
+    state: "work"
+    role: "Release-Ops"
+    gates:
+      - "high-risk actions require approval"
+    outputs:
+      - ".team-os/logs/incidents/<INCIDENT_ID>/03_work.md"
+    exit_criteria:
+      - "服务恢复或降级稳定"
+  - id: "inc-02"
+    name: "根因分析与修复"
+    state: "test"
+    role: "Architect"
+    outputs:
+      - ".team-os/logs/incidents/<INCIDENT_ID>/04_test.md"
+    exit_criteria:
+      - "根因明确，修复已验证"
+  - id: "inc-03"
+    name: "复盘与 Playbook"
+    state: "retro"
+    role: "Process-Guardian"
+    outputs:
+      - ".team-os/logs/incidents/<INCIDENT_ID>/07_retro.md"
+      - ".team-os/kb/global/playbooks/<YYYYMMDD>_<slug>.md"
+    exit_criteria:
+      - "预防措施与行动项落盘"
+

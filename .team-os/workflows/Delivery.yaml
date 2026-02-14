@@ -1,0 +1,98 @@
+id: "Delivery"
+name: "Delivery (交付)"
+version: "0.1"
+description: "实现 -> 测试 -> 审查 -> 发布 -> 观测 -> 关闭"
+owner_roles:
+  - "Release-Ops"
+gates:
+  - id: "no-secrets"
+    rule: "secrets 禁止入库"
+  - id: "approval"
+    rule: "R2/R3 动作必须审批（尤其是对外暴露、数据变更、生产发布）"
+  - id: "evidence"
+    rule: "测试与发布必须有证据落盘"
+state_machine:
+  initial: "plan"
+  states:
+    - id: "plan"
+      next: ["todo"]
+    - id: "todo"
+      next: ["work"]
+    - id: "work"
+      next: ["test"]
+    - id: "test"
+      next: ["release"]
+    - id: "release"
+      next: ["observe"]
+    - id: "observe"
+      next: ["retro"]
+    - id: "retro"
+      next: ["closed"]
+    - id: "closed"
+steps:
+  - id: "del-01"
+    name: "计划与风险闸门"
+    state: "plan"
+    role: "Architect"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/01_plan.md"
+    exit_criteria:
+      - "验收标准、回滚策略与审批点明确"
+  - id: "del-02"
+    name: "TODO 与并行化"
+    state: "todo"
+    role: "PM-Intake"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/02_todo.md"
+    exit_criteria:
+      - "TODO 可执行"
+  - id: "del-03"
+    name: "实施"
+    state: "work"
+    role: "Developer-Backend"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/03_work.md"
+    exit_criteria:
+      - "实现完成且变更可回滚"
+  - id: "del-04"
+    name: "测试与证据"
+    state: "test"
+    role: "QA"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/04_test.md"
+    exit_criteria:
+      - "测试通过或风险已接受并记录"
+  - id: "del-05"
+    name: "评审"
+    state: "test"
+    role: "Reviewer"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/03_work.md"
+    exit_criteria:
+      - "闸门满足；可进入发布"
+  - id: "del-06"
+    name: "发布与回滚"
+    state: "release"
+    role: "Release-Ops"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/05_release.md"
+    exit_criteria:
+      - "发布完成且回滚路径验证"
+  - id: "del-07"
+    name: "观测与验收"
+    state: "observe"
+    role: "Data-Analyst"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/06_observe.md"
+    exit_criteria:
+      - "验收完成或明确后续任务"
+  - id: "del-08"
+    name: "复盘与自我升级"
+    state: "retro"
+    role: "Process-Guardian"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/07_retro.md"
+      - ".team-os/ledger/self_improve/*.md (if any)"
+    exit_criteria:
+      - "改进项已落盘"
+

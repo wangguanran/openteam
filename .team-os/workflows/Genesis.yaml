@@ -1,0 +1,91 @@
+id: "Genesis"
+name: "Genesis (组队与初始化)"
+version: "0.1"
+description: "组队 -> 扩展角色/工作流 -> Skill Boot -> 产出 Backlog v0"
+owner_roles:
+  - "Process-Guardian"
+gates:
+  - id: "no-secrets"
+    rule: "任何 secrets 不得入库；仅允许 .env.example"
+  - id: "approval"
+    rule: "任何 R2/R3 或高风险动作必须先审批"
+state_machine:
+  initial: "intake"
+  states:
+    - id: "intake"
+      next: ["plan"]
+    - id: "plan"
+      next: ["todo"]
+    - id: "todo"
+      next: ["work"]
+    - id: "work"
+      next: ["test"]
+    - id: "test"
+      next: ["retro"]
+    - id: "retro"
+      next: ["closed"]
+    - id: "closed"
+steps:
+  - id: "gen-00"
+    name: "创建台账与日志骨架"
+    state: "intake"
+    role: "PM-Intake"
+    outputs:
+      - ".team-os/ledger/tasks/<TASK_ID>.yaml"
+      - ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+      - ".team-os/logs/tasks/<TASK_ID>/01_plan.md"
+      - ".team-os/logs/tasks/<TASK_ID>/02_todo.md"
+    exit_criteria:
+      - "00~02 可执行且风险/闸门已标注"
+  - id: "gen-01"
+    name: "确定角色/工作流扩展与 Skill Boot 计划"
+    state: "plan"
+    role: "Architect"
+    inputs:
+      - ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/01_plan.md"
+    exit_criteria:
+      - "需要新增的角色/工作流已列出，并明确产物路径"
+  - id: "gen-02"
+    name: "Backlog v0 与 TODO 列表"
+    state: "todo"
+    role: "PM-Intake"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/02_todo.md"
+    exit_criteria:
+      - "TODO 可并行化且可验证"
+  - id: "gen-03"
+    name: "补齐缺失的角色/工作流文件；执行 Skill Boot 落盘"
+    state: "work"
+    role: "Process-Guardian"
+    outputs:
+      - ".team-os/roles/*.md (as needed)"
+      - ".team-os/workflows/*.yaml (as needed)"
+      - ".team-os/kb/sources/*.md (as needed)"
+      - ".team-os/kb/**/skill_cards/*.md (as needed)"
+      - ".team-os/memory/roles/*/index.md (as needed)"
+    exit_criteria:
+      - "新增资产可追溯且无 secrets"
+  - id: "gen-04"
+    name: "最小自检"
+    state: "test"
+    role: "QA"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/04_test.md"
+    exit_criteria:
+      - "doctor 通过；脚本可执行"
+  - id: "gen-05"
+    name: "复盘与自我升级入口"
+    state: "retro"
+    role: "Process-Guardian"
+    outputs:
+      - ".team-os/logs/tasks/<TASK_ID>/07_retro.md"
+      - ".team-os/ledger/self_improve/*.md (if any)"
+    exit_criteria:
+      - "流程改进点已落盘"
+artifacts:
+  required:
+    - "task_ledger"
+    - "task_logs_00_02"
+
