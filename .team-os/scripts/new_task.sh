@@ -4,9 +4,27 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 ROOT="$(teamos_root)"
+FULL=0
+if [[ "${1:-}" == "--full" ]]; then
+  FULL=1
+  shift
+fi
+
 TITLE="${1:-}"
 if [[ -z "$TITLE" ]]; then
-  echo "Usage: ./scripts/teamos.sh new-task \"<title>\"" >&2
+  echo "Usage: ./scripts/teamos.sh new-task [--full] \"<title>\"" >&2
+  exit 2
+fi
+shift || true
+
+# Allow `--full` after title as well.
+if [[ "${1:-}" == "--full" ]]; then
+  FULL=1
+  shift
+fi
+if [[ "${1:-}" != "" ]]; then
+  echo "Unexpected argument: $1" >&2
+  echo "Usage: ./scripts/teamos.sh new-task [--full] \"<title>\"" >&2
   exit 2
 fi
 
@@ -64,7 +82,14 @@ render_log "$ROOT/.team-os/templates/task_log_00_intake.md" "$logs_dir/00_intake
 render_log "$ROOT/.team-os/templates/task_log_01_plan.md" "$logs_dir/01_plan.md"
 render_log "$ROOT/.team-os/templates/task_log_02_todo.md" "$logs_dir/02_todo.md"
 
+if [[ "$FULL" -eq 1 ]]; then
+  render_log "$ROOT/.team-os/templates/task_log_03_work.md" "$logs_dir/03_work.md"
+  render_log "$ROOT/.team-os/templates/task_log_04_test.md" "$logs_dir/04_test.md"
+  render_log "$ROOT/.team-os/templates/task_log_05_release.md" "$logs_dir/05_release.md"
+  render_log "$ROOT/.team-os/templates/task_log_06_observe.md" "$logs_dir/06_observe.md"
+  render_log "$ROOT/.team-os/templates/task_log_07_retro.md" "$logs_dir/07_retro.md"
+fi
+
 echo "created_task_id=$task_id"
 echo "ledger=$ledger_out"
 echo "logs_dir=$logs_dir"
-

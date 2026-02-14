@@ -7,7 +7,7 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/teamos.sh doctor
-  ./scripts/teamos.sh new-task "<title>"
+  ./scripts/teamos.sh new-task [--full] "<title>"
   ./scripts/teamos.sh skill-boot "<role>" "<topic_or_platform>"
   ./scripts/teamos.sh retro "<task_id>"
   ./scripts/teamos.sh self-improve
@@ -42,4 +42,3 @@ case "$cmd" in
     exit 2
     ;;
 esac
-

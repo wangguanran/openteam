@@ -104,21 +104,35 @@ cat backups/temporal_<timestamp>.sql | docker compose exec -T postgres psql -U "
 curl -fsS http://127.0.0.1:18080/healthz
 ```
 
+OpenHands 健康检查（示例）：
+
+```bash
+curl -fsS http://127.0.0.1:18000/alive
+```
+
+Temporal UI（示例）：
+
+```bash
+open http://127.0.0.1:18081
+```
+
 ## 6. 部署验证 (需要落盘证据)
 
-在获得审批后执行并将摘要写入本节：
+将实际执行的命令与验证结果摘要写入本节（不要落盘 secrets）。
 
 ```bash
 cd team-os-runtime
-docker compose pull
-docker compose up -d
-docker compose ps
+make pull
+make up
+make ps
 ```
 
-预期：
+已验证（2026-02-15，本机 localhost 绑定）：
 
-- `postgres/temporal/openhands/orchestrator` 均为 `running`
-- Orchestrator `GET /healthz` 返回 `ok`
+- `postgres/temporal/temporal-ui/openhands-agent-server/orchestrator` 均为 `running/healthy`
+- Orchestrator：`curl -fsS http://127.0.0.1:18080/healthz` 返回 `{"status":"ok", ...}`
+- OpenHands Agent Server：`curl -fsS http://127.0.0.1:18000/alive` 返回 `{"status":"ok"}`
+- Temporal UI：`http://127.0.0.1:18081`
 
 ## 7. 新任务怎么开始 (Genesis)
 

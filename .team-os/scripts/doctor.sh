@@ -43,10 +43,17 @@ for c in "${optional_cmds[@]}"; do
   fi
 done
 
+if command -v gh >/dev/null 2>&1; then
+  if gh auth status >/dev/null 2>&1; then
+    printf "OK   %-12s %s\n" "gh auth" "authenticated"
+  else
+    printf "WARN %-12s %s\n" "gh auth" "not authenticated (run: gh auth login -h github.com)"
+  fi
+fi
+
 echo
 if [[ "$missing" -eq 1 ]]; then
   echo "doctor: FAILED (missing required tools)" >&2
   exit 1
 fi
 echo "doctor: OK"
-
