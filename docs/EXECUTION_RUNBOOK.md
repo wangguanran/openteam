@@ -71,6 +71,33 @@ cd team-os-runtime
 make down
 ```
 
+升级（需要审批后执行，避免 `latest` 漂移；建议先阅读变更日志/风险）：
+
+```bash
+cd team-os-runtime
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+备份（最小可用：备份 Postgres；注意不要把备份文件入库）：
+
+```bash
+cd team-os-runtime
+mkdir -p backups
+# 备份 temporal DB（也可改成 pg_dumpall）
+docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d temporal > backups/temporal_$(date +%Y%m%d_%H%M%S).sql
+```
+
+恢复（示例）：
+
+```bash
+cd team-os-runtime
+cat backups/temporal_<timestamp>.sql | docker compose exec -T postgres psql -U "$POSTGRES_USER" -d temporal
+```
+
+> 说明：Temporal 会使用多个 DB（含 visibility）。如需完整恢复，请按实际 DB 列表分别 dump/restore，并在任务日志中记录操作与结果。
+
 健康检查（示例）：
 
 ```bash
@@ -158,4 +185,3 @@ cd team-os
 - OpenTelemetry 接入（trace/metrics/log correlation）
 - K8s 部署与最小权限方案
 - Postgres 索引与检索加速（任务台账/知识库索引）
-
