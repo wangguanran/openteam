@@ -153,3 +153,23 @@ def requirements_dir_for_project(project_id: str) -> Path:
         raise StateError(f"project {project_id} missing requirements_dir in .team-os/state/projects.yaml")
     return team_os_root() / rel
 
+
+def plan_dir_for_project(project_id: str) -> Optional[Path]:
+    """
+    Optional planning overlay directory, used for Roadmap/milestones sync.
+
+    Convention (recommended):
+    - docs/plan/<project_id>/plan.yaml
+    - docs/plan/<project_id>/PLAN.md
+    """
+    p = get_project(project_id)
+    if not p:
+        return None
+    rel = str(p.get("plan_dir") or "").strip()
+    if not rel:
+        return None
+    return team_os_root() / rel
+
+
+def github_projects_mapping_path() -> Path:
+    return team_os_root() / ".team-os" / "integrations" / "github_projects" / "mapping.yaml"

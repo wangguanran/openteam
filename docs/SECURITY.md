@@ -43,3 +43,37 @@
 - 依赖与镜像尽量使用官方来源，并记录来源摘要。
 - runtime 的镜像 tag 需要可审计（优先固定版本，避免 `latest` 漂移）。
 - 后续增强（TODO）：SBOM、镜像签名验证、依赖漏洞扫描。
+
+## 6. GitHub 面板与 Token 最小权限
+
+本仓库支持将 Team OS 的“真相源”（ledger/requirements/state/runtime db）同步到 GitHub Projects v2 作为**视图层**。该同步会对 GitHub 产生远程写入，因此：
+
+- 默认不启用自动同步；必须显式开启（见 `docs/EXECUTION_RUNBOOK.md`）。
+- GitHub 认证信息只能来自环境变量或本地 `.env`（不入库）。
+
+推荐认证方式：
+
+- 优先使用 GitHub CLI OAuth：`gh auth login` 后通过 `gh auth token -h github.com` 提供 token 给运行时。
+
+最小权限建议（按你的 Project 类型与策略调整）：
+
+- Projects v2（GraphQL）写入：通常需要 classic scope `project`
+- 若使用 Issue/PR 作为 Project item（本仓库 MVP 默认用 draft issues，但未来可能切换）：需要 `repo`
+- 若访问 Organization Project：可能还需要 `read:org`
+
+最小化策略：
+
+- 只给同步所需的 scope；不要复用高权限 PAT
+- 仅在需要同步的环境注入 token（例如本机 `team-os-runtime/.env`）
+- 定期轮换 token（轮换属于高风险动作，需审批并记录）
+
+## 7. 可选 n8n 安全加固与升级要求
+
+n8n 在本仓库仅作为“自动化/通知补充”，不得作为主计划面板（主面板为 GitHub Projects v2）。
+
+如果启用 n8n（例如接收 Control Plane 的 webhook 事件，转发到 Slack/飞书/邮件）：
+
+- 必须部署在内网/受限网络，不得直接暴露公网
+- 必须设置强认证与最小权限（限制谁能创建/编辑 workflow）
+- 必须定期升级到官方修复版本（建议纳入月度/季度例行升级）
+- Webhook 入口必须增加防重放/签名校验/来源限制（后续增强项）

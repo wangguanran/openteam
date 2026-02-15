@@ -1,0 +1,26 @@
+id: "DEMO-PANEL-0003"
+title: "Need PM: 决策项（需求冲突/审批）在面板显著展示"
+project_id: "demo"
+workstream_id: "ai"
+status: "waiting_pm"
+risk_level: "R1"
+need_pm_decision: true
+approvals_required:
+  - "R2/R3 actions"
+owners:
+  - "PM-Intake"
+roles_involved:
+  - "PM-Intake"
+  - "Reviewer"
+workflows:
+  - "Delivery"
+created_at: "2026-02-15T08:00:00Z"
+updated_at: "2026-02-15T08:00:00Z"
+links:
+  pr: ""
+  issue: ""
+artifacts:
+  ledger: ".team-os/ledger/tasks/DEMO-PANEL-0003.yaml"
+  logs_dir: ".team-os/logs/tasks/DEMO-PANEL-0003/"
+evidence: []
+

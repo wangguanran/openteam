@@ -1,0 +1,14 @@
+schema_version: 1
+project_id: "demo"
+
+# Milestones are "view-layer" items for GitHub Projects Roadmap.
+# Truth source remains: task ledgers + requirements.yaml; this plan is a planning overlay.
+milestones:
+  - milestone_id: "MS-001"
+    title: "GitHub Projects Panel Sync MVP"
+    start_date: "2026-02-15"
+    target_date: "2026-02-28"
+    workstreams: ["devops", "backend", "ai"]
+    objective: "让 focus/agents/tasks/decisions/backlog/milestones 在 GitHub Projects 可 1-2 分钟刷新可见。"
+    links: []
+

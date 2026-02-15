@@ -103,6 +103,35 @@ class RuntimeDB:
                 )
                 """
             )
+
+            # Panel sync runs (GitHub Projects is a view-layer; keep minimal health metadata here).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS panel_sync_runs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  ts_start TEXT NOT NULL,
+                  ts_end TEXT NOT NULL,
+                  project_id TEXT NOT NULL,
+                  panel_type TEXT NOT NULL,
+                  mode TEXT NOT NULL,
+                  dry_run INTEGER NOT NULL,
+                  ok INTEGER NOT NULL,
+                  stats_json TEXT NOT NULL,
+                  error TEXT NOT NULL
+                )
+                """
+            )
+
+            # Simple KV store for small caches (e.g., resolved GitHub field ids).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS panel_kv (
+                  key TEXT PRIMARY KEY,
+                  value_json TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
         finally:
             conn.close()
@@ -367,5 +396,147 @@ class RuntimeDB:
                     )
                 )
             return out
+        finally:
+            conn.close()
+
+    # --- Panel sync health/cache ---
+    def record_panel_sync_run(
+        self,
+        *,
+        project_id: str,
+        panel_type: str,
+        mode: str,
+        dry_run: bool,
+        ok: bool,
+        stats: dict[str, Any],
+        error: str = "",
+        ts_start: Optional[str] = None,
+        ts_end: Optional[str] = None,
+    ) -> int:
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO panel_sync_runs (ts_start, ts_end, project_id, panel_type, mode, dry_run, ok, stats_json, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts_start or utc_now_iso(),
+                    ts_end or utc_now_iso(),
+                    str(project_id),
+                    str(panel_type),
+                    str(mode),
+                    1 if dry_run else 0,
+                    1 if ok else 0,
+                    json.dumps(stats, ensure_ascii=False),
+                    (error or "")[:2000],
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+        finally:
+            conn.close()
+
+    def get_last_panel_sync(self, *, project_id: Optional[str] = None, panel_type: str = "github_projects") -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            if project_id:
+                row = conn.execute(
+                    "SELECT * FROM panel_sync_runs WHERE panel_type = ? AND project_id = ? ORDER BY id DESC LIMIT 1",
+                    (panel_type, str(project_id)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM panel_sync_runs WHERE panel_type = ? ORDER BY id DESC LIMIT 1",
+                    (panel_type,),
+                ).fetchone()
+            if not row:
+                return None
+            try:
+                stats = json.loads(row["stats_json"])
+            except Exception:
+                stats = {"_raw": row["stats_json"]}
+            return {
+                "id": int(row["id"]),
+                "ts_start": row["ts_start"],
+                "ts_end": row["ts_end"],
+                "project_id": row["project_id"],
+                "panel_type": row["panel_type"],
+                "mode": row["mode"],
+                "dry_run": bool(row["dry_run"]),
+                "ok": bool(row["ok"]),
+                "stats": stats,
+                "error": row["error"],
+            }
+        finally:
+            conn.close()
+
+    def get_panel_sync_summary(self, *, project_id: str, panel_type: str = "github_projects") -> dict[str, Any]:
+        """
+        Lightweight health summary for a panel sync stream.
+        """
+        conn = self._connect()
+        try:
+            total = conn.execute(
+                "SELECT COUNT(1) AS c FROM panel_sync_runs WHERE panel_type = ? AND project_id = ?",
+                (str(panel_type), str(project_id)),
+            ).fetchone()["c"]
+            failures = conn.execute(
+                "SELECT COUNT(1) AS c FROM panel_sync_runs WHERE panel_type = ? AND project_id = ? AND ok = 0",
+                (str(panel_type), str(project_id)),
+            ).fetchone()["c"]
+            last_ok = conn.execute(
+                "SELECT ts_end, mode, dry_run FROM panel_sync_runs WHERE panel_type = ? AND project_id = ? AND ok = 1 ORDER BY id DESC LIMIT 1",
+                (str(panel_type), str(project_id)),
+            ).fetchone()
+            last_fail = conn.execute(
+                "SELECT ts_end, mode, dry_run, error FROM panel_sync_runs WHERE panel_type = ? AND project_id = ? AND ok = 0 ORDER BY id DESC LIMIT 1",
+                (str(panel_type), str(project_id)),
+            ).fetchone()
+            return {
+                "runs_total": int(total or 0),
+                "failures_total": int(failures or 0),
+                "last_success": (
+                    {"ts_end": last_ok["ts_end"], "mode": last_ok["mode"], "dry_run": bool(last_ok["dry_run"])} if last_ok else None
+                ),
+                "last_failure": (
+                    {
+                        "ts_end": last_fail["ts_end"],
+                        "mode": last_fail["mode"],
+                        "dry_run": bool(last_fail["dry_run"]),
+                        "error": (last_fail["error"] or "")[:500],
+                    }
+                    if last_fail
+                    else None
+                ),
+            }
+        finally:
+            conn.close()
+
+    def set_panel_kv(self, *, key: str, value: dict[str, Any]) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO panel_kv (key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+                """,
+                (key, json.dumps(value, ensure_ascii=False), utc_now_iso()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_panel_kv(self, *, key: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM panel_kv WHERE key = ?", (key,)).fetchone()
+            if not row:
+                return None
+            try:
+                data = json.loads(row["value_json"])
+            except Exception:
+                data = {"_raw": row["value_json"]}
+            return {"key": row["key"], "value": data, "updated_at": row["updated_at"]}
         finally:
             conn.close()

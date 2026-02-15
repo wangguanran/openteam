@@ -28,9 +28,8 @@ yarn-error.log*
 
 # Runtime/control-plane state (instance-specific; not a source of truth)
 .team-os/state/instance_id
-.team-os/state/runtime.db
-.team-os/state/events.db
-.team-os/state/events.jsonl
+.team-os/state/*.db
+.team-os/state/*.jsonl
 
 # Conversations can contain sensitive free-form content; keep local by default
 .team-os/ledger/conversations/

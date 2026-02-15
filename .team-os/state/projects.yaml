@@ -10,3 +10,15 @@ projects:
       - "web"
     default_workstream_id: "ai"
 
+  - project_id: "demo"
+    name: "Demo Project (GitHub Projects Panel)"
+    # Note: on case-insensitive filesystems, avoid project_id collisions like "DEMO" vs "demo".
+    # This demo uses a distinct directory name to prevent path conflicts while keeping project_id="demo".
+    requirements_dir: "docs/requirements/demo_panel"
+    plan_dir: "docs/plan/demo"
+    workstreams:
+      - "backend"
+      - "ai"
+      - "devops"
+      - "web"
+    default_workstream_id: "devops"

@@ -1,16 +1,22 @@
 import json
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 from agents import Agent  # OpenAI Agents SDK (placeholder; must not call models on startup)
-from fastapi import FastAPI, Query, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import codex_llm
 from .demo_seed import seed_mock_data
+from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraphQL, RATE_LIMIT_QUERY, resolve_github_token
+from .n8n_hook import emit_n8n_event
+from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
+from .panel_mapping import PanelMappingError, load_mapping
 from .requirements_store import RequirementsError, add_requirement
 from .runtime_db import RuntimeDB
 from .state_store import (
@@ -21,6 +27,7 @@ from .state_store import (
     load_focus,
     load_projects,
     load_workstreams,
+    github_projects_mapping_path,
     requirements_dir_for_project,
     save_focus,
     team_os_root,
@@ -72,16 +79,148 @@ def _db() -> RuntimeDB:
 
 DB = _db()
 
+# --- Panel sync scheduling (best-effort; GitHub Projects is view-layer) ---
+_PANEL_DIRTY: set[str] = set()
+_PANEL_LOCK = threading.Lock()
+
+
+def _env_truthy(name: str, default: str = "1") -> bool:
+    v = os.getenv(name, default).strip().lower()
+    return v not in ("0", "false", "no", "off", "")
+
+
+def _panel_github_writes_enabled() -> bool:
+    # Extra safety gate: explicit opt-in for remote writes.
+    return _env_truthy("TEAMOS_PANEL_GH_WRITE_ENABLED", "0")
+
+
+def _mark_panel_dirty(project_id: Optional[str] = None) -> None:
+    with _PANEL_LOCK:
+        if project_id:
+            _PANEL_DIRTY.add(str(project_id))
+        else:
+            for p in load_projects():
+                pid = str(p.get("project_id") or "").strip()
+                if pid:
+                    _PANEL_DIRTY.add(pid)
+
+
+def _panel_auto_sync_loop() -> None:
+    # Auto sync is best-effort; missing config/auth will simply skip.
+    interval_sec = int(os.getenv("TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60")
+    debounce_sec = int(os.getenv("TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC", "30") or "30")
+    last_attempt: dict[str, float] = {}
+
+    while True:
+        try:
+            # Safety: default off. Enabling auto-sync implies periodic remote writes to GitHub Projects (view-layer).
+            if not _env_truthy("TEAMOS_PANEL_GH_AUTO_SYNC", "0"):
+                time.sleep(5)
+                continue
+            if not _panel_github_writes_enabled():
+                time.sleep(5)
+                continue
+
+            try:
+                mapping = load_mapping()
+            except PanelMappingError:
+                time.sleep(interval_sec)
+                continue
+
+            projects = (mapping.data.get("projects") or {}) if isinstance(mapping.data.get("projects"), dict) else {}
+            dirty: set[str] = set()
+            with _PANEL_LOCK:
+                dirty = set(_PANEL_DIRTY)
+                _PANEL_DIRTY.clear()
+
+            for pid, cfg in projects.items():
+                if not isinstance(cfg, dict):
+                    continue
+                # Skip if not bound to a real GitHub project.
+                owner = str(cfg.get("owner") or "").strip()
+                pnum = int(cfg.get("project_number") or 0)
+                pnode = str(cfg.get("project_node_id") or "").strip()
+                if not pnode and (not owner or pnum <= 0):
+                    continue
+
+                now = time.time()
+                if pid not in dirty:
+                    # Periodic refresh, but debounced.
+                    if (now - last_attempt.get(pid, 0.0)) < float(interval_sec):
+                        continue
+
+                if (now - last_attempt.get(pid, 0.0)) < float(debounce_sec):
+                    continue
+
+                last_attempt[pid] = now
+                svc = GitHubProjectsPanelSync(db=DB)
+                ts_start = _utc_now_iso()
+                ok = True
+                err = ""
+                res: dict[str, Any] = {}
+                try:
+                    res = svc.sync(project_id=str(pid), mode="incremental", dry_run=False)
+                    DB.add_event(
+                        event_type="PANEL_SYNC_AUTO_OK",
+                        actor="control-plane",
+                        project_id=str(pid),
+                        workstream_id=_default_workstream_id(),
+                        payload={"panel": "github_projects", "stats": res.get("stats") or {}},
+                    )
+                except Exception as e:
+                    ok = False
+                    err = str(e)
+                    DB.add_event(
+                        event_type="PANEL_SYNC_AUTO_FAIL",
+                        actor="control-plane",
+                        project_id=str(pid),
+                        workstream_id=_default_workstream_id(),
+                        payload={"panel": "github_projects", "error": err[:500]},
+                    )
+                finally:
+                    try:
+                        stats = (res.get("stats") or {}) if isinstance(res, dict) else {}
+                        DB.record_panel_sync_run(
+                            project_id=str(pid),
+                            panel_type="github_projects",
+                            mode="incremental",
+                            dry_run=False,
+                            ok=ok,
+                            stats=stats if isinstance(stats, dict) else {"_raw": str(stats)},
+                            error=err,
+                            ts_start=ts_start,
+                            ts_end=_utc_now_iso(),
+                        )
+                    except Exception:
+                        pass
+
+        except Exception:
+            # Never crash the server because of panel sync.
+            pass
+
+        time.sleep(5)
+
+
+@app.on_event("startup")
+def _startup_background_threads() -> None:
+    # GitHub Projects sync loop (view layer). It is a best-effort background thread.
+    t = threading.Thread(target=_panel_auto_sync_loop, name="panel-auto-sync", daemon=True)
+    t.start()
+
 
 def _seed_if_enabled() -> None:
     if os.getenv("TEAMOS_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
-        # Seed against first project if present.
+        # Seed minimal demo data for each registered project (safe; idempotent per project_id).
         projects = load_projects()
-        if projects:
-            pid = str(projects[0].get("project_id") or "DEMO")
-        else:
-            pid = "DEMO"
-        seed_mock_data(DB, project_id=pid, workstream_id="ai")
+        if not projects:
+            seed_mock_data(DB, project_id="DEMO", workstream_id="ai")
+            return
+        for p in projects:
+            pid = str(p.get("project_id") or "").strip()
+            if not pid:
+                continue
+            wsid = str(p.get("default_workstream_id") or "general")
+            seed_mock_data(DB, project_id=pid, workstream_id=wsid)
 
 
 _seed_if_enabled()
@@ -113,6 +252,12 @@ class RequirementIn(BaseModel):
     constraints: Optional[list[str]] = None
     acceptance: Optional[list[str]] = None
     source: Optional[str] = "api"
+
+
+class PanelSyncIn(BaseModel):
+    project_id: str
+    mode: str = "incremental"  # incremental|full
+    dry_run: bool = False
 
 
 @app.get("/healthz")
@@ -207,6 +352,7 @@ def v1_focus_set(payload: FocusUpdate):
         workstream_id=_default_workstream_id(),
         payload={"objective": f.get("objective"), "updated_at": f.get("updated_at"), "note": payload.note or ""},
     )
+    _mark_panel_dirty()  # focus is global; refresh all configured panels
     return f
 
 
@@ -217,6 +363,148 @@ def v1_auth_status():
         return {"backend": "codex", "logged_in": ok, "message": msg}
     except codex_llm.CodexUnavailable as e:
         return {"backend": "codex", "logged_in": False, "message": str(e)}
+
+
+@app.get("/v1/panel/github/config")
+def v1_panel_github_config():
+    """
+    Returns mapping.yaml summary and panel URL list.
+    """
+    out: dict[str, Any] = {"mapping_path": str(github_projects_mapping_path()), "projects": []}
+    try:
+        m = load_mapping()
+        out["mapping_sha256"] = m.sha256
+        projects = (m.data.get("projects") or {}) if isinstance(m.data.get("projects"), dict) else {}
+        for pid, cfg in projects.items():
+            if not isinstance(cfg, dict):
+                continue
+            out["projects"].append(
+                {
+                    "project_id": pid,
+                    "owner_type": cfg.get("owner_type"),
+                    "owner": cfg.get("owner"),
+                    "repo": cfg.get("repo"),
+                    "project_number": cfg.get("project_number"),
+                    "project_node_id": ("set" if str(cfg.get("project_node_id") or "").strip() else ""),
+                    "project_url": cfg.get("project_url") or "",
+                    "fields": {k: {"name": (v or {}).get("name"), "type": (v or {}).get("type"), "field_id": ("set" if str((v or {}).get("field_id") or "").strip() else "")} for k, v in ((cfg.get("fields") or {}) if isinstance(cfg.get("fields"), dict) else {}).items()},
+                }
+            )
+    except PanelMappingError as e:
+        out["error"] = str(e)
+    return out
+
+
+@app.get("/v1/panel/github/health")
+def v1_panel_github_health(project_id: Optional[str] = None, include_github_rate_limit: bool = False):
+    """
+    Returns last sync run metadata (success/errors) and basic configuration hints.
+    """
+    pid = project_id or _default_project_id()
+    last = DB.get_last_panel_sync(project_id=pid, panel_type="github_projects")
+    summary = DB.get_panel_sync_summary(project_id=pid, panel_type="github_projects")
+
+    needs_full_resync = False
+    if not (summary.get("last_success")):
+        needs_full_resync = True
+    if last and (not last.get("ok")) and str(last.get("mode") or "").lower() == "incremental":
+        needs_full_resync = True
+
+    out: dict[str, Any] = {
+        "project_id": pid,
+        "last_sync": last,
+        "summary": summary,
+        "auto_sync": {
+            "enabled": _env_truthy("TEAMOS_PANEL_GH_AUTO_SYNC", "0"),
+            "interval_sec": int(os.getenv("TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60"),
+            "debounce_sec": int(os.getenv("TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC", "30") or "30"),
+        },
+        "writes_enabled": _panel_github_writes_enabled(),
+        "needs_full_resync": needs_full_resync,
+        "notes": [
+            "GitHub Projects is a view-layer; truth source is local files + runtime DB.",
+            "Use POST /v1/panel/github/sync for manual sync; enable auto-sync via env TEAMOS_PANEL_GH_AUTO_SYNC=1 (remote writes).",
+        ],
+    }
+
+    # Optional: GitHub rate limit (remote read). Disabled by default.
+    if include_github_rate_limit:
+        try:
+            tok = resolve_github_token()
+            api_url = "https://api.github.com/graphql"
+            try:
+                m = load_mapping()
+                api_url = str((m.data.get("github") or {}).get("graphql_api_url") or api_url).strip()
+            except Exception:
+                pass
+            gh = GitHubGraphQL(token=tok, api_url=api_url)
+            data = gh.graphql(RATE_LIMIT_QUERY, {}, timeout_sec=10)
+            out["github_rate_limit"] = data.get("rateLimit") or {}
+        except (GitHubAuthError, GitHubAPIError) as e:
+            out["github_rate_limit_error"] = str(e)[:300]
+        except Exception as e:
+            out["github_rate_limit_error"] = str(e)[:300]
+
+    return out
+
+
+@app.post("/v1/panel/github/sync")
+def v1_panel_github_sync(payload: PanelSyncIn):
+    """
+    Sync TeamOS truth -> GitHub Projects v2.
+    """
+    if (not payload.dry_run) and (not _panel_github_writes_enabled()):
+        DB.add_event(
+            event_type="PANEL_SYNC_WRITE_BLOCKED",
+            actor="control-plane",
+            project_id=payload.project_id,
+            workstream_id=_default_workstream_id(),
+            payload={"panel": "github_projects", "mode": payload.mode},
+        )
+        raise HTTPException(status_code=403, detail="GitHub panel writes are disabled. Set TEAMOS_PANEL_GH_WRITE_ENABLED=1 to allow remote writes.")
+
+    svc = GitHubProjectsPanelSync(db=DB)
+    ts_start = _utc_now_iso()
+    ok = True
+    err = ""
+    res: dict[str, Any] = {}
+    try:
+        res = svc.sync(project_id=payload.project_id, mode=payload.mode, dry_run=bool(payload.dry_run))
+        DB.add_event(
+            event_type="PANEL_SYNC_MANUAL_OK" if not payload.dry_run else "PANEL_SYNC_DRY_RUN_OK",
+            actor="user",
+            project_id=payload.project_id,
+            workstream_id=_default_workstream_id(),
+            payload={"panel": "github_projects", "mode": payload.mode, "dry_run": bool(payload.dry_run), "stats": res.get("stats") or {}},
+        )
+        return res
+    except Exception as e:
+        ok = False
+        err = str(e)
+        DB.add_event(
+            event_type="PANEL_SYNC_MANUAL_FAIL" if not payload.dry_run else "PANEL_SYNC_DRY_RUN_FAIL",
+            actor="user",
+            project_id=payload.project_id,
+            workstream_id=_default_workstream_id(),
+            payload={"panel": "github_projects", "mode": payload.mode, "dry_run": bool(payload.dry_run), "error": err[:500]},
+        )
+        raise
+    finally:
+        try:
+            stats = (res.get("stats") or {}) if isinstance(res, dict) else {}
+            DB.record_panel_sync_run(
+                project_id=payload.project_id,
+                panel_type="github_projects",
+                mode=str(payload.mode),
+                dry_run=bool(payload.dry_run),
+                ok=ok,
+                stats=stats if isinstance(stats, dict) else {"_raw": str(stats)},
+                error=err,
+                ts_start=ts_start,
+                ts_end=_utc_now_iso(),
+            )
+        except Exception:
+            pass
 
 
 @app.post("/v1/chat")
@@ -258,6 +546,17 @@ def v1_chat(payload: ChatIn):
             workstream_id=workstream_id,
             payload={"run_id": payload.run_id, "state": desired},
         )
+        _mark_panel_dirty(project_id)
+        # Optional notification hook (n8n): treat run state updates as a "task_state_changed" signal.
+        try:
+            emit_n8n_event(
+                "task_state_changed",
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload={"run_id": payload.run_id, "state": desired},
+            )
+        except Exception:
+            pass
         actions.append(f"run_state={desired}")
         response_lines.append(f"run_id={payload.run_id} state={desired}")
         return {"response_text": "\n".join(response_lines).strip() + "\n", "actions_taken": actions, "pending_decisions": pending}
@@ -418,6 +717,23 @@ def _handle_new_requirement(
             "conflict_report_path": outcome.conflict_report_path or "",
         },
     )
+    _mark_panel_dirty(project_id)
+
+    if outcome.classification == "CONFLICT":
+        # Optional notification hook (n8n): pending decision created.
+        try:
+            emit_n8n_event(
+                "need_pm_decision",
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload={
+                    "req_id": outcome.req_id or "",
+                    "conflicts_with": outcome.conflicts_with,
+                    "conflict_report_path": outcome.conflict_report_path or "",
+                },
+            )
+        except Exception:
+            pass
 
     if outcome.classification == "DUPLICATE":
         summary = "\n".join(

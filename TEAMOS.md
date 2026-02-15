@@ -25,6 +25,19 @@
 - 最小可用：落盘日志 + healthcheck。
 - 预留：OpenTelemetry（见 `docs/EXECUTION_RUNBOOK.md` 的 TODO）。
 
+### 1.5 面板层 (Panel Layer: GitHub Projects v2)
+
+- GitHub Projects v2 是 Team OS 的**主面板/视图层**（Table/Board/Roadmap），用于实时查看：
+  - 当前 focus
+  - 活跃 agents 与心跳
+  - tasks 状态（RUNNING/BLOCKED/WAITING_PM 等）
+  - NEED_PM_DECISION（冲突/决策点）
+  - milestones（来自 `docs/plan/<project_id>/plan.yaml` 的里程碑）
+- **真相源仍在本仓库与运行态状态库**：`.team-os/ledger/**`、`docs/requirements/**`、`.team-os/state/**`、`.team-os/state/runtime.db`（忽略入库）。
+- Panel 必须可随时从真相源 **全量重建/重同步**：
+  - 通过 Control Plane 的 `POST /v1/panel/github/sync`（`mode=full`）实现
+  - 字段/状态/workstream 映射以 `.team-os/integrations/github_projects/mapping.yaml` 为准
+
 ## 2. Team OS 目录模型
 
 Team OS 以文件系统为“真相源”，结构见 `AGENTS.md` 与仓库内 `.team-os/`。

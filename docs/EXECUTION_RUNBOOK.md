@@ -114,10 +114,13 @@ make logs
 
 每个项目（`project_id`）的需求主文档位于：
 
-- `docs/requirements/<project_id>/requirements.yaml`（机读事实源）
-- `docs/requirements/<project_id>/REQUIREMENTS.md`（人读汇总）
-- `docs/requirements/<project_id>/conflicts/`（冲突报告）
-- `docs/requirements/<project_id>/CHANGELOG.md`（变更日志）
+- `requirements_dir`（以 `.team-os/state/projects.yaml` 为准；推荐约定为 `docs/requirements/<project_id>/`）
+- `<requirements_dir>/requirements.yaml`（机读事实源）
+- `<requirements_dir>/REQUIREMENTS.md`（人读汇总）
+- `<requirements_dir>/conflicts/`（冲突报告）
+- `<requirements_dir>/CHANGELOG.md`（变更日志）
+
+> 注：在大小写不敏感文件系统上，`DEMO` 与 `demo` 这类仅大小写不同的 `project_id` 会造成目录冲突；可通过 `requirements_dir` 规避（本仓库的 `demo` 面板演示使用 `docs/requirements/demo_panel/`）。
 
 新增需求（两种方式等价）：
 
@@ -173,6 +176,133 @@ cd team-os
 ./teamos agents --project DEMO --workstream devops
 ./teamos tasks --project DEMO --workstream web
 ```
+
+### 5.4 面板（GitHub Projects）与同步（Panel Sync）
+
+GitHub Projects v2 是 Team OS 的 **主面板/视图层**，用于：
+
+- Table: Backlog（计划与字段齐全）
+- Board: Delivery（按状态列看推进）
+- Roadmap: Timeline（里程碑/目标日期）
+
+重要原则：
+
+- Projects 只是视图层，系统真相源仍是：`.team-os/ledger`、`docs/requirements/**`、Control Plane 的运行态状态库（SQLite）。
+- Projects 必须可随时从真相源 **全量重建/重同步**（不依赖 Projects 本身的编辑为事实来源）。
+
+#### 5.4.1 创建/绑定一个 Project（每个 `project_id` 一个）
+
+1) 在 GitHub 创建 Project v2（推荐 Org Project；Repo Project 也可）
+
+- Org Project：适合多仓/多团队
+- Repo Project：适合单仓范围
+
+2) 在本仓库登记映射（真相源）
+
+编辑：`.team-os/integrations/github_projects/mapping.yaml`，为你的 `project_id` 填入：
+
+- `owner_type`（ORG/USER/REPO）
+- `owner`（org/user login）
+- `project_number`（Project v2 number）
+- `project_url`（可选，但推荐填，便于 CLI `panel open`）
+
+> 提示：`project_node_id` 可不填；Control Plane 会在真实同步时通过 GraphQL 自动解析。
+
+#### 5.4.2 字段与视图（建议手工在 UI 创建视图；字段可由 full sync 确保）
+
+字段（最小集合）由 sync 负责创建/复用（默认创建为 TeamOS 自定义字段）：
+
+- `TeamOS Status`（单选：Todo/In Progress/In Review/Blocked/Done）
+- `Workstreams`（文本，逗号分隔；用 contains 过滤）
+- `Risk`（单选：LOW/MED/HIGH）
+- `Need PM Decision`（单选：Yes/No）
+- `Current Focus`（文本）
+- `Active Agents`（数字）
+- `Last Heartbeat`（文本，ISO-8601）
+- `Start Date`/`Target Date`（日期，用于 Roadmap）
+- `Task ID`（文本，稳定主键，用于重同步）
+- `Links`（文本）
+
+视图（至少 3 个，建议手工创建）：
+
+1. Table: Backlog
+2. Board: Delivery（按 `TeamOS Status` 分列）
+3. Roadmap: Timeline（使用 `Start Date`/`Target Date`）
+
+另外建议加一个过滤视图（可选）：
+
+- `NEED_PM_DECISION`：过滤 `Need PM Decision = Yes`
+
+#### 5.4.3 认证（OAuth 优先）
+
+推荐 OAuth（通过 GitHub CLI 登录）：
+
+```bash
+gh auth status
+export GITHUB_TOKEN="$(gh auth token -h github.com)"
+```
+
+然后把 `GITHUB_TOKEN` 写入本地 `team-os-runtime/.env`（不入库）或通过环境变量注入。
+
+#### 5.4.4 同步（dry-run / full / incremental）
+
+dry-run（不触网；只输出计划动作）：
+
+```bash
+cd team-os
+./teamos panel sync --project demo --dry-run --full
+```
+
+真实同步（会写入 GitHub Projects；建议先 dry-run 再执行）：
+
+> 安全闸门：Control Plane 默认禁用 GitHub 远程写入。执行真实同步前，需在 runtime 环境显式设置 `TEAMOS_PANEL_GH_WRITE_ENABLED=1`。
+
+```bash
+cd team-os
+./teamos panel sync --project demo --full
+./teamos panel sync --project demo
+./teamos panel show --project demo
+```
+
+#### 5.4.5 n8n（可选：通知/自动化补充，不是主面板）
+
+如果你需要把“需要 PM 决策/状态变化”等事件转发到 Slack/飞书/邮件，可选启用 n8n webhook（仅用于通知与自动化，不承担计划面板）。
+
+1) 在 runtime `.env` 配置 webhook：
+
+```bash
+N8N_WEBHOOK_URL="https://<your-n8n>/webhook/<id>"
+```
+
+2) Control Plane 会 best-effort POST JSON 事件（失败不影响主流程）。当前已实现的事件：
+
+- `need_pm_decision`：新增需求冲突进入 `NEED_PM_DECISION`
+- `task_state_changed`：run 状态变化（PAUSE/RESUME/STOP）
+
+预留（TODO）：
+
+- `release_completed`
+- `incident_opened`
+
+安全要求见：`docs/SECURITY.md`（内网部署、最小权限、及时升级）。
+
+#### 5.4.6 自动同步（可选：30~60s 刷新；会写入 Projects）
+
+启用后台自动同步（30~60s 级别刷新；会写入 Projects）：
+
+在 `team-os-runtime/.env` 中设置：
+
+```bash
+TEAMOS_PANEL_GH_WRITE_ENABLED=1
+TEAMOS_PANEL_GH_AUTO_SYNC=1
+TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC=60
+```
+
+#### 5.4.7 排障
+
+- `panel show` 显示未配置：检查 `.team-os/integrations/github_projects/mapping.yaml` 是否包含该 `project_id`
+- `sync` 报 auth 错误：检查 `GITHUB_TOKEN` 是否存在（推荐 `gh auth token` 获取 OAuth token）
+- GitHub rate limit：降低 `TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC` 频率，或减少单次同步项数量（拆项目/分 workstream）
 
 停止：
 

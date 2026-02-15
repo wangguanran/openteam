@@ -71,4 +71,28 @@ cd ../team-os
 ./teamos config init
 ./teamos status
 ./teamos chat --project DEMO
+./teamos panel show --project demo
+./teamos panel sync --project demo --dry-run --full
+```
+
+## GitHub Projects 面板（可选）
+
+1) 配置映射文件（真相源仍在本仓库；Projects 是视图层）：
+
+- `.team-os/integrations/github_projects/mapping.yaml`
+
+2) 配置 GitHub Token（推荐 OAuth）：
+
+```bash
+# 推荐：从 gh 取 OAuth token（不要写入 git）
+export GITHUB_TOKEN="$(gh auth token -h github.com)"
+```
+
+3) 启用后台同步（会对 GitHub Projects 写入 item/字段，属于“视图层变更”）：
+
+在 `team-os-runtime/.env` 中设置：
+
+```bash
+TEAMOS_PANEL_GH_WRITE_ENABLED=1
+TEAMOS_PANEL_GH_AUTO_SYNC=1
 ```

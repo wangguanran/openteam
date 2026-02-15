@@ -11,17 +11,45 @@ def seed_mock_data(db: RuntimeDB, *, project_id: str, workstream_id: str) -> Non
     if db.list_agents(project_id=project_id):
         return
 
+    pid = str(project_id)
+    # Keep deterministic demo ids for easier panel mapping.
+    run_id = "demo-run-001" if pid.upper() == "DEMO" else f"{pid}-run-001"
+    objective = (
+        "DEMO: validate control-plane + CLI + requirements conflict check"
+        if pid.upper() == "DEMO"
+        else "demo: validate GitHub Projects panel sync (dry-run) + planning overlay"
+    )
     db.upsert_run(
-        run_id="demo-run-001",
-        project_id=project_id,
+        run_id=run_id,
+        project_id=pid,
         workstream_id=workstream_id,
-        objective="DEMO: validate control-plane + CLI + requirements conflict check",
+        objective=objective,
         state="RUNNING",
     )
 
+    # Agents: DEMO keeps legacy 3-agent seed; demo uses 2 agents bound to one task as required by panel DEMO.
+    if pid.lower() == "demo":
+        db.register_agent(
+            role_id="Release-Ops",
+            project_id=pid,
+            workstream_id="devops",
+            task_id="DEMO-PANEL-0001",
+            state="RUNNING",
+            current_action="syncing focus/agents/tasks to GitHub Projects (dry-run)",
+        )
+        db.register_agent(
+            role_id="Developer-Backend",
+            project_id=pid,
+            workstream_id="backend",
+            task_id="DEMO-PANEL-0001",
+            state="RUNNING",
+            current_action="implementing projects-v2 GraphQL sync client and mappings",
+        )
+        return
+
     db.register_agent(
         role_id="PM-Intake",
-        project_id=project_id,
+        project_id=pid,
         workstream_id=workstream_id,
         task_id="DEMO-0001",
         state="RUNNING",
@@ -29,7 +57,7 @@ def seed_mock_data(db: RuntimeDB, *, project_id: str, workstream_id: str) -> Non
     )
     db.register_agent(
         role_id="Developer-AI",
-        project_id=project_id,
+        project_id=pid,
         workstream_id="ai",
         task_id="DEMO-0001",
         state="RUNNING",
@@ -37,10 +65,9 @@ def seed_mock_data(db: RuntimeDB, *, project_id: str, workstream_id: str) -> Non
     )
     db.register_agent(
         role_id="Release-Ops",
-        project_id=project_id,
+        project_id=pid,
         workstream_id="devops",
         task_id="TASK-20260214-175511",
         state="IDLE",
         current_action="observing runtime health and logs",
     )
-
