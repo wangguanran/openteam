@@ -199,6 +199,27 @@ def cmd_status(args: argparse.Namespace) -> None:
     workstream_id = args.workstream
 
     pending = st.get("pending_decisions") or []
+    if pending and (not getattr(args, "all_decisions", False)):
+        # Default: show pending decisions relevant to the selected project.
+        tasks_all = st.get("tasks") or []
+        task_to_project: dict[str, str] = {}
+        for t in tasks_all:
+            tid = _norm(t.get("task_id"))
+            pid = _norm(t.get("project_id"))
+            if tid and pid:
+                task_to_project[tid] = pid
+
+        filtered: list[dict[str, Any]] = []
+        for d in pending:
+            pid = _norm(d.get("project_id"))
+            if pid:
+                if pid == project_id:
+                    filtered.append(d)
+                continue
+            tid = _norm(d.get("task_id"))
+            if tid and task_to_project.get(tid) == project_id:
+                filtered.append(d)
+        pending = filtered
     if pending:
         print(f"PENDING_DECISIONS ({len(pending)}) profile={prof['name']} instance_id={instance_id}")
         for i, d in enumerate(pending, 1):
@@ -662,6 +683,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     st = sp.add_parser("status")
     st.add_argument("--project")
     st.add_argument("--workstream")
+    st.add_argument("--all-decisions", action="store_true", help="show pending decisions for all projects (default: filter to selected project)")
     st.set_defaults(fn=cmd_status)
 
     fc = sp.add_parser("focus")
