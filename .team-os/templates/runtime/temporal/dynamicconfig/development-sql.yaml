@@ -1,0 +1,16 @@
+# Source: https://raw.githubusercontent.com/temporalio/samples-server/main/compose/dynamicconfig/development-sql.yaml
+# Copied for reproducibility; treat as external input, review before use.
+
+# frontend.enableServerVersionCheck:
+# - value: true
+
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+
+frontend.enableUpdateWorkflowExecution:
+  - value: true
+
+# Match this file with `DB=postgres12` in the compose file.
+system.enableEagerWorkflowStart:
+  - value: true
+

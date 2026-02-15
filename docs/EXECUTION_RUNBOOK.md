@@ -54,11 +54,24 @@ cd team-os
 
 Runtime 目录：`../team-os-runtime`
 
+在新环境创建 runtime 目录（推荐，从 Team OS 模板生成；runtime 目录本身不作为 git repo）：
+
+```bash
+cd team-os
+./scripts/teamos.sh runtime-init
+# 可选：自动生成本地 secrets（不回显、不入库）
+./scripts/teamos.sh runtime-secrets
+cd ../team-os-runtime
+make up
+make ps
+```
+
 启动（需要先创建 `.env`，不要入库）：
 
 ```bash
 cd team-os-runtime
 cp .env.example .env
+# 编辑 .env，至少填写 POSTGRES_PASSWORD（或使用 `cd team-os && ./scripts/teamos.sh runtime-secrets` 自动生成）
 make up
 make ps
 make logs

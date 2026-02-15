@@ -7,6 +7,8 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/teamos.sh doctor
+  ./scripts/teamos.sh runtime-init [--path <dir>] [--force]
+  ./scripts/teamos.sh runtime-secrets [--path <dir>]
   ./scripts/teamos.sh new-task [--full] "<title>"
   ./scripts/teamos.sh skill-boot "<role>" "<topic_or_platform>"
   ./scripts/teamos.sh retro "<task_id>"
@@ -20,6 +22,12 @@ shift || true
 case "$cmd" in
   doctor)
     exec "$SCRIPT_DIR/doctor.sh" "$@"
+    ;;
+  runtime-init)
+    exec "$SCRIPT_DIR/runtime_init.sh" "$@"
+    ;;
+  runtime-secrets)
+    exec "$SCRIPT_DIR/runtime_secrets.sh" "$@"
     ;;
   new-task)
     exec "$SCRIPT_DIR/new_task.sh" "$@"
