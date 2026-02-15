@@ -22,3 +22,18 @@ projects:
       - "devops"
       - "web"
     default_workstream_id: "devops"
+
+  - project_id: "teamos"
+    name: "Team OS Development"
+    requirements_dir: "docs/requirements/teamos"
+    plan_dir: "docs/plan/teamos"
+    workstreams:
+      - "backend"
+      - "ai"
+      - "devops"
+      - "web"
+      - "ios"
+      - "android"
+      - "wechat"
+      - "data"
+    default_workstream_id: "devops"

@@ -1,0 +1,28 @@
+id: "TEAMOS-CLUSTER-0001"
+title: "Cluster MVP: GitHub-first 控制总线（Leader/Nodes/Task Lease）规范 + 最小实现"
+project_id: "teamos"
+workstream_id: "devops"
+status: "running"
+risk_level: "R2"
+need_pm_decision: false
+approvals_required:
+  - "GitHub 远程写入（issues/comments/labels/projects fields/items）"
+owners:
+  - "Architect"
+roles_involved:
+  - "Architect"
+  - "Release-Ops"
+  - "Reviewer"
+workflows:
+  - "Discovery"
+  - "Delivery"
+created_at: "2026-02-15T12:30:00Z"
+updated_at: "2026-02-15T12:30:00Z"
+start_date: "2026-02-15"
+target_date: "2026-02-20"
+links: {}
+artifacts:
+  ledger: ".team-os/ledger/tasks/TEAMOS-CLUSTER-0001.yaml"
+  logs_dir: ".team-os/logs/tasks/TEAMOS-CLUSTER-0001/"
+evidence: []
+

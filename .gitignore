@@ -29,6 +29,7 @@ yarn-error.log*
 # Runtime/control-plane state (instance-specific; not a source of truth)
 .team-os/state/instance_id
 .team-os/state/*.db
+.team-os/state/*.db-*
 .team-os/state/*.jsonl
 
 # Conversations can contain sensitive free-form content; keep local by default

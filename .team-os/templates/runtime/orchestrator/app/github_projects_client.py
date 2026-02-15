@@ -99,14 +99,26 @@ class GitHubGraphQL:
         return out.get("data") or {}
 
 
-PROJECT_QUERY_BY_NUMBER = """
-query($owner:String!, $number:Int!, $repo:String) {
+PROJECT_QUERY_ORG_BY_NUMBER = """
+query($owner:String!, $number:Int!) {
   organization(login: $owner) {
     projectV2(number: $number) { id number title url }
   }
+}
+"""
+
+
+PROJECT_QUERY_USER_BY_NUMBER = """
+query($owner:String!, $number:Int!) {
   user(login: $owner) {
     projectV2(number: $number) { id number title url }
   }
+}
+"""
+
+
+PROJECT_QUERY_REPO_BY_NUMBER = """
+query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner: $owner, name: $repo) {
     projectV2(number: $number) { id number title url }
   }
@@ -213,7 +225,7 @@ query($projectId: ID!, $after: String) {
 CREATE_FIELD_MUTATION = """
 mutation($projectId: ID!, $name: String!, $dataType: ProjectV2CustomFieldType!, $singleSelectOptions: [ProjectV2SingleSelectFieldOptionInput!]) {
   createProjectV2Field(input: { projectId: $projectId, name: $name, dataType: $dataType, singleSelectOptions: $singleSelectOptions }) {
-    projectV2FieldConfiguration {
+    projectV2Field {
       __typename
       ... on ProjectV2Field { id name dataType }
       ... on ProjectV2SingleSelectField { id name dataType options { id name color description } }

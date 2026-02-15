@@ -10,7 +10,9 @@ from .github_projects_client import (
     CREATE_FIELD_MUTATION,
     PROJECT_FIELDS_QUERY,
     PROJECT_ITEMS_QUERY,
-    PROJECT_QUERY_BY_NUMBER,
+    PROJECT_QUERY_ORG_BY_NUMBER,
+    PROJECT_QUERY_REPO_BY_NUMBER,
+    PROJECT_QUERY_USER_BY_NUMBER,
     UPDATE_ITEM_FIELD_MUTATION,
     GitHubAPIError,
     GitHubAuthError,
@@ -397,6 +399,8 @@ class GitHubProjectsPanelSync:
 
         if not project_node_id and (not owner or project_number <= 0):
             raise PanelSyncError("GitHub project binding is missing. Fill mapping.yaml: owner + project_number (or project_node_id).")
+        if not project_node_id and owner_type == "REPO" and (not repo):
+            raise PanelSyncError("GitHub project binding is missing repo name for owner_type=REPO (mapping.yaml: repo).")
 
         token = resolve_github_token()
         api_url = str((mapping.data.get("github") or {}).get("graphql_api_url") or "https://api.github.com/graphql").strip()
@@ -405,7 +409,14 @@ class GitHubProjectsPanelSync:
         # Resolve project node id
         project_url = str(cfg.get("project_url") or "").strip()
         if not project_node_id:
-            data = gh.graphql(PROJECT_QUERY_BY_NUMBER, {"owner": owner, "number": project_number, "repo": repo or None})
+            if owner_type == "ORG":
+                data = gh.graphql(PROJECT_QUERY_ORG_BY_NUMBER, {"owner": owner, "number": project_number})
+            elif owner_type == "USER":
+                data = gh.graphql(PROJECT_QUERY_USER_BY_NUMBER, {"owner": owner, "number": project_number})
+            elif owner_type == "REPO":
+                data = gh.graphql(PROJECT_QUERY_REPO_BY_NUMBER, {"owner": owner, "repo": repo, "number": project_number})
+            else:
+                raise PanelSyncError(f"invalid owner_type={owner_type}; expected ORG|USER|REPO")
             p = pick_project_from_number_query(data, owner_type)
             if not p or not p.get("id"):
                 raise PanelSyncError(f"GitHub project not found: owner_type={owner_type} owner={owner} number={project_number}")
@@ -438,7 +449,7 @@ class GitHubProjectsPanelSync:
                         CREATE_FIELD_MUTATION,
                         {"projectId": project_node_id, "name": name, "dataType": ftype, "singleSelectOptions": single_opts},
                     )
-                    cfg_node = (((c.get("createProjectV2Field") or {}).get("projectV2FieldConfiguration")) or {})
+                    cfg_node = (((c.get("createProjectV2Field") or {}).get("projectV2Field")) or {})
                     fid = str(cfg_node.get("id") or "").strip()
                     # Refresh field_nodes for option ids after creation.
                     by_name[name] = {

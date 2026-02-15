@@ -1,0 +1,27 @@
+id: "TEAMOS-CLUSTER-0006"
+title: "Repo Understanding Gate: 非空仓库先读代码理解架构（闸门/模板/插件）"
+project_id: "teamos"
+workstream_id: "backend"
+status: "todo"
+risk_level: "R1"
+need_pm_decision: false
+approvals_required:
+  - "进入 Delivery 前必须通过 repo_understanding 闸门（非空仓库）"
+owners:
+  - "Reviewer"
+roles_involved:
+  - "Reviewer"
+  - "Architect"
+workflows:
+  - "Discovery"
+  - "Delivery"
+created_at: "2026-02-15T12:30:00Z"
+updated_at: "2026-02-15T12:30:00Z"
+start_date: "2026-02-18"
+target_date: "2026-03-01"
+links: {}
+artifacts:
+  ledger: ".team-os/ledger/tasks/TEAMOS-CLUSTER-0006.yaml"
+  logs_dir: ".team-os/logs/tasks/TEAMOS-CLUSTER-0006/"
+evidence: []
+

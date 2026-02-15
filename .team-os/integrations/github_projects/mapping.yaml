@@ -23,11 +23,11 @@ projects:
     # --- GitHub Project binding ---
     # owner_type: ORG | USER | REPO
     owner_type: "USER"
-    owner: ""               # e.g. "your-org" or "your-user"
+    owner: "wangguanran"    # e.g. "your-org" or "your-user"
     repo: ""                # only when owner_type=REPO
-    project_number: 0       # ProjectV2 number in GitHub UI (required unless project_node_id is set)
+    project_number: 2       # ProjectV2 number in GitHub UI (required unless project_node_id is set)
     project_node_id: ""     # optional; if set, used directly
-    project_url: ""         # optional; informational
+    project_url: "https://github.com/users/wangguanran/projects/2" # optional; informational
 
     # --- Field mapping ---
     # Fill these once you have a real project. For many users, `mode=full` sync can discover fields by name.
@@ -133,6 +133,122 @@ projects:
       tasks:
         mode: "draft_issue"     # draft_issue | issue
         key_field: "task_id"    # uses fields.task_id
+      decisions:
+        mode: "draft_issue"
+        key_prefix: "DECISION:"
+      milestones:
+        mode: "draft_issue"
+        key_prefix: "MILESTONE:"
+
+  teamos:
+    project_id: "teamos"
+
+    # Bind to the same Project v2 as the main Team OS dev panel (view-layer).
+    owner_type: "USER"
+    owner: "wangguanran"
+    repo: ""
+    project_number: 2
+    project_node_id: ""
+    project_url: "https://github.com/users/wangguanran/projects/2"
+
+    fields:
+      teamos_status:
+        name: "TeamOS Status"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          TODO: { name: "Todo", option_id: "" }
+          IN_PROGRESS: { name: "In Progress", option_id: "" }
+          IN_REVIEW: { name: "In Review", option_id: "" }
+          BLOCKED: { name: "Blocked", option_id: "" }
+          DONE: { name: "Done", option_id: "" }
+
+      workstreams:
+        name: "Workstreams"
+        type: "TEXT"
+        field_id: ""
+
+      risk:
+        name: "Risk"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          LOW: { name: "LOW", option_id: "" }
+          MED: { name: "MED", option_id: "" }
+          HIGH: { name: "HIGH", option_id: "" }
+
+      need_pm_decision:
+        name: "Need PM Decision"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      current_focus:
+        name: "Current Focus"
+        type: "TEXT"
+        field_id: ""
+
+      active_agents:
+        name: "Active Agents"
+        type: "NUMBER"
+        field_id: ""
+
+      last_heartbeat:
+        name: "Last Heartbeat"
+        type: "TEXT"
+        field_id: ""
+
+      start_date:
+        name: "Start Date"
+        type: "DATE"
+        field_id: ""
+
+      target_date:
+        name: "Target Date"
+        type: "DATE"
+        field_id: ""
+
+      task_id:
+        name: "Task ID"
+        type: "TEXT"
+        field_id: ""
+
+      links:
+        name: "Links"
+        type: "TEXT"
+        field_id: ""
+
+    status_mapping:
+      intake: "TODO"
+      plan: "TODO"
+      todo: "TODO"
+      running: "IN_PROGRESS"
+      work: "IN_PROGRESS"
+      in_progress: "IN_PROGRESS"
+      review: "IN_REVIEW"
+      in_review: "IN_REVIEW"
+      blocked: "BLOCKED"
+      waiting_pm: "BLOCKED"
+      need_pm_decision: "BLOCKED"
+      done: "DONE"
+      closed: "DONE"
+
+    risk_mapping:
+      R0: "LOW"
+      R1: "LOW"
+      R2: "MED"
+      R3: "HIGH"
+      LOW: "LOW"
+      MED: "MED"
+      MEDIUM: "MED"
+      HIGH: "HIGH"
+
+    items:
+      tasks:
+        mode: "draft_issue"
+        key_field: "task_id"
       decisions:
         mode: "draft_issue"
         key_prefix: "DECISION:"
