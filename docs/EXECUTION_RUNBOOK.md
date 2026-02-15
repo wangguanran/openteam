@@ -304,6 +304,21 @@ TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC=60
 - `sync` 报 auth 错误：检查 `GITHUB_TOKEN` 是否存在（推荐 `gh auth token` 获取 OAuth token）
 - GitHub rate limit：降低 `TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC` 频率，或减少单次同步项数量（拆项目/分 workstream）
 
+### 5.5 集群（多机协作，Brain/Assistant）
+
+多机协作集群采用 GitHub-first 控制总线（Issue Lease + 节点 registry），并要求可接管/可恢复。
+
+相关手册：
+
+- 集群运行与接管：`docs/CLUSTER_RUNBOOK.md`
+- 加新节点：`docs/NODE_BOOTSTRAP.md`
+- 新仓库 bootstrap / 非空仓库 upgrade 闸门：`docs/REPO_BOOTSTRAP_AND_UPGRADE.md`
+
+安全闸门：
+
+- 选主/节点心跳/任务 lease 等属于 GitHub 远程写操作，默认必须通过 env gate 显式启用（详见 `.team-os/cluster/config.yaml`）。
+- 远程机器安装依赖/写 systemd/启动服务属于高风险动作，必须审批后执行。
+
 停止：
 
 ```bash

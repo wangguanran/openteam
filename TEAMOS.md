@@ -38,6 +38,15 @@
   - 通过 Control Plane 的 `POST /v1/panel/github/sync`（`mode=full`）实现
   - 字段/状态/workstream 映射以 `.team-os/integrations/github_projects/mapping.yaml` 为准
 
+### 1.6 集群（Multi-node Cluster，进行中）
+
+- 多机协作采用 GitHub-first 控制总线（Issue Lease + Node Registry + Task Lease）
+- 目标：Brain/Assistant 可选主接管、异构能力路由、断点续跑恢复
+- 相关手册：
+  - `docs/CLUSTER_RUNBOOK.md`
+  - `docs/NODE_BOOTSTRAP.md`
+  - `docs/REPO_BOOTSTRAP_AND_UPGRADE.md`
+
 ## 2. Team OS 目录模型
 
 Team OS 以文件系统为“真相源”，结构见 `AGENTS.md` 与仓库内 `.team-os/`。

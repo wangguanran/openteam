@@ -23,11 +23,12 @@ projects:
     # --- GitHub Project binding ---
     # owner_type: ORG | USER | REPO
     owner_type: "USER"
-    owner: "wangguanran"    # e.g. "your-org" or "your-user"
+    # Disabled by default: bind this only when you really want demo data to write to a real Project.
+    owner: ""               # e.g. "your-org" or "your-user"
     repo: ""                # only when owner_type=REPO
-    project_number: 2       # ProjectV2 number in GitHub UI (required unless project_node_id is set)
+    project_number: 0       # ProjectV2 number in GitHub UI (required unless project_node_id is set)
     project_node_id: ""     # optional; if set, used directly
-    project_url: "https://github.com/users/wangguanran/projects/2" # optional; informational
+    project_url: ""         # optional; informational
 
     # --- Field mapping ---
     # Fill these once you have a real project. For many users, `mode=full` sync can discover fields by name.
@@ -147,9 +148,9 @@ projects:
     owner_type: "USER"
     owner: "wangguanran"
     repo: ""
-    project_number: 2
+    project_number: 3
     project_node_id: ""
-    project_url: "https://github.com/users/wangguanran/projects/2"
+    project_url: "https://github.com/users/wangguanran/projects/3"
 
     fields:
       teamos_status:

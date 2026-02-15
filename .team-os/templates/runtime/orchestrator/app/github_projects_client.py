@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -65,7 +66,15 @@ class GitHubGraphQL:
         self.token = token
         self.api_url = api_url
 
-    def graphql(self, query: str, variables: Optional[dict[str, Any]] = None, *, timeout_sec: int = 20) -> dict[str, Any]:
+    def graphql(
+        self,
+        query: str,
+        variables: Optional[dict[str, Any]] = None,
+        *,
+        timeout_sec: int = 20,
+        max_retries: int = 3,
+        backoff_sec: float = 0.6,
+    ) -> dict[str, Any]:
         payload = {"query": query, "variables": variables or {}}
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
@@ -79,14 +88,27 @@ class GitHubGraphQL:
                 "User-Agent": "teamos-control-plane",
             },
         )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise GitHubAPIError(f"GitHub GraphQL HTTP {e.code}: {body[:2000]}") from e
-        except urllib.error.URLError as e:
-            raise GitHubAPIError(f"GitHub GraphQL request failed: {e}") from e
+
+        # GitHub GraphQL occasionally fails with transient TLS EOF/connection resets.
+        # Retry those network-layer failures with a small exponential backoff to make sync stable.
+        body = ""
+        for attempt in range(max(0, int(max_retries)) + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                    body = resp.read().decode("utf-8", errors="replace")
+                break
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                # Retry only on transient upstream errors.
+                if e.code in (500, 502, 503, 504) and attempt < max_retries:
+                    time.sleep(backoff_sec * (2**attempt))
+                    continue
+                raise GitHubAPIError(f"GitHub GraphQL HTTP {e.code}: {body[:2000]}") from e
+            except urllib.error.URLError as e:
+                if attempt < max_retries:
+                    time.sleep(backoff_sec * (2**attempt))
+                    continue
+                raise GitHubAPIError(f"GitHub GraphQL request failed: {e}") from e
 
         try:
             out = json.loads(body) if body else {}

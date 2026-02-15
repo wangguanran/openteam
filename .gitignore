@@ -32,5 +32,9 @@ yarn-error.log*
 .team-os/state/*.db-*
 .team-os/state/*.jsonl
 
+# Cluster runtime snapshots (not a source of truth; keep config tracked)
+.team-os/cluster/state/*
+!.team-os/cluster/state/.gitkeep
+
 # Conversations can contain sensitive free-form content; keep local by default
 .team-os/ledger/conversations/
