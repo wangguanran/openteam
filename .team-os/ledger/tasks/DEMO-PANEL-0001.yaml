@@ -2,7 +2,7 @@ id: "DEMO-PANEL-0001"
 title: "Panel Sync: 实时同步 focus/agents/tasks 到 GitHub Projects"
 project_id: "demo"
 workstream_id: "devops"
-status: "running"
+status: "doing"
 risk_level: "R2"
 need_pm_decision: false
 approvals_required:
@@ -23,4 +23,3 @@ artifacts:
   ledger: ".team-os/ledger/tasks/DEMO-PANEL-0001.yaml"
   logs_dir: ".team-os/logs/tasks/DEMO-PANEL-0001/"
 evidence: []
-

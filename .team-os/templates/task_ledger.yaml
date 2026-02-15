@@ -2,7 +2,7 @@ id: "<TASK_ID>"
 title: "<TITLE>"
 project_id: "DEMO" # project registry: .team-os/state/projects.yaml
 workstream_id: "general" # workstream registry: .team-os/state/workstreams.yaml
-status: "intake" # intake|plan|todo|work|test|release|observe|retro|closed
+status: "intake" # intake|plan|todo|doing|test|release|observe|retro|closed (aliases: work|running -> doing)
 risk_level: "R1" # R0|R1|R2|R3
 need_pm_decision: false
 approvals_required:

@@ -2,7 +2,7 @@ id: "TEAMOS-CLUSTER-0001"
 title: "Cluster MVP: GitHub-first 控制总线（Leader/Nodes/Task Lease）规范 + 最小实现"
 project_id: "teamos"
 workstream_id: "devops"
-status: "running"
+status: "doing"
 risk_level: "R2"
 need_pm_decision: false
 approvals_required:

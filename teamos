@@ -107,6 +107,31 @@ def _fmt_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def _norm(s: Any) -> str:
+    return str(s or "").strip()
+
+
+def _display_task_state(state: Any) -> str:
+    """
+    Human-facing task state label.
+
+    Notes:
+    - Ledger historically used "running" for in-progress. We standardize the display as "doing".
+    - Keep this mapping in CLI to avoid rewriting legacy ledgers.
+    """
+    s = _norm(state).lower()
+    if s in ("running", "work", "in_progress", "inprogress", "doing"):
+        return "doing"
+    if s in ("waitingpm", "wait_pm", "waitpm"):
+        return "waiting_pm"
+    return s
+
+
+def _agent_is_active(agent_state: Any) -> bool:
+    s = _norm(agent_state).upper()
+    return bool(s) and s not in ("IDLE", "DONE")
+
+
 def cmd_config_init(_args: argparse.Namespace) -> None:
     if CONFIG_PATH.exists():
         eprint(f"config_exists={CONFIG_PATH}")
@@ -177,7 +202,12 @@ def cmd_status(args: argparse.Namespace) -> None:
     if pending:
         print(f"PENDING_DECISIONS ({len(pending)}) profile={prof['name']} instance_id={instance_id}")
         for i, d in enumerate(pending, 1):
-            print(f"{i}. {d.get('type')} {d.get('project_id','')} {d.get('req_id','')}".strip())
+            dtype = str(d.get("type") or "").strip()
+            pid = str(d.get("project_id") or "").strip()
+            rid = str(d.get("req_id") or "").strip()
+            tid = str(d.get("task_id") or "").strip()
+            key = rid or tid
+            print(f"{i}. {dtype} {pid} {key}".strip())
         print()
 
     print(f"profile={prof['name']} instance_id={instance_id}")
@@ -191,6 +221,29 @@ def cmd_status(args: argparse.Namespace) -> None:
     if workstream_id:
         agents = [a for a in agents if a.get("workstream_id") == workstream_id]
 
+    active_agents = [a for a in agents if _agent_is_active(a.get("state"))]
+    active_tasks_by_id: dict[str, list[dict[str, Any]]] = {}
+    for a in active_agents:
+        tid = _norm(a.get("task_id"))
+        if tid:
+            active_tasks_by_id.setdefault(tid, []).append(a)
+
+    print(
+        f"active_agents={len(active_agents)} active_tasks={len(active_tasks_by_id)} "
+        f"(project_id={project_id}{' workstream_id='+workstream_id if workstream_id else ''})"
+    )
+    if active_tasks_by_id:
+        rows = []
+        for tid in sorted(active_tasks_by_id.keys()):
+            group = active_tasks_by_id[tid]
+            roles = ",".join(sorted({str(x.get('role_id', '')) for x in group if str(x.get('role_id', '')).strip()}))
+            last_hb = max([_norm(x.get("last_heartbeat")) for x in group], default="")
+            rows.append([tid, str(len(group)), roles[:40], last_hb])
+        print(_fmt_table(["task", "agents", "roles", "last_heartbeat"], rows))
+    else:
+        print("(no active tasks)")
+    print()
+
     rows = []
     for a in agents:
         rows.append(
@@ -203,7 +256,10 @@ def cmd_status(args: argparse.Namespace) -> None:
                 str(a.get("last_heartbeat", "")),
             ]
         )
-    print(f"agents={len(rows)} (project_id={project_id}{' workstream_id='+workstream_id if workstream_id else ''})")
+    print(
+        f"agents_total={len(rows)} active={len(active_agents)} "
+        f"(project_id={project_id}{' workstream_id='+workstream_id if workstream_id else ''})"
+    )
     if rows:
         print(_fmt_table(["agent", "role", "state", "task", "action", "heartbeat"], rows))
     else:
@@ -217,18 +273,21 @@ def cmd_status(args: argparse.Namespace) -> None:
         tasks = [t for t in tasks if t.get("workstream_id") == workstream_id]
     rows = []
     for t in tasks:
+        tid = _norm(t.get("task_id"))
+        agents_n = len(active_tasks_by_id.get(tid, [])) if tid else 0
         rows.append(
             [
-                str(t.get("task_id", "")),
-                str(t.get("state", "")),
+                tid,
+                _display_task_state(t.get("state", "")),
                 str(t.get("owner_role", "")),
                 str(t.get("workstream_id", "")),
                 "YES" if t.get("need_pm_decision") else "",
+                str(agents_n),
             ]
         )
     print(f"tasks={len(rows)}")
     if rows:
-        print(_fmt_table(["task_id", "state", "owner", "workstream", "NEED_PM"], rows))
+        print(_fmt_table(["task_id", "state", "owner", "workstream", "NEED_PM", "agents"], rows))
     else:
         print("(none)")
 
@@ -290,7 +349,11 @@ def cmd_tasks(args: argparse.Namespace) -> None:
     if args.workstream:
         q["workstream_id"] = args.workstream
     if args.state:
-        q["state"] = args.state
+        # Backward compatible aliases: running/work -> doing
+        st = str(args.state or "").strip().lower()
+        if st in ("running", "work", "in_progress", "inprogress"):
+            st = "doing"
+        q["state"] = st
     url = base + "/v1/tasks?" + urllib.parse.urlencode(q)
     out = _http_json("GET", url)
     tasks = out.get("tasks") or []
@@ -299,7 +362,7 @@ def cmd_tasks(args: argparse.Namespace) -> None:
         rows.append(
             [
                 str(t.get("task_id", "")),
-                str(t.get("state", "")),
+                _display_task_state(t.get("state", "")),
                 str(t.get("owner_role", "")),
                 str(t.get("project_id", "")),
                 str(t.get("workstream_id", "")),
