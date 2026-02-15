@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string" },
+    "workstreams": { "type": "array", "items": { "type": "string" } },
+    "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+    "rationale": { "type": "string" },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "acceptance": { "type": "array", "items": { "type": "string" } },
+
+    "classification": { "type": "string", "enum": ["DUPLICATE", "CONFLICT", "COMPATIBLE"] },
+    "duplicate_of": { "type": ["string", "null"] },
+    "conflicts_with": { "type": "array", "items": { "type": "string" } },
+    "conflict_points": { "type": "array", "items": { "type": "string" } },
+    "impact_workstreams": { "type": "array", "items": { "type": "string" } },
+
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "enum": ["A", "B", "C"] },
+          "summary": { "type": "string" },
+          "pros": { "type": "array", "items": { "type": "string" } },
+          "cons": { "type": "array", "items": { "type": "string" } },
+          "needs_pm_decision": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "summary", "pros", "cons", "needs_pm_decision"]
+      }
+    }
+  },
+  "required": [
+    "title",
+    "workstreams",
+    "priority",
+    "rationale",
+    "constraints",
+    "acceptance",
+    "classification",
+    "duplicate_of",
+    "conflicts_with",
+    "conflict_points",
+    "impact_workstreams",
+    "options"
+  ]
+}
+

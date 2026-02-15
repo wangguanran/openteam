@@ -1,0 +1,80 @@
+schema_version: 1
+project_id: DEMO
+next_req_seq: 4
+requirements:
+- req_id: REQ-0001
+  created_at: '2026-02-15T00:00:00Z'
+  updated_at: '2026-02-15T08:19:46Z'
+  status: NEED_PM_DECISION
+  title: LLM 认证必须默认使用 OAuth
+  text: 控制平面在进行需求提炼/冲突检测/对话响应时，必须默认使用 Codex CLI 的 ChatGPT OAuth（codex login）作为 LLM
+    认证方式；不得回退成只支持 API KEY。
+  workstreams:
+  - ai
+  - devops
+  priority: P0
+  rationale: 避免 secrets 管理风险，统一认证路径，便于团队协作与审计。
+  constraints:
+  - 不得将任何 token/key 写入 git
+  - 未登录时必须显式报错并指引登录
+  acceptance:
+  - teamos doctor 能检测并提示 codex 登录状态
+  - 控制平面在 LLM 调用前检查 codex login status，未登录则拒绝并写入事件
+  source: DEMO seed
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs:
+  - docs/requirements/DEMO/conflicts/20260215T081946Z-REQ-0003.md
+- req_id: REQ-0002
+  created_at: '2026-02-15T08:18:12Z'
+  updated_at: '2026-02-15T08:18:12Z'
+  status: ACTIVE
+  title: TeamOS CLI 支持 Profiles（多实例）并在 status 输出 profile + instance_id
+  text: 新增需求X：teamos CLI 必须支持 profiles（多实例），并在 status 输出 profile+instance_id
+  workstreams:
+  - backend
+  - devops
+  - general
+  priority: P1
+  rationale: 为同一台机器/同一用户同时管理多个 TeamOS 实例（如不同环境、租户或账号）提供一等支持，并提升排障与可观测性（status 可明确当前
+    profile 与实例标识）。
+  constraints:
+  - 不得破坏现有单实例用户的默认行为：无显式选择时仍有清晰的默认 profile。
+  - profile/instance 的持久化存储需明确位置与格式，并避免泄露敏感信息（token/密钥需按现有安全策略存放）。
+  - status 的输出变更需考虑向后兼容：若已有脚本解析输出，应提供稳定字段或提供机器可读格式（如 JSON）中的等价字段。
+  - profile 与 instance_id 的来源与一致性规则需定义（例如 instance_id 来自控制面注册信息或本地缓存，刷新策略明确）。
+  acceptance:
+  - CLI 支持创建/列出/选择 profile（至少具备：列出 profiles、设置当前 profile、在命令级选择 profile 的能力）。
+  - CLI 能在同一终端环境下切换 profile 并指向不同实例配置（互不覆盖）。
+  - '`teamos status` 输出中包含当前生效的 `profile` 与对应 `instance_id`（人类可读输出与机器可读输出若存在均需包含）。'
+  - 当 profile 未配置或 instance_id 不可用时，status 输出提供明确的降级表现与错误信息（不产生误导性值）。
+  - 有覆盖核心路径的自动化测试：profile 选择逻辑、status 输出字段存在性与稳定性。
+  source: chat
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs: []
+- req_id: REQ-0003
+  created_at: '2026-02-15T08:19:46Z'
+  updated_at: '2026-02-15T08:19:46Z'
+  status: NEED_PM_DECISION
+  title: 默认使用 API KEY 认证并禁用 OAuth
+  text: 必须默认使用 API KEY 作为认证方式，禁止 OAuth（codex login）
+  workstreams:
+  - ai
+  - devops
+  priority: P0
+  rationale: 新需求要求将 LLM/控制平面认证默认切换为 API KEY 且完全禁用 OAuth（codex login）。该要求与现有“默认必须 OAuth”的安全/合规方向直接相悖，需明确产品与安全策略取舍。
+  constraints:
+  - 默认认证方式必须为 API KEY
+  - 不得提供、启用或依赖 OAuth（codex login）认证路径
+  - 系统不得在任何场景尝试使用 OAuth 获取或刷新访问令牌
+  acceptance:
+  - 在无额外配置的默认安装/启动流程中，系统仅通过 API KEY 完成 LLM 认证并可成功发起请求
+  - 当用户配置或触发 OAuth（codex login）相关流程时，系统明确失败并提示不支持 OAuth（不可静默回退）
+  - 官方文档与示例配置不再包含 OAuth（codex login）作为可选认证方式
+  source: chat
+  supersedes: []
+  conflicts_with:
+  - REQ-0001
+  decision_log_refs:
+  - docs/requirements/DEMO/conflicts/20260215T081946Z-REQ-0003.md

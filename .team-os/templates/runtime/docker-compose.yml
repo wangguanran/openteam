@@ -103,7 +103,7 @@ services:
       timeout: 5s
       retries: 12
 
-  orchestrator:
+  control-plane:
     build:
       context: ./orchestrator
     restart: unless-stopped
@@ -118,12 +118,21 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
       DATABASE_URL: postgresql://${POSTGRES_USER:-temporal}:${POSTGRES_PASSWORD}@postgres:5432/team_os
+      TEAMOS_DEMO_SEED: ${TEAMOS_DEMO_SEED:-0}
+      TEAMOS_CODEX_MODEL: ${TEAMOS_CODEX_MODEL:-}
+      # Optional override; default is /team-os/.team-os/state/runtime.db
+      RUNTIME_DB_PATH: ${RUNTIME_DB_PATH:-}
     ports:
-      - "127.0.0.1:${ORCHESTRATOR_PORT:-18080}:18080"
+      - "127.0.0.1:${CONTROL_PLANE_PORT:-8787}:8787"
     volumes:
+      # Default: read-only repo mount, with minimal writable subpaths layered on top.
       - ../team-os:/team-os:ro
+      - ../team-os/.team-os:/team-os/.team-os
+      - ../team-os/docs/requirements:/team-os/docs/requirements
+      # OAuth: reuse host Codex login state (do not commit; local-only).
+      - ${HOME}/.codex:/root/.codex:rw
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/healthz', timeout=2).read()\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=2).read()\""]
       interval: 10s
       timeout: 5s
       retries: 12

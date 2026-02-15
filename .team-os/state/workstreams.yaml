@@ -1,0 +1,46 @@
+schema_version: 1
+workstreams:
+  - id: general
+    label: "General"
+    owner_role_default: "PM-Intake"
+
+  - id: backend
+    label: "Backend / API"
+    owner_role_default: "Developer-Backend"
+
+  - id: ai
+    label: "AI / Agents"
+    owner_role_default: "Developer-AI"
+
+  - id: web
+    label: "Web / Frontend"
+    owner_role_default: "Developer-Web"
+
+  - id: ios
+    label: "iOS"
+    owner_role_default: "Developer-Web"
+
+  - id: android
+    label: "Android"
+    owner_role_default: "Developer-Web"
+
+  - id: wechat
+    label: "WeChat Mini Program"
+    owner_role_default: "Developer-Web"
+
+  - id: data
+    label: "Data / Analytics"
+    owner_role_default: "Data-Analyst"
+
+  - id: devops
+    label: "DevOps / Release"
+    owner_role_default: "Release-Ops"
+
+  - id: driver.camera
+    label: "Driver: Camera"
+    owner_role_default: "Developer-Backend"
+
+  - id: driver.lcd
+    label: "Driver: LCD"
+    owner_role_default: "Developer-Backend"
+

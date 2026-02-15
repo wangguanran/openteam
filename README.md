@@ -1,6 +1,6 @@
 # Team OS (通用 AI 开发团队操作系统)
 
-本仓库提供一个可长期运行、可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统（Team OS）”，并通过“Runtime 模板”在单机上 24/7 运行 Orchestrator + OpenHands + Temporal + Postgres。
+本仓库提供一个可长期运行、可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统（Team OS）”，并通过“Runtime 模板”在单机上 24/7 运行 Control Plane（Orchestrator） + OpenHands + Temporal + Postgres。
 
 核心约束（硬规则）：
 
@@ -36,7 +36,7 @@ make ps
   - `runtime-init/runtime-secrets`（用于在新环境生成 `team-os-runtime`）
 - Runtime 模板已落盘：`.team-os/templates/runtime/`
 - Runtime 最小闭环已验证（本机 localhost 绑定）：
-  - Orchestrator：`http://127.0.0.1:18080/healthz`
+  - Control Plane：`http://127.0.0.1:8787/healthz`（状态：`/v1/status`）
   - OpenHands Agent Server：`http://127.0.0.1:18000/alive`
   - Temporal UI：`http://127.0.0.1:18081`
   - Temporal gRPC：`127.0.0.1:7233`
@@ -71,7 +71,8 @@ cd team-os
 - `.team-os/ledger/`：任务台账、自我升级台账、pending issues
 - `.team-os/logs/`：任务全流程日志（00~07）
 - `.team-os/templates/`：模板（含 runtime 模板）
-- `.team-os/scripts/`：脚本实现
+- `scripts/`：脚本实现
+- `./teamos`：运行态 CLI（连接 Control Plane）
 
 ## 安全与闸门
 
@@ -85,4 +86,3 @@ cd team-os
 - Orchestrator：对 `.team-os/workflows` 的 durable 执行（Temporal activities/workflows）
 - 观测：OpenTelemetry 接入（trace/metrics/log correlation）
 - 供应链：镜像/依赖可审计与扫描（SBOM、签名、漏洞扫描）
-

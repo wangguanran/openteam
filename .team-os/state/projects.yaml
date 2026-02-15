@@ -1,0 +1,12 @@
+schema_version: 1
+projects:
+  - project_id: "DEMO"
+    name: "Demo Project (Team OS Mechanism)"
+    requirements_dir: "docs/requirements/DEMO"
+    workstreams:
+      - "backend"
+      - "ai"
+      - "devops"
+      - "web"
+    default_workstream_id: "ai"
+

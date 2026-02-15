@@ -1,0 +1,562 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import subprocess
+import sys
+import textwrap
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional
+
+
+try:
+    import tomli  # type: ignore
+except Exception:  # pragma: no cover
+    tomli = None
+
+
+CONFIG_DIR = Path.home() / ".teamos"
+CONFIG_PATH = CONFIG_DIR / "config.toml"
+
+
+def eprint(*a: Any) -> None:
+    print(*a, file=sys.stderr)
+
+
+def _http_json(method: str, url: str, payload: Optional[dict[str, Any]] = None, timeout_sec: int = 10) -> dict[str, Any]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, method=method, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code} {e.reason}: {body[:2000]}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"HTTP request failed: {e}") from e
+
+
+def _ensure_config_dir() -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_config() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {}
+    if tomli is None:
+        raise RuntimeError("Missing dependency: tomli (install: python3 -m pip install --user tomli)")
+    with CONFIG_PATH.open("rb") as f:
+        return tomli.load(f) or {}
+
+
+def _dump_toml(cfg: dict[str, Any]) -> str:
+    cur = cfg.get("current_profile", "")
+    profiles = cfg.get("profiles", {}) or {}
+    out: list[str] = []
+    if cur:
+        out.append(f'current_profile = "{cur}"')
+        out.append("")
+    for name, p in profiles.items():
+        out.append(f"[profiles.{name}]")
+        out.append(f'base_url = "{p.get("base_url","")}"')
+        if p.get("default_project_id"):
+            out.append(f'default_project_id = "{p.get("default_project_id")}"')
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _save_config(cfg: dict[str, Any]) -> None:
+    _ensure_config_dir()
+    CONFIG_PATH.write_text(_dump_toml(cfg), encoding="utf-8")
+
+
+def _get_profile(cfg: dict[str, Any], name: Optional[str]) -> dict[str, Any]:
+    profiles = cfg.get("profiles", {}) or {}
+    if name:
+        if name not in profiles:
+            raise RuntimeError(f"Unknown profile: {name}. Use: teamos config show")
+        return {"name": name, **profiles[name]}
+    cur = cfg.get("current_profile")
+    if cur and cur in profiles:
+        return {"name": cur, **profiles[cur]}
+    if "local" in profiles:
+        return {"name": "local", **profiles["local"]}
+    raise RuntimeError("No profile configured. Run: teamos config init")
+
+
+def _fmt_table(headers: list[str], rows: list[list[str]]) -> str:
+    widths = [len(h) for h in headers]
+    for r in rows:
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], len(c))
+    sep = "  "
+    lines = []
+    lines.append(sep.join(h.ljust(widths[i]) for i, h in enumerate(headers)))
+    lines.append(sep.join("-" * widths[i] for i in range(len(headers))))
+    for r in rows:
+        lines.append(sep.join(r[i].ljust(widths[i]) for i in range(len(headers))))
+    return "\n".join(lines)
+
+
+def cmd_config_init(_args: argparse.Namespace) -> None:
+    if CONFIG_PATH.exists():
+        eprint(f"config_exists={CONFIG_PATH}")
+        return
+    cfg = {
+        "current_profile": "local",
+        "profiles": {
+            "local": {
+                "base_url": "http://127.0.0.1:8787",
+                "default_project_id": "DEMO",
+            }
+        },
+    }
+    _save_config(cfg)
+    print(f"config_created={CONFIG_PATH}")
+
+
+def cmd_config_add_profile(args: argparse.Namespace) -> None:
+    cfg = _load_config()
+    profiles = cfg.get("profiles", {}) or {}
+    profiles[args.name] = {"base_url": args.base_url, "default_project_id": args.default_project_id or ""}
+    cfg["profiles"] = profiles
+    if not cfg.get("current_profile"):
+        cfg["current_profile"] = args.name
+    _save_config(cfg)
+    print(f"profile_added={args.name}")
+
+
+def cmd_config_use(args: argparse.Namespace) -> None:
+    cfg = _load_config()
+    profiles = cfg.get("profiles", {}) or {}
+    if args.name not in profiles:
+        raise RuntimeError(f"Unknown profile: {args.name}")
+    cfg["current_profile"] = args.name
+    _save_config(cfg)
+    print(f"profile_in_use={args.name}")
+
+
+def cmd_config_show(_args: argparse.Namespace) -> None:
+    cfg = _load_config()
+    print(CONFIG_PATH)
+    print(_dump_toml(cfg))
+
+
+def _base_url(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+    cfg = _load_config()
+    prof = _get_profile(cfg, args.profile)
+    base = str(prof.get("base_url") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("profile.base_url is empty; run: teamos config show")
+    return base, prof
+
+
+def _default_project_id(prof: dict[str, Any], args: argparse.Namespace) -> str:
+    return args.project or (prof.get("default_project_id") or "DEMO")
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    st = _http_json("GET", base + "/v1/status")
+    instance_id = st.get("instance_id", "")
+    focus = st.get("current_focus") or {}
+
+    project_id = _default_project_id(prof, args)
+    workstream_id = args.workstream
+
+    pending = st.get("pending_decisions") or []
+    if pending:
+        print(f"PENDING_DECISIONS ({len(pending)}) profile={prof['name']} instance_id={instance_id}")
+        for i, d in enumerate(pending, 1):
+            print(f"{i}. {d.get('type')} {d.get('project_id','')} {d.get('req_id','')}".strip())
+        print()
+
+    print(f"profile={prof['name']} instance_id={instance_id}")
+    print(f"focus.objective={focus.get('objective','')}")
+    print(f"focus.updated_at={focus.get('updated_at','')}")
+    print()
+
+    agents = st.get("agents") or []
+    if project_id:
+        agents = [a for a in agents if a.get("project_id") == project_id]
+    if workstream_id:
+        agents = [a for a in agents if a.get("workstream_id") == workstream_id]
+
+    rows = []
+    for a in agents:
+        rows.append(
+            [
+                str(a.get("agent_id", ""))[:8],
+                str(a.get("role_id", "")),
+                str(a.get("state", "")),
+                str(a.get("task_id", "")),
+                str(a.get("current_action", ""))[:40],
+                str(a.get("last_heartbeat", "")),
+            ]
+        )
+    print(f"agents={len(rows)} (project_id={project_id}{' workstream_id='+workstream_id if workstream_id else ''})")
+    if rows:
+        print(_fmt_table(["agent", "role", "state", "task", "action", "heartbeat"], rows))
+    else:
+        print("(none)")
+    print()
+
+    tasks = st.get("tasks") or []
+    if project_id:
+        tasks = [t for t in tasks if t.get("project_id") == project_id]
+    if workstream_id:
+        tasks = [t for t in tasks if t.get("workstream_id") == workstream_id]
+    rows = []
+    for t in tasks:
+        rows.append(
+            [
+                str(t.get("task_id", "")),
+                str(t.get("state", "")),
+                str(t.get("owner_role", "")),
+                str(t.get("workstream_id", "")),
+                "YES" if t.get("need_pm_decision") else "",
+            ]
+        )
+    print(f"tasks={len(rows)}")
+    if rows:
+        print(_fmt_table(["task_id", "state", "owner", "workstream", "NEED_PM"], rows))
+    else:
+        print("(none)")
+
+
+def cmd_focus(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    if args.set:
+        payload = {"objective": args.set}
+        out = _http_json("POST", base + "/v1/focus", payload)
+        print(f"updated objective={out.get('objective','')}")
+        return
+    out = _http_json("GET", base + "/v1/focus")
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+def cmd_agents(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    project_id = _default_project_id(prof, args) if not args.all else None
+    q = {}
+    if project_id:
+        q["project_id"] = project_id
+    if args.workstream:
+        q["workstream_id"] = args.workstream
+    if args.state:
+        q["state"] = args.state
+    if args.role:
+        q["role_id"] = args.role
+    url = base + "/v1/agents"
+    if q:
+        url += "?" + urllib.parse.urlencode(q)
+    out = _http_json("GET", url)
+    agents = out.get("agents") or []
+    rows = []
+    for a in agents:
+        rows.append(
+            [
+                str(a.get("agent_id", ""))[:8],
+                str(a.get("role_id", "")),
+                str(a.get("project_id", "")),
+                str(a.get("workstream_id", "")),
+                str(a.get("task_id", "")),
+                str(a.get("state", "")),
+                str(a.get("current_action", ""))[:50],
+                str(a.get("last_heartbeat", "")),
+            ]
+        )
+    if rows:
+        print(_fmt_table(["agent", "role", "project", "workstream", "task", "state", "action", "heartbeat"], rows))
+    else:
+        print("(none)")
+
+
+def cmd_tasks(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    project_id = _default_project_id(prof, args) if args.project or not args.all else None
+    q = {"limit": args.limit, "offset": args.offset}
+    if project_id:
+        q["project_id"] = project_id
+    if args.workstream:
+        q["workstream_id"] = args.workstream
+    if args.state:
+        q["state"] = args.state
+    url = base + "/v1/tasks?" + urllib.parse.urlencode(q)
+    out = _http_json("GET", url)
+    tasks = out.get("tasks") or []
+    rows = []
+    for t in tasks:
+        rows.append(
+            [
+                str(t.get("task_id", "")),
+                str(t.get("state", "")),
+                str(t.get("owner_role", "")),
+                str(t.get("project_id", "")),
+                str(t.get("workstream_id", "")),
+                "YES" if t.get("need_pm_decision") else "",
+                str(t.get("risk", "")),
+            ]
+        )
+    if rows:
+        print(_fmt_table(["task_id", "state", "owner", "project", "workstream", "NEED_PM", "risk"], rows))
+    else:
+        print("(none)")
+
+
+def cmd_req_add(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    project_id = _default_project_id(prof, args)
+    payload = {
+        "project_id": project_id,
+        "workstream_id": args.workstream,
+        "requirement_text": args.text,
+        "priority": args.priority,
+        "rationale": args.rationale or "",
+        "constraints": args.constraints or None,
+        "acceptance": args.acceptance or None,
+        "source": args.source or "cli",
+    }
+    out = _http_json("POST", base + "/v1/requirements", payload, timeout_sec=120)
+    print(out.get("summary", "").rstrip())
+    if out.get("pending_decisions"):
+        print("\nPENDING_DECISIONS:")
+        for d in out["pending_decisions"]:
+            print(json.dumps(d, ensure_ascii=False))
+
+
+def cmd_req_list(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    project_id = _default_project_id(prof, args)
+    out = _http_json("GET", base + "/v1/requirements?project_id=" + urllib.parse.quote(project_id))
+    reqs = out.get("requirements") or []
+    rows = []
+    for r in reqs:
+        st = str(r.get("status", ""))
+        if args.show_conflicts:
+            rows.append(
+                [
+                    str(r.get("req_id", "")),
+                    st,
+                    str(r.get("priority", "")),
+                    ",".join(r.get("conflicts_with") or []),
+                    (",".join(r.get("decision_log_refs") or [])[:80]),
+                    str(r.get("title", ""))[:60],
+                ]
+            )
+        else:
+            rows.append([str(r.get("req_id", "")), st, str(r.get("priority", "")), str(r.get("title", ""))[:60]])
+    if rows:
+        if args.show_conflicts:
+            print(_fmt_table(["req_id", "status", "prio", "conflicts_with", "refs", "title"], rows))
+        else:
+            print(_fmt_table(["req_id", "status", "prio", "title"], rows))
+    else:
+        print("(none)")
+
+
+def cmd_req_conflicts(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    project_id = _default_project_id(prof, args)
+    out = _http_json("GET", base + "/v1/requirements?project_id=" + urllib.parse.quote(project_id))
+    reqs = out.get("requirements") or []
+    rows = []
+    for r in reqs:
+        st = str(r.get("status", "")).upper()
+        if st in ("CONFLICT", "NEED_PM_DECISION"):
+            rows.append(
+                [
+                    str(r.get("req_id", "")),
+                    st,
+                    ",".join(r.get("conflicts_with") or []),
+                    (",".join(r.get("decision_log_refs") or [])[:80]),
+                    str(r.get("title", ""))[:50],
+                ]
+            )
+    if rows:
+        print(_fmt_table(["req_id", "status", "conflicts_with", "refs", "title"], rows))
+    else:
+        print("(none)")
+
+
+def cmd_chat(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    project_id = _default_project_id(prof, args)
+    workstream_id = args.workstream
+
+    prompt = "Type a message and press Enter. Commands: /req <text>, /pause, /resume, /stop, /quit"
+    print(prompt)
+    while True:
+        try:
+            line = sys.stdin.readline()
+        except KeyboardInterrupt:
+            break
+        if not line:
+            break
+        line = line.rstrip("\n")
+        if not line.strip():
+            continue
+        if line.strip() in ("/quit", "/exit"):
+            break
+
+        msg_type = "GENERAL"
+        msg = line
+        if line.startswith("/req "):
+            msg_type = "NEW_REQUIREMENT"
+            msg = line[len("/req ") :].strip()
+        elif line.strip() == "/pause":
+            msg_type = "PAUSE"
+            msg = "pause"
+        elif line.strip() == "/resume":
+            msg_type = "RESUME"
+            msg = "resume"
+        elif line.strip() == "/stop":
+            msg_type = "STOP"
+            msg = "stop"
+
+        payload = {
+            "project_id": project_id,
+            "workstream_id": workstream_id,
+            "run_id": args.run,
+            "message": msg,
+            "message_type": msg_type,
+        }
+        out = _http_json("POST", base + "/v1/chat", payload, timeout_sec=120)
+        print(out.get("response_text", "").rstrip())
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    print(f"profile={prof['name']} base_url={base}")
+    try:
+        hz = _http_json("GET", base + "/healthz", timeout_sec=5)
+        print(f"control_plane: OK healthz.status={hz.get('status','')}")
+        st = _http_json("GET", base + "/v1/status", timeout_sec=5)
+        print(f"control_plane: OK instance_id={st.get('instance_id','')}")
+    except Exception as e:
+        print(f"control_plane: FAIL {e}")
+
+    # OAuth status (Codex CLI) - local check
+    if shutil_which("codex") is None:
+        print("codex: MISS (install codex CLI, then: codex login)")
+    else:
+        p = subprocess.run(["codex", "login", "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out = (p.stdout or b"").decode("utf-8", errors="replace").strip()
+        err = (p.stderr or b"").decode("utf-8", errors="replace").strip()
+        msg = out or err
+        if p.returncode == 0:
+            print(f"codex: OK {msg}".rstrip())
+        else:
+            print("codex: FAIL (run: codex login --device-auth)")
+            if msg:
+                print("  " + msg.splitlines()[0][:200])
+
+    # Server-side auth status (best-effort)
+    try:
+        auth = _http_json("GET", base + "/v1/auth/status", timeout_sec=5)
+        print(f"control_plane_auth: backend={auth.get('backend')} logged_in={auth.get('logged_in')} msg={str(auth.get('message',''))[:120]}")
+    except Exception as e:
+        print(f"control_plane_auth: WARN {e}")
+
+
+def shutil_which(cmd: str) -> Optional[str]:
+    import shutil
+
+    return shutil.which(cmd)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    p = argparse.ArgumentParser(prog="teamos", description="Team OS CLI (Control Plane client)")
+    p.add_argument("--profile", help="profile name (from ~/.teamos/config.toml)")
+
+    sp = p.add_subparsers(dest="cmd", required=True)
+
+    # config
+    cfg = sp.add_parser("config")
+    cfg_sp = cfg.add_subparsers(dest="subcmd", required=True)
+    cfg_sp.add_parser("init").set_defaults(fn=cmd_config_init)
+    ap = cfg_sp.add_parser("add-profile")
+    ap.add_argument("name")
+    ap.add_argument("base_url")
+    ap.add_argument("--default-project-id")
+    ap.set_defaults(fn=cmd_config_add_profile)
+    up = cfg_sp.add_parser("use")
+    up.add_argument("name")
+    up.set_defaults(fn=cmd_config_use)
+    cfg_sp.add_parser("show").set_defaults(fn=cmd_config_show)
+
+    st = sp.add_parser("status")
+    st.add_argument("--project")
+    st.add_argument("--workstream")
+    st.set_defaults(fn=cmd_status)
+
+    fc = sp.add_parser("focus")
+    fc.add_argument("--set")
+    fc.set_defaults(fn=cmd_focus)
+
+    ag = sp.add_parser("agents")
+    ag.add_argument("--all", action="store_true")
+    ag.add_argument("--project")
+    ag.add_argument("--workstream")
+    ag.add_argument("--state")
+    ag.add_argument("--role")
+    ag.set_defaults(fn=cmd_agents)
+
+    tk = sp.add_parser("tasks")
+    tk.add_argument("--all", action="store_true")
+    tk.add_argument("--project")
+    tk.add_argument("--workstream")
+    tk.add_argument("--state")
+    tk.add_argument("--limit", type=int, default=50)
+    tk.add_argument("--offset", type=int, default=0)
+    tk.set_defaults(fn=cmd_tasks)
+
+    ch = sp.add_parser("chat")
+    ch.add_argument("--project")
+    ch.add_argument("--workstream")
+    ch.add_argument("--run")
+    ch.set_defaults(fn=cmd_chat)
+
+    req = sp.add_parser("req")
+    req_sp = req.add_subparsers(dest="subcmd", required=True)
+    ra = req_sp.add_parser("add")
+    ra.add_argument("text")
+    ra.add_argument("--project")
+    ra.add_argument("--workstream")
+    ra.add_argument("--priority", default="P2")
+    ra.add_argument("--rationale")
+    ra.add_argument("--constraints", nargs="*")
+    ra.add_argument("--acceptance", nargs="*")
+    ra.add_argument("--source")
+    ra.set_defaults(fn=cmd_req_add)
+    rl = req_sp.add_parser("list")
+    rl.add_argument("--project")
+    rl.add_argument("--show-conflicts", action="store_true")
+    rl.set_defaults(fn=cmd_req_list)
+    rc = req_sp.add_parser("conflicts")
+    rc.add_argument("--project")
+    rc.set_defaults(fn=cmd_req_conflicts)
+
+    doc = sp.add_parser("doctor")
+    doc.set_defaults(fn=cmd_doctor)
+
+    args = p.parse_args(argv)
+    try:
+        args.fn(args)
+        return 0
+    except Exception as e:
+        eprint(f"ERROR: {e}")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

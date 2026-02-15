@@ -1,7 +1,10 @@
 id: "<TASK_ID>"
 title: "<TITLE>"
+project_id: "DEMO" # project registry: .team-os/state/projects.yaml
+workstream_id: "general" # workstream registry: .team-os/state/workstreams.yaml
 status: "intake" # intake|plan|todo|work|test|release|observe|retro|closed
 risk_level: "R1" # R0|R1|R2|R3
+need_pm_decision: false
 approvals_required:
   - "R2/R3 actions"
 owners:
@@ -21,4 +24,3 @@ artifacts:
 evidence:
   - type: "log"
     path: ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
-

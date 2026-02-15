@@ -2,7 +2,7 @@
 
 单机运行时环境（Docker Compose），用于 24/7 跑：
 
-- Orchestrator（Python + OpenAI Agents SDK）
+- Control Plane（Python + FastAPI + OpenAI Agents SDK）
 - OpenHands Agent Server（隔离执行平面）
 - Temporal + UI（durable workflow）
 - Postgres（Temporal DB + 运行时元数据预留）
@@ -11,6 +11,7 @@
 
 - 本目录仅提交 `.env.example`，真实 `.env` 不得入库。
 - `openhands-agent-server` 默认挂载 Docker socket（高风险能力）。不要暴露到公网；任何公网暴露属于审批项。
+- Control Plane 默认通过挂载 `${HOME}/.codex` 复用 Codex OAuth 登录态（本机文件，不入库）。如未登录：先执行 `codex login` 或 `codex login --device-auth`。
 
 ## 启动/停止
 
@@ -36,10 +37,11 @@ cd team-os-runtime
 make logs
 ```
 
-Orchestrator health：
+Control Plane health：
 
 ```bash
-curl -fsS http://127.0.0.1:${ORCHESTRATOR_PORT:-18080}/healthz
+curl -fsS http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/healthz
+curl -fsS http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/status
 ```
 
 Temporal UI：
@@ -61,3 +63,12 @@ curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
 - `make ps`
 - `make logs`
 - `make doctor`
+
+## teamos CLI（在 team-os 仓库）
+
+```bash
+cd ../team-os
+./teamos config init
+./teamos status
+./teamos chat --project DEMO
+```

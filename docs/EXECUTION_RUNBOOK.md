@@ -8,10 +8,11 @@
 - 软件：
   - `git`
   - `docker` + `docker compose`
-  - `python3` + `pip3`（Runtime orchestrator 需要）
+  - `python3` + `pip3`（可选；用于本机直接运行 Control Plane/脚本/测试）
   - （可选）`gh`（自动开 issue/PR）
 - 账号与权限：
-  - OpenAI API Key（放到本地 `.env` 或环境变量，不入库）
+  - Codex CLI OAuth 登录（默认 LLM 认证方式；执行 `codex login` / `codex login --device-auth`；不入库）
+  - （可选）OpenAI API Key（仅在你显式允许 fallback 时使用；只能放本地 `.env` 或环境变量，不入库）
   - （可选）GitHub Token（仅用于 `gh`/API 操作，不入库）
 
 ## 2. 推荐执行环境
@@ -21,10 +22,10 @@
 
 ## 3. 组件说明 (Runtime)
 
-- Orchestrator（Python + OpenAI Agents SDK）：控制平面，多角色协作与审计落盘
+- Control Plane（Python + FastAPI + OpenAI Agents SDK）：控制平面，多角色协作与审计落盘；对外提供 HTTP API 供 CLI 查询/对话/注入需求
 - OpenHands Agent Server：隔离执行平面
 - Temporal：Durable workflow
-- Postgres：运行时元数据与索引（知识库与记忆仍以 git 文件为准）
+- Postgres：Temporal DB + 运行时元数据预留（Control Plane 的 agent_registry/events 默认使用本地 SQLite：`.team-os/state/runtime.db`；后续可迁移到 Postgres）
 
 ## 4. 日常操作 (Team OS 仓库)
 
@@ -66,6 +67,38 @@ make up
 make ps
 ```
 
+### 5.1 Control Plane（控制平面）与 teamos CLI
+
+Control Plane HTTP API 默认只监听本机端口（建议 `127.0.0.1:8787`），用于：
+
+- 查询运行态：focus/agents/tasks/runs/pending decisions
+- 注入对话与新增需求（NEW_REQUIREMENT）
+- 需求登记与冲突检测（冲突自动进入 NEED_PM_DECISION）
+
+健康检查：
+
+```bash
+curl -fsS http://127.0.0.1:8787/healthz
+curl -fsS http://127.0.0.1:8787/v1/status
+```
+
+初始化 CLI profile 并查看状态：
+
+```bash
+cd team-os
+./teamos config init
+./teamos status
+```
+
+交互式对话（支持 `/req` 注入需求）：
+
+```bash
+cd team-os
+./teamos chat --project DEMO
+# 输入：/req 新增需求文本
+# 输入：/quit 退出
+```
+
 启动（需要先创建 `.env`，不要入库）：
 
 ```bash
@@ -75,6 +108,70 @@ cp .env.example .env
 make up
 make ps
 make logs
+```
+
+### 5.2 需求登记与冲突处理（Requirements）
+
+每个项目（`project_id`）的需求主文档位于：
+
+- `docs/requirements/<project_id>/requirements.yaml`（机读事实源）
+- `docs/requirements/<project_id>/REQUIREMENTS.md`（人读汇总）
+- `docs/requirements/<project_id>/conflicts/`（冲突报告）
+- `docs/requirements/<project_id>/CHANGELOG.md`（变更日志）
+
+新增需求（两种方式等价）：
+
+```bash
+cd team-os
+./teamos req add "需求文本" --project DEMO --workstream ai --priority P1
+```
+
+或：
+
+```bash
+cd team-os
+./teamos chat --project DEMO
+# 输入：/req 需求文本
+```
+
+查看与处理冲突：
+
+```bash
+cd team-os
+./teamos req list --project DEMO --show-conflicts
+./teamos req conflicts --project DEMO
+```
+
+当出现 `NEED_PM_DECISION`：
+
+1. 打开冲突报告（`docs/requirements/<project_id>/conflicts/*.md`），按 Option A/B/C 做决策。
+2. 当前 MVP 默认由 PM 人工落盘决策结果：更新 `requirements.yaml`（例如将被否决的需求标记为 `DEPRECATED`，并补齐 `supersedes/conflicts_with/decision_log_refs`），然后提交变更。
+
+### 5.3 Profiles（多实例）与 Workstream（多平台协作域）
+
+Profiles 用于在同一台机器上管理多个 Team OS 实例（例如不同环境/不同项目组）：
+
+- CLI 配置文件：`~/.teamos/config.toml`
+- 添加/切换：
+
+```bash
+cd team-os
+./teamos config add-profile dev http://127.0.0.1:8787 --default-project-id DEMO
+./teamos config use dev
+./teamos config show
+```
+
+Workstream 是“平台/模块协作域”的一级概念，用于让 agents/tasks/requirements 可过滤、可并行协作：
+
+- 登记表：`.team-os/state/workstreams.yaml`
+- 约束：任务台账必须填写 `workstream_id`；需求必须包含 `workstreams`
+- 常用过滤示例：
+
+```bash
+cd team-os
+./teamos status --project DEMO --workstream ai
+./teamos agents --project DEMO --workstream devops
+./teamos tasks --project DEMO --workstream web
 ```
 
 停止：
@@ -114,7 +211,7 @@ cat backups/temporal_<timestamp>.sql | docker compose exec -T postgres psql -U "
 健康检查（示例）：
 
 ```bash
-curl -fsS http://127.0.0.1:18080/healthz
+curl -fsS http://127.0.0.1:8787/healthz
 ```
 
 OpenHands 健康检查（示例）：
@@ -142,10 +239,15 @@ make ps
 
 已验证（2026-02-15，本机 localhost 绑定）：
 
-- `postgres/temporal/temporal-ui/openhands-agent-server/orchestrator` 均为 `running/healthy`
-- Orchestrator：`curl -fsS http://127.0.0.1:18080/healthz` 返回 `{"status":"ok", ...}`
+- `postgres/temporal/temporal-ui/openhands-agent-server/control-plane` 均为 `running/healthy`
+- Control Plane：`curl -fsS http://127.0.0.1:8787/healthz` 返回 `{"status":"ok", ...}`
 - OpenHands Agent Server：`curl -fsS http://127.0.0.1:18000/alive` 返回 `{"status":"ok"}`
 - Temporal UI：`http://127.0.0.1:18081`
+
+新增（Control Plane + CLI）验收点（完成后在此落证据）：
+
+- Control Plane：`curl -fsS http://127.0.0.1:8787/v1/status`
+- CLI：`cd team-os && ./teamos status`
 
 ## 7. 新任务怎么开始 (Genesis)
 
@@ -205,7 +307,7 @@ cd team-os
 - 端口冲突：用 `lsof -iTCP -sTCP:LISTEN -n -P | rg <port>`
 - Temporal 不可用：查看 `docker compose logs temporal` 与 `docker compose logs temporal-ui`
 - OpenHands 不可用：查看 `docker compose logs openhands-agent-server`，确认是否需要 docker socket（风险见 `docs/SECURITY.md`）
-- Orchestrator 健康检查失败：查看 `docker compose logs orchestrator`
+- Control Plane 健康检查失败：查看 `docker compose logs control-plane`
 
 ## 14. TODO
 
