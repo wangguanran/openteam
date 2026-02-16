@@ -15,8 +15,13 @@ git clone https://github.com/wangguanran/team-os.git
 cd team-os
 ./scripts/teamos.sh doctor
 
-# 创建任务（默认 00~02；用 --full 生成 00~07）
-./scripts/teamos.sh new-task --full "一句话需求标题"
+# 初始化 Workspace（所有 project:<id> 真相源必须落在 Workspace，不在 team-os/ 目录树内）
+./teamos config init
+./teamos workspace init
+./teamos workspace doctor
+
+# 创建任务（默认生成 00~07；用 --short 仅生成 00~02）
+./scripts/teamos.sh new-task "一句话需求标题"
 
 # 生成运行时目录（默认创建到 ../team-os-runtime）
 ./scripts/teamos.sh runtime-init
@@ -25,6 +30,39 @@ cd team-os
 cd ../team-os-runtime
 make up
 make ps
+```
+
+## Repo vs Workspace（硬隔离）
+
+`team-os/` git 仓库必须**只包含 Team OS 自身相关文件**（代码/模板/策略/文档/evals/集成适配器等）。
+
+任何 `project:<id>` 的真相源文件（requirements/冲突报告/任务台账/任务日志/prompts/知识库/状态快照/项目 repo workdir 等）必须落在 **Workspace**（不在 `team-os/` 目录树内）：
+
+```text
+~/.teamos/workspace/
+  projects/
+    <project_id>/
+      repo/        # 项目代码工作区（clone/checkout）
+      state/
+        ledger/tasks/
+        logs/tasks/
+        requirements/
+        prompts/
+        plan/
+        kb/
+        cluster/
+  shared/cache/
+  shared/tmp/
+  config/workspace.toml
+```
+
+如果你之前在 `team-os/` 仓库内留下了 demo/project 文件，必须迁移出去：
+
+```bash
+cd team-os
+./teamos workspace migrate --from-repo   # dry-run
+# apply 属于高风险：会移动/删除仓库内文件（数据仍会在 Workspace 中保留）
+./teamos workspace migrate --from-repo --force
 ```
 
 ## 项目状态（截至 2026-02-15）

@@ -38,3 +38,39 @@ yarn-error.log*
 
 # Conversations can contain sensitive free-form content; keep local by default
 .team-os/ledger/conversations/
+
+# --- Secrets / credentials (must never be committed) ---
+*_token*
+*credentials*
+.secrets/
+secrets/
+
+# SSH keys / certs that may be accidentally copied into the repo
+**/.ssh/
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+known_hosts
+
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.cer
+*.der
+*.jks
+
+# sshpass temp files (avoid accidental check-in)
+sshpass*
+
+# Self-improve runtime state (debounce checkpoints; not a source of truth)
+.team-os/state/self_improve_last_run.*
+
+# Common scratch dirs
+.tmp/
+tmp/
+
+# Backup files created by Team OS scripts/migrations (keep local)
+*.bak.*

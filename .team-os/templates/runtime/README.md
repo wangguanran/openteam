@@ -13,6 +13,31 @@
 - `openhands-agent-server` 默认挂载 Docker socket（高风险能力）。不要暴露到公网；任何公网暴露属于审批项。
 - Control Plane 默认通过挂载 `${HOME}/.codex` 复用 Codex OAuth 登录态（本机文件，不入库）。如未登录：先执行 `codex login` 或 `codex login --device-auth`。
 
+## Repo vs Workspace（硬隔离）
+
+Team OS 有两个层级的“真相源”：
+
+- **Team OS 自身**（scope=`teamos`）：允许落盘在 `team-os/` git 仓库内（例如 `docs/teamos/requirements`、`.team-os/ledger`）。
+- **任何项目**（scope=`project:<id>`）：必须落盘在 **Workspace**（不在 `team-os/` 目录树内）。
+
+默认 Workspace 路径：
+
+- `~/.teamos/workspace`
+
+Runtime 会挂载宿主机 Workspace 到容器内：
+
+- host: `${HOME}/.teamos/workspace`
+- container: `/teamos-workspace`
+- env: `TEAMOS_WORKSPACE_ROOT=/teamos-workspace`
+
+在启动 runtime 前，建议先初始化 Workspace：
+
+```bash
+cd ../team-os
+./teamos workspace init
+./teamos workspace doctor
+```
+
 ## 启动/停止
 
 ```bash
@@ -70,7 +95,7 @@ curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
 cd ../team-os
 ./teamos config init
 ./teamos status
-./teamos chat --project DEMO
+./teamos chat --project teamos
 ./teamos panel show --project demo
 ./teamos panel sync --project demo --dry-run --full
 ```

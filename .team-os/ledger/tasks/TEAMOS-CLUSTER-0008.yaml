@@ -1,26 +1,37 @@
-id: "TEAMOS-CLUSTER-0008"
-title: "资源守卫：软限流并发策略 + check_resources.py + 周期写 resources snapshot"
-project_id: "teamos"
-workstream_id: "devops"
-status: "todo"
-risk_level: "R1"
+id: TEAMOS-CLUSTER-0008
+title: 资源守卫：软限流并发策略 + check_resources.py + 周期写 resources snapshot
+project_id: teamos
+workstream_id: devops
+status: todo
+risk_level: R1
 need_pm_decision: false
 approvals_required:
-  - "无（仅本机资源观测；不做系统级配置修改）"
+- 无（仅本机资源观测；不做系统级配置修改）
 owners:
-  - "QA"
+- QA
 roles_involved:
-  - "QA"
-  - "Developer-Backend"
+- QA
+- Developer-Backend
 workflows:
-  - "Delivery"
-created_at: "2026-02-15T12:30:00Z"
-updated_at: "2026-02-15T12:30:00Z"
-start_date: "2026-02-18"
-target_date: "2026-03-05"
+- Delivery
+created_at: '2026-02-15T12:30:00Z'
+updated_at: '2026-02-15T12:30:00Z'
+start_date: '2026-02-18'
+target_date: '2026-03-05'
 links: {}
 artifacts:
-  ledger: ".team-os/ledger/tasks/TEAMOS-CLUSTER-0008.yaml"
-  logs_dir: ".team-os/logs/tasks/TEAMOS-CLUSTER-0008/"
+  ledger: .team-os/ledger/tasks/TEAMOS-CLUSTER-0008.yaml
+  logs_dir: .team-os/logs/tasks/TEAMOS-CLUSTER-0008/
 evidence: []
-
+repo:
+  locator: ''
+  workdir: ''
+  branch: ''
+  mode: auto
+checkpoint:
+  stage: todo
+  last_event_ts: '2026-02-16T00:26:17Z'
+recovery:
+  last_scan_at: ''
+  last_resume_at: ''
+  notes: ''

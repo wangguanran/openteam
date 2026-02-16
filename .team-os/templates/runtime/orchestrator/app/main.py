@@ -7,8 +7,9 @@ from typing import Any, Optional
 
 import yaml
 from agents import Agent  # OpenAI Agents SDK (placeholder; must not call models on startup)
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import codex_llm
@@ -19,22 +20,47 @@ from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
 from .requirements_store import RequirementsError, add_requirement
 from .runtime_db import RuntimeDB
+from .self_improve_runner import SelfImproveError
+from . import self_improve_runner
+from . import cluster_manager
 from .state_store import (
     StateError,
-    conversations_dir,
     ensure_instance_id,
     ledger_tasks_dir,
+    logs_tasks_dir,
     load_focus,
-    load_projects,
     load_workstreams,
     github_projects_mapping_path,
-    requirements_dir_for_project,
     save_focus,
     team_os_root,
+    teamos_requirements_dir,
 )
+from . import workspace_store
 
 
 app = FastAPI(title="Team OS Control Plane", version="0.2.0")
+
+
+@app.exception_handler(workspace_store.WorkspaceError)
+async def _workspace_error(_req: Request, exc: Exception):
+    # Defensive: never allow project writes to land inside the team-os git repo.
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": str(exc),
+            "hint": "Ensure workspace is initialized and outside the team-os repo: run `teamos workspace init` and set TEAMOS_WORKSPACE_ROOT for the control-plane.",
+        },
+    )
+
+
+@app.exception_handler(StateError)
+async def _state_error(_req: Request, exc: Exception):
+    return JSONResponse(status_code=400, content={"error": str(exc), "hint": "Check configuration and workspace. Try: teamos workspace doctor"})
+
+
+@app.exception_handler(RequirementsError)
+async def _requirements_error(_req: Request, exc: Exception):
+    return JSONResponse(status_code=400, content={"error": str(exc), "hint": "Requirements store error. Try: teamos req list/conflicts"})
 
 
 # Minimal placeholder agent. Never call models on startup.
@@ -84,6 +110,103 @@ _PANEL_DIRTY: set[str] = set()
 _PANEL_LOCK = threading.Lock()
 
 
+def _is_teamos(project_id: str) -> bool:
+    return str(project_id or "").strip() == "teamos"
+
+
+def _workspace_root() -> Path:
+    return workspace_store.workspace_root()
+
+
+def _workspace_exists() -> bool:
+    try:
+        return _workspace_root().exists()
+    except Exception:
+        return False
+
+
+def _list_workspace_projects() -> list[str]:
+    if not _workspace_exists():
+        return []
+    try:
+        return workspace_store.list_projects()
+    except Exception:
+        return []
+
+
+def _all_project_ids() -> list[str]:
+    # Always include teamos (repo scope), plus any workspace projects.
+    ids = ["teamos"]
+    for pid in _list_workspace_projects():
+        if pid != "teamos":
+            ids.append(pid)
+    return ids
+
+
+def _ensure_workspace_safe_for_project_writes() -> None:
+    # Hard gate: any project truth-source artifacts must live OUTSIDE the team-os git repo.
+    workspace_store.assert_project_paths_outside_repo(team_os_root=team_os_root())
+
+
+def _requirements_dir(project_id: str, *, ensure: bool) -> Path:
+    if _is_teamos(project_id):
+        return teamos_requirements_dir()
+    _ensure_workspace_safe_for_project_writes()
+    if ensure:
+        workspace_store.ensure_project_scaffold(project_id)
+    return workspace_store.requirements_dir(project_id)
+
+
+def _plan_dir(project_id: str, *, ensure: bool) -> Path:
+    if _is_teamos(project_id):
+        # teamos plan stays in-repo (scope=teamos).
+        return team_os_root() / "docs" / "plan" / "teamos"
+    _ensure_workspace_safe_for_project_writes()
+    if ensure:
+        workspace_store.ensure_project_scaffold(project_id)
+    return workspace_store.plan_dir(project_id)
+
+
+def _ledger_tasks_dir(project_id: str, *, ensure: bool) -> Path:
+    if _is_teamos(project_id):
+        return ledger_tasks_dir()
+    _ensure_workspace_safe_for_project_writes()
+    if ensure:
+        workspace_store.ensure_project_scaffold(project_id)
+    return workspace_store.ledger_tasks_dir(project_id)
+
+
+def _logs_tasks_dir(project_id: str, *, ensure: bool) -> Path:
+    if _is_teamos(project_id):
+        return logs_tasks_dir()
+    _ensure_workspace_safe_for_project_writes()
+    if ensure:
+        workspace_store.ensure_project_scaffold(project_id)
+    return workspace_store.logs_tasks_dir(project_id)
+
+
+def _conversations_dir(project_id: str, *, ensure: bool) -> Path:
+    if _is_teamos(project_id):
+        return team_os_root() / ".team-os" / "ledger" / "conversations" / "teamos"
+    _ensure_workspace_safe_for_project_writes()
+    if ensure:
+        workspace_store.ensure_project_scaffold(project_id)
+    return workspace_store.conversations_dir(project_id)
+
+
+def _active_projects_summary() -> list[dict[str, Any]]:
+    # Projects are discovered from workspace. Team OS self is always present.
+    ws_list = _list_workspace_projects()
+    out: list[dict[str, Any]] = []
+    # Team OS self project (repo scope)
+    out.append({"project_id": "teamos", "name": "Team OS Development", "workstreams": [w.get("id") for w in (load_workstreams() or []) if w.get("id")]})
+    for pid in ws_list:
+        if pid == "teamos":
+            continue
+        out.append({"project_id": pid, "name": pid, "workstreams": []})
+    return out
+
+
 def _env_truthy(name: str, default: str = "1") -> bool:
     v = os.getenv(name, default).strip().lower()
     return v not in ("0", "false", "no", "off", "")
@@ -99,10 +222,8 @@ def _mark_panel_dirty(project_id: Optional[str] = None) -> None:
         if project_id:
             _PANEL_DIRTY.add(str(project_id))
         else:
-            for p in load_projects():
-                pid = str(p.get("project_id") or "").strip()
-                if pid:
-                    _PANEL_DIRTY.add(pid)
+            for pid in _all_project_ids():
+                _PANEL_DIRTY.add(pid)
 
 
 def _panel_auto_sync_loop() -> None:
@@ -210,17 +331,10 @@ def _startup_background_threads() -> None:
 
 def _seed_if_enabled() -> None:
     if os.getenv("TEAMOS_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
-        # Seed minimal demo data for each registered project (safe; idempotent per project_id).
-        projects = load_projects()
-        if not projects:
-            seed_mock_data(DB, project_id="DEMO", workstream_id="ai")
-            return
-        for p in projects:
-            pid = str(p.get("project_id") or "").strip()
-            if not pid:
-                continue
-            wsid = str(p.get("default_workstream_id") or "general")
-            seed_mock_data(DB, project_id=pid, workstream_id=wsid)
+        # Seed minimal demo data for each existing workspace project (safe; idempotent per project_id).
+        # This does not create any project truth-source files inside the team-os repo.
+        for pid in _list_workspace_projects():
+            seed_mock_data(DB, project_id=pid, workstream_id="general")
 
 
 _seed_if_enabled()
@@ -260,31 +374,67 @@ class PanelSyncIn(BaseModel):
     dry_run: bool = False
 
 
+class SelfImproveIn(BaseModel):
+    dry_run: bool = True
+    force: bool = False
+    trigger: str = "api"  # api|cli_auto|manual
+
+
+class NodeRegisterIn(BaseModel):
+    instance_id: str
+    role_preference: str = "auto"  # brain|assistant|auto
+    base_url: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    resources: dict[str, Any] = Field(default_factory=dict)
+    agent_policy: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+
+
+class NodeHeartbeatIn(BaseModel):
+    instance_id: str
+
+
+class TaskNewIn(BaseModel):
+    title: str = Field(..., min_length=1)
+    project_id: str
+    repo_locator: Optional[str] = None
+    create_repo_if_missing: bool = False
+    visibility: str = "private"  # private|public
+    org: Optional[str] = None
+    workstreams: Optional[list[str]] = None
+    required_capabilities: Optional[list[str]] = None
+    mode: str = "auto"  # auto|bootstrap|upgrade
+    dry_run: bool = True  # safety default: do not touch remotes
+
+
+class RecoveryResumeIn(BaseModel):
+    task_id: Optional[str] = None
+    all: bool = False
+
+
 @app.get("/healthz")
 def healthz(response: Response):
     team_os_path = os.getenv("TEAM_OS_REPO_PATH", "/team-os")
     checks = _team_os_checks(team_os_path)
     ok = checks["exists"] and checks["workflows_dir_exists"] and checks["roles_dir_exists"]
+    db = {"backend": ("postgres" if (os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
+    try:
+        # Minimal DB probe (no side effects).
+        _ = DB.list_events(after_id=0, limit=1)
+    except Exception as e:
+        db["ok"] = False
+        db["error"] = str(e)[:200]
     if not ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"status": "ok" if ok else "degraded", "checks": checks}
+    return {"status": "ok" if ok else "degraded", "checks": checks, "db": db}
 
 
 @app.get("/v1/status")
 def v1_status():
     instance_id = ensure_instance_id()
     focus = load_focus()
-
-    projects = load_projects()
-    active_projects = []
-    for p in projects:
-        active_projects.append(
-            {
-                "project_id": p.get("project_id"),
-                "name": p.get("name"),
-                "workstreams": p.get("workstreams") or [],
-            }
-        )
+    ws_root = str(_workspace_root())
+    active_projects = _active_projects_summary()
 
     runs = [r.__dict__ for r in DB.list_runs()]
     agents = [a.__dict__ for a in DB.list_agents()]
@@ -295,6 +445,8 @@ def v1_status():
 
     return {
         "instance_id": instance_id,
+        "workspace_root": ws_root,
+        "workspace_projects_count": len(_list_workspace_projects()),
         "current_focus": focus,
         "active_projects": active_projects,
         "active_runs": runs,
@@ -572,12 +724,14 @@ def v1_chat(payload: ChatIn):
         pending += out["pending_decisions"]
         response_lines.append(out["summary"])
     else:
+        day = _utc_now_iso().split("T", 1)[0]
+        conv_path = _conversations_dir(project_id, ensure=True) / f"{day}.jsonl"
         response_lines.append(
             "\n".join(
                 [
                     "Message recorded.",
                     f"- project_id={project_id} workstream_id={workstream_id} message_type={msg_type}",
-                    f"- conversation_log=.team-os/ledger/conversations/{project_id}/<YYYY-MM-DD>.jsonl",
+                    f"- conversation_log={conv_path}",
                     "Tip: use `/req <text>` in CLI or set message_type=NEW_REQUIREMENT to register requirements with conflict check.",
                 ]
             )
@@ -605,7 +759,7 @@ def v1_requirements_add(payload: RequirementIn):
 
 @app.get("/v1/requirements")
 def v1_requirements_list(project_id: str):
-    req_dir = requirements_dir_for_project(project_id)
+    req_dir = _requirements_dir(project_id, ensure=False)
     y = req_dir / "requirements.yaml"
     if not y.exists():
         return {"project_id": project_id, "requirements": [], "conflicts_dir": str(req_dir / "conflicts")}
@@ -616,6 +770,332 @@ def v1_requirements_list(project_id: str):
         "requirements_dir": str(req_dir),
         "requirements": data.get("requirements") or [],
     }
+
+
+@app.get("/v1/nodes")
+def v1_nodes():
+    return {"nodes": [n.__dict__ for n in DB.list_nodes()]}
+
+
+@app.post("/v1/nodes/register")
+def v1_nodes_register(payload: NodeRegisterIn):
+    DB.upsert_node(
+        instance_id=str(payload.instance_id),
+        role_preference=str(payload.role_preference or "auto"),
+        base_url=str(payload.base_url or ""),
+        capabilities=list(payload.capabilities or []),
+        resources=dict(payload.resources or {}),
+        agent_policy=dict(payload.agent_policy or {}),
+        tags=list(payload.tags or []),
+    )
+    DB.add_event(
+        event_type="NODE_REGISTERED",
+        actor="node",
+        project_id=_default_project_id(),
+        workstream_id=_default_workstream_id(),
+        payload={"instance_id": payload.instance_id, "role_preference": payload.role_preference, "capabilities": payload.capabilities, "tags": payload.tags},
+    )
+    # Best-effort: update GitHub nodes registry (remote write gated by cluster config/env).
+    try:
+        cfg = cluster_manager.load_cluster_config()
+        y = yaml.safe_dump(
+            {
+                "instance_id": payload.instance_id,
+                "role_preference": payload.role_preference,
+                "heartbeat_at": _utc_now_iso(),
+                "capabilities": payload.capabilities,
+                "resources": payload.resources,
+                "agent_policy": payload.agent_policy,
+                "tags": payload.tags,
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        )
+        cluster_manager.upsert_node_registry_comment(cfg, instance_id=payload.instance_id, body_yaml=y)
+    except Exception:
+        pass
+    return {"ok": True, "instance_id": payload.instance_id}
+
+
+@app.post("/v1/nodes/heartbeat")
+def v1_nodes_heartbeat(payload: NodeHeartbeatIn):
+    DB.heartbeat_node(instance_id=str(payload.instance_id))
+    DB.add_event(
+        event_type="NODE_HEARTBEAT",
+        actor="node",
+        project_id=_default_project_id(),
+        workstream_id=_default_workstream_id(),
+        payload={"instance_id": payload.instance_id},
+    )
+    # Best-effort: refresh GitHub nodes registry heartbeat (remote write gated).
+    try:
+        cfg = cluster_manager.load_cluster_config()
+        y = yaml.safe_dump({"instance_id": payload.instance_id, "heartbeat_at": _utc_now_iso()}, sort_keys=False, allow_unicode=True)
+        cluster_manager.upsert_node_registry_comment(cfg, instance_id=payload.instance_id, body_yaml=y)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@app.get("/v1/cluster/status")
+def v1_cluster_status():
+    instance_id = ensure_instance_id()
+    base_url = os.getenv("CONTROL_PLANE_BASE_URL", "").strip()
+    leader: dict[str, Any] = {"leader_instance_id": instance_id, "leader_base_url": base_url, "backend": "local", "lease_expires_at": ""}
+    try:
+        cfg = cluster_manager.load_cluster_config()
+        cur = cluster_manager.read_leader(cfg)
+        if cur and cur.leader_instance_id:
+            leader = cur.__dict__
+    except Exception:
+        pass
+    nodes = [n.__dict__ for n in DB.list_nodes()]
+    return {
+        "leader": leader,
+        "nodes": nodes,
+        "active_agents": [a.__dict__ for a in DB.list_agents()],
+        "active_tasks": _load_tasks_summary(),
+        "focus": load_focus(),
+        "pending_decisions": _pending_decisions(),
+        "panel": {"github_projects_mapping": str(github_projects_mapping_path())},
+    }
+
+
+@app.post("/v1/cluster/elect/attempt")
+def v1_cluster_elect_attempt():
+    instance_id = ensure_instance_id()
+    cfg = cluster_manager.load_cluster_config()
+    base_url = os.getenv("CONTROL_PLANE_BASE_URL", "").strip()
+    try:
+        out = cluster_manager.attempt_elect(cfg, instance_id=instance_id, base_url=base_url)
+        DB.add_event(event_type="CLUSTER_ELECT_ATTEMPT", actor="control-plane", project_id="teamos", workstream_id=_default_workstream_id(), payload=out)
+        return out
+    except Exception as e:
+        DB.add_event(event_type="CLUSTER_ELECT_FAILED", actor="control-plane", project_id="teamos", workstream_id=_default_workstream_id(), payload={"error": str(e)[:300]})
+        return {"success": False, "reason": str(e)[:300], "leader": {"leader_instance_id": instance_id, "backend": "local"}}
+
+
+def _ts_compact_utc() -> str:
+    return _utc_now_iso().replace(":", "").replace("-", "")
+
+
+def _render_log_template(tpl_path: Path, *, task_id: str, title: str) -> str:
+    text = tpl_path.read_text(encoding="utf-8")
+    date = _utc_now_iso().split("T", 1)[0]
+    return text.replace("{{TASK_ID}}", task_id).replace("{{TITLE}}", title).replace("{{DATE}}", date)
+
+
+def _create_task_scaffold(*, title: str, project_id: str, workstream_id: str, mode: str) -> dict[str, Any]:
+    # Task truth source:
+    # - scope=teamos -> in-repo `.team-os/ledger` + `.team-os/logs`
+    # - scope=project:<id> -> workspace `projects/<id>/state/...`
+    #
+    # Templates are always sourced from the Team OS repo.
+    root = team_os_root()
+    tasks_dir = _ledger_tasks_dir(project_id, ensure=True)
+    logs_root = _logs_tasks_dir(project_id, ensure=True)
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    logs_root.mkdir(parents=True, exist_ok=True)
+
+    # Task id
+    task_id = ""
+    for _ in range(10):
+        cand = f"TASK-{_ts_compact_utc()}"
+        if not (tasks_dir / f"{cand}.yaml").exists():
+            task_id = cand
+            break
+        time.sleep(1)
+    if not task_id:
+        raise RuntimeError("failed to generate task_id")
+
+    now = _utc_now_iso()
+    in_repo = _is_teamos(project_id)
+    artifacts_ledger = (f".team-os/ledger/tasks/{task_id}.yaml") if in_repo else (f"state/ledger/tasks/{task_id}.yaml")
+    artifacts_logs_dir = (f".team-os/logs/tasks/{task_id}/") if in_repo else (f"state/logs/tasks/{task_id}/")
+    evidence_intake = (f".team-os/logs/tasks/{task_id}/00_intake.md") if in_repo else (f"state/logs/tasks/{task_id}/00_intake.md")
+    ledger = {
+        "id": task_id,
+        "title": title,
+        "project_id": project_id,
+        "workstream_id": workstream_id,
+        "status": "intake",
+        "risk_level": "R1",
+        "need_pm_decision": False,
+        "repo": {"locator": "", "workdir": "", "branch": "", "mode": mode},
+        "checkpoint": {"stage": "intake", "last_event_ts": now},
+        "recovery": {"last_scan_at": "", "last_resume_at": "", "notes": ""},
+        "owners": ["PM-Intake"],
+        "roles_involved": ["PM-Intake"],
+        "workflows": ["Genesis"],
+        "created_at": now,
+        "updated_at": now,
+        "links": {"pr": "", "issue": ""},
+        "artifacts": {"ledger": artifacts_ledger, "logs_dir": artifacts_logs_dir},
+        "evidence": [{"type": "log", "path": evidence_intake}],
+    }
+    ledger_path = tasks_dir / f"{task_id}.yaml"
+    ledger_path.write_text(yaml.safe_dump(ledger, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    logs_dir = logs_root / task_id
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    tpls = root / ".team-os" / "templates"
+    for name, tpl in [
+        ("00_intake.md", "task_log_00_intake.md"),
+        ("01_plan.md", "task_log_01_plan.md"),
+        ("02_todo.md", "task_log_02_todo.md"),
+        ("03_work.md", "task_log_03_work.md"),
+        ("04_test.md", "task_log_04_test.md"),
+        ("05_release.md", "task_log_05_release.md"),
+        ("06_observe.md", "task_log_06_observe.md"),
+        ("07_retro.md", "task_log_07_retro.md"),
+    ]:
+        out = logs_dir / name
+        if out.exists():
+            continue
+        tp = tpls / tpl
+        if not tp.exists():
+            continue
+        out.write_text(_render_log_template(tp, task_id=task_id, title=title), encoding="utf-8")
+
+    metrics = logs_dir / "metrics.jsonl"
+    if not metrics.exists():
+        metrics.write_text(
+            json.dumps(
+                {
+                    "ts": now,
+                    "event_type": "TASK_CREATED",
+                    "actor": "control-plane",
+                    "task_id": task_id,
+                    "project_id": project_id,
+                    "workstream_id": workstream_id,
+                    "severity": "INFO",
+                    "message": "task scaffold created",
+                    "payload": {"ledger": str(ledger_path), "logs_dir": str(logs_dir)},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    return {"task_id": task_id, "ledger_path": str(ledger_path), "logs_dir": str(logs_dir)}
+
+
+@app.post("/v1/tasks/new")
+def v1_tasks_new(payload: TaskNewIn):
+    # Safety: do not touch remotes by default.
+    if payload.create_repo_if_missing and not (payload.repo_locator or "").strip():
+        # Repo creation is high risk -> require explicit approval and remote-write enable.
+        raise HTTPException(status_code=412, detail="Repo creation requires explicit approval (high risk). Provide repo_locator or enable approved flow.")
+
+    mode = (payload.mode or "auto").strip().lower()
+    if mode not in ("auto", "bootstrap", "upgrade"):
+        mode = "auto"
+
+    wsid = str((payload.workstreams or ["general"])[0] if payload.workstreams else "general")
+    created = _create_task_scaffold(title=payload.title, project_id=payload.project_id, workstream_id=wsid, mode=mode)
+    DB.add_event(
+        event_type="TASK_NEW",
+        actor="user",
+        project_id=payload.project_id,
+        workstream_id=wsid,
+        payload={"task_id": created["task_id"], "mode": mode, "dry_run": bool(payload.dry_run), "repo_locator": (payload.repo_locator or "")[:120]},
+    )
+    _mark_panel_dirty(payload.project_id)
+    pending: list[dict[str, Any]] = []
+    if mode == "upgrade":
+        pending.append(
+            {
+                "type": "REPO_UNDERSTANDING_GATE",
+                "project_id": payload.project_id,
+                "task_id": created["task_id"],
+                "message": "mode=upgrade requires docs/team_os/REPO_UNDERSTANDING.md before any code changes.",
+                "artifact_template": ".team-os/templates/repo_understanding.md",
+            }
+        )
+    return {"task_id": created["task_id"], "ledger_path": created["ledger_path"], "logs_dir": created["logs_dir"], "pending_decisions": pending}
+
+
+@app.post("/v1/recovery/scan")
+def v1_recovery_scan():
+    # Minimal recovery scan: list non-closed tasks and write a local snapshot.
+    tasks = _load_tasks_summary()
+    active = [t for t in tasks if str(t.get("state") or "").lower() not in ("closed", "done")]
+    snap_dir = team_os_root() / ".team-os" / "cluster" / "state"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    ts = _ts_compact_utc()
+    path = snap_dir / f"recovery_{ts}.md"
+    lines = ["# Recovery Scan", "", f"- ts: {_utc_now_iso()}", f"- active_tasks: {len(active)}", ""]
+    for t in active[:200]:
+        lines.append(f"- {t.get('task_id')} {t.get('state')} {t.get('project_id')} {t.get('workstream_id')}")
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    DB.add_event(event_type="RECOVERY_SCAN", actor="control-plane", project_id=_default_project_id(), workstream_id=_default_workstream_id(), payload={"active_tasks": len(active), "snapshot": str(path)})
+    return {"active_tasks": active, "snapshot_path": str(path)}
+
+
+@app.post("/v1/recovery/resume")
+def v1_recovery_resume(payload: RecoveryResumeIn):
+    tasks = _load_tasks_summary()
+    target: list[dict[str, Any]] = []
+    if payload.all:
+        target = tasks
+    elif payload.task_id:
+        target = [t for t in tasks if str(t.get("task_id") or "") == str(payload.task_id)]
+    resumed: list[str] = []
+    for t in target:
+        # MVP: register a placeholder run and agent (executor integration comes later).
+        run_id = f"run-{t.get('task_id')}"
+        DB.upsert_run(run_id=run_id, project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), objective=str(t.get("title") or ""), state="RUNNING")
+        agent_id = DB.register_agent(role_id="Process-Guardian", project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), task_id=str(t.get("task_id") or ""), state="RUNNING", current_action="recovery placeholder (no executor wired)")
+        resumed.append(str(t.get("task_id") or ""))
+    DB.add_event(event_type="RECOVERY_RESUME", actor="control-plane", project_id=_default_project_id(), workstream_id=_default_workstream_id(), payload={"resumed": resumed})
+    _mark_panel_dirty()
+    return {"ok": True, "resumed": resumed}
+
+
+@app.post("/v1/self_improve/run")
+def v1_self_improve_run(payload: SelfImproveIn):
+    """
+    Run one self-improve iteration.
+
+    Notes:
+    - Remote writes (GitHub Issues/Projects/repo creation) remain gated elsewhere.
+    - This endpoint performs local scanning + local truth-source updates (requirements/pending drafts).
+    """
+    try:
+        routes = [getattr(r, "path", "") for r in app.routes if getattr(r, "path", "")]
+        out = self_improve_runner.run(
+            dry_run=bool(payload.dry_run),
+            force=bool(payload.force),
+            actor="user",
+            trigger=str(payload.trigger or "api"),
+            api_routes=routes,
+            project_id="teamos",
+        )
+        # Best-effort: compute a panel sync plan (dry-run) so the user can see what would appear on the Projects panel.
+        try:
+            svc = GitHubProjectsPanelSync(db=DB)
+            out["panel_sync_dry_run"] = svc.sync(project_id="teamos", mode="incremental", dry_run=True)
+        except Exception as e:
+            out["panel_sync_dry_run_error"] = str(e)[:200]
+        DB.add_event(
+            event_type="SELF_IMPROVE_RUN",
+            actor="user",
+            project_id="teamos",
+            workstream_id=_default_workstream_id(),
+            payload={"dry_run": bool(payload.dry_run), "force": bool(payload.force), "trigger": str(payload.trigger or "api"), "skipped": bool(out.get("skipped"))},
+        )
+        _mark_panel_dirty("teamos")
+        return out
+    except Exception as e:
+        DB.add_event(
+            event_type="SELF_IMPROVE_RUN_FAILED",
+            actor="user",
+            project_id="teamos",
+            workstream_id=_default_workstream_id(),
+            payload={"error": str(e)[:500], "dry_run": bool(payload.dry_run), "force": bool(payload.force)},
+        )
+        raise HTTPException(status_code=500, detail=str(e)[:500])
 
 
 @app.get("/v1/events/stream")
@@ -647,10 +1127,7 @@ def v1_events_stream(after_id: int = 0):
 
 
 def _default_project_id() -> str:
-    projects = load_projects()
-    if projects and projects[0].get("project_id"):
-        return str(projects[0]["project_id"])
-    return "DEMO"
+    return "teamos"
 
 
 def _default_workstream_id() -> str:
@@ -661,7 +1138,7 @@ def _default_workstream_id() -> str:
 
 
 def _append_conversation(project_id: str, payload: dict[str, Any]) -> None:
-    d = conversations_dir(project_id)
+    d = _conversations_dir(project_id, ensure=True)
     d.mkdir(parents=True, exist_ok=True)
     day = _utc_now_iso().split("T", 1)[0]
     path = d / f"{day}.jsonl"
@@ -682,7 +1159,7 @@ def _handle_new_requirement(
     acceptance: Optional[list[str]] = None,
     source: str = "chat",
 ) -> dict[str, Any]:
-    req_dir = requirements_dir_for_project(project_id)
+    req_dir = _requirements_dir(project_id, ensure=True)
     try:
         outcome = add_requirement(
             project_id=project_id,
@@ -778,38 +1255,45 @@ def _handle_new_requirement(
 
 
 def _load_tasks_summary() -> list[dict[str, Any]]:
-    d = ledger_tasks_dir()
-    if not d.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for p in sorted(d.glob("*.yaml")):
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except Exception:
+    # Team OS self tasks live in-repo. All other project tasks must live in Workspace.
+    scan: list[tuple[str, Path]] = [("teamos", ledger_tasks_dir())]
+    for pid in _list_workspace_projects():
+        if pid == "teamos":
             continue
-        tid = str(data.get("id") or p.stem)
-        title = str(data.get("title") or "")
-        state = str(data.get("status") or data.get("state") or "")
-        owners = data.get("owners") or []
-        owner_role = str(owners[0]) if owners else ""
-        workstream_id = str(data.get("workstream_id") or "general")
-        project_id = str(data.get("project_id") or _default_project_id())
-        risk = str(data.get("risk_level") or data.get("risk") or "")
-        need_pm = bool(data.get("need_pm_decision") or False)
+        scan.append((pid, workspace_store.ledger_tasks_dir(pid)))
 
-        out.append(
-            {
-                "task_id": tid,
-                "title": title,
-                "state": state,
-                "owner_role": owner_role,
-                "workstream_id": workstream_id,
-                "project_id": project_id,
-                "risk": risk,
-                "need_pm_decision": need_pm,
-                "links": data.get("links") or {},
-            }
-        )
+    out: list[dict[str, Any]] = []
+    for pid, d in scan:
+        if not d.exists():
+            continue
+        for p in sorted(d.glob("*.yaml")):
+            try:
+                data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            tid = str(data.get("id") or p.stem)
+            title = str(data.get("title") or "")
+            state = str(data.get("status") or data.get("state") or "")
+            owners = data.get("owners") or []
+            owner_role = str(owners[0]) if owners else ""
+            workstream_id = str(data.get("workstream_id") or "general")
+            project_id = str(data.get("project_id") or pid or _default_project_id())
+            risk = str(data.get("risk_level") or data.get("risk") or "")
+            need_pm = bool(data.get("need_pm_decision") or False)
+
+            out.append(
+                {
+                    "task_id": tid,
+                    "title": title,
+                    "state": state,
+                    "owner_role": owner_role,
+                    "workstream_id": workstream_id,
+                    "project_id": project_id,
+                    "risk": risk,
+                    "need_pm_decision": need_pm,
+                    "links": data.get("links") or {},
+                }
+            )
     return out
 
 
@@ -817,12 +1301,9 @@ def _pending_decisions() -> list[dict[str, Any]]:
     decisions: list[dict[str, Any]] = []
 
     # 1) Requirement conflicts per project.
-    for p in load_projects():
-        pid = str(p.get("project_id") or "")
-        if not pid:
-            continue
+    for pid in _all_project_ids():
         try:
-            req_dir = requirements_dir_for_project(pid)
+            req_dir = _requirements_dir(pid, ensure=False)
             y = req_dir / "requirements.yaml"
             if not y.exists():
                 continue

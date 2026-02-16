@@ -1,10 +1,22 @@
 id: "<TASK_ID>"
 title: "<TITLE>"
-project_id: "DEMO" # project registry: .team-os/state/projects.yaml
+project_id: "teamos" # scope=teamos (Team OS self). Project scopes must live in Workspace (outside this repo).
 workstream_id: "general" # workstream registry: .team-os/state/workstreams.yaml
 status: "intake" # intake|plan|todo|doing|test|release|observe|retro|closed (aliases: work|running -> doing)
 risk_level: "R1" # R0|R1|R2|R3
 need_pm_decision: false
+repo:
+  locator: ""      # owner/name, url, or local path (optional)
+  workdir: ""      # local checkout path (optional)
+  branch: ""       # working branch (optional)
+  mode: "auto"     # auto|bootstrap|upgrade
+checkpoint:
+  stage: "intake"
+  last_event_ts: "<YYYY-MM-DDTHH:MM:SSZ>"
+recovery:
+  last_scan_at: ""
+  last_resume_at: ""
+  notes: ""
 approvals_required:
   - "R2/R3 actions"
 owners:

@@ -11,10 +11,13 @@
 - 创建仓库属于高风险动作，必须审批后执行
 - 默认创建 private（可配置）
 - 创建后必须初始化：
-  - `.team-os/`（roles/workflows/kb/memory/ledger/logs/templates）
-  - `docs/requirements/**`（需求主事实源）
-  - `docs/plan/**`（里程碑/roadmap overlay）
-  - GitHub Projects 面板绑定与同步（视图层）
+  - Workspace 项目骨架（scope=`project:<id>`）：
+    - `<WORKSPACE>/projects/<id>/state/requirements/**`（需求主事实源 + 冲突报告）
+    - `<WORKSPACE>/projects/<id>/state/ledger/**`、`<WORKSPACE>/projects/<id>/state/logs/**`（任务台账/日志）
+    - `<WORKSPACE>/projects/<id>/state/prompts/**`（MASTER_PROMPT 等）
+    - `<WORKSPACE>/projects/<id>/state/plan/**`（里程碑/roadmap overlay）
+    - `<WORKSPACE>/projects/<id>/repo/**`（代码工作区 clone/checkout）
+  - GitHub Projects 面板绑定与同步（视图层；可从真相源重建）
 
 预期命令（待实现）：
 
@@ -58,4 +61,3 @@ teamos task new --title "..." --create-repo --org <org?> --private --workstreams
 
 - 任何 repo 操作必须写入任务日志与 `metrics.jsonl`（控制平面运行时负责）
 - GitHub Projects 面板只作为视图层，必须支持从真相源全量重建
-

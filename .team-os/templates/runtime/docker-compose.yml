@@ -114,6 +114,8 @@ services:
         condition: service_healthy
     environment:
       TEAM_OS_REPO_PATH: /team-os
+      # Workspace root (project truth sources live here; must be outside the team-os git repo).
+      TEAMOS_WORKSPACE_ROOT: /teamos-workspace
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # GitHub auth: recommended to set from `gh auth token` (OAuth); do not commit real values.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
@@ -137,7 +139,9 @@ services:
       # Default: read-only repo mount, with minimal writable subpaths layered on top.
       - ../team-os:/team-os:ro
       - ../team-os/.team-os:/team-os/.team-os
-      - ../team-os/docs/requirements:/team-os/docs/requirements
+      - ../team-os/docs:/team-os/docs
+      # Workspace: all project truth sources live here (must be OUTSIDE the team-os git repo).
+      - ${HOME}/.teamos/workspace:/teamos-workspace:rw
       # OAuth: reuse host Codex login state (do not commit; local-only).
       - ${HOME}/.codex:/root/.codex:rw
     healthcheck:

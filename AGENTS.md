@@ -18,10 +18,13 @@
 9. 新需求必须先登记并冲突检测：任何 `NEW_REQUIREMENT` 不得直接覆盖既有需求；必须产出 `DUPLICATE/CONFLICT/COMPATIBLE`；冲突必须进入 `NEED_PM_DECISION` 并显式要求 PM 拍板。
 10. Workstream 强制：每个任务台账必须填写 `workstream_id`（或 `workstreams`）；多平台并行时必须明确归属与接口边界。
 11. OAuth 默认：LLM 调用默认使用 Codex CLI 的 ChatGPT OAuth（`codex login`）；API Key 仅在显式允许时作为 fallback，且只能来自环境变量；doctor 必须提示未登录状态。
+12. Repo vs Workspace 硬隔离：`team-os/` git 仓库只能包含 Team OS 自身文件（scope=`teamos`）。任何 scope=`project:<id>` 的真相源文件（requirements/冲突报告/ledger/logs/prompts/plan/项目 repo workdir 等）必须落在 Workspace（默认 `~/.teamos/workspace`），不得出现在 `team-os/` 目录树内；doctor/evals 必须强制拦截违规。
 
 ## 1. 仓库与目录约定
 
 **Team OS 仓库**：`./team-os`（本仓库）
+
+**Workspace（项目真相源根目录）**：默认 `~/.teamos/workspace`（可通过 `~/.teamos/config.toml` 或 CLI `--workspace-root` 覆盖）
 
 关键目录：
 
@@ -38,8 +41,12 @@
 
 每个任务都必须有：
 
-- 台账：`.team-os/ledger/tasks/<TASK_ID>.yaml`
-- 日志目录：`.team-os/logs/tasks/<TASK_ID>/`
+- 台账：
+  - scope=`teamos`：`team-os/.team-os/ledger/tasks/<TASK_ID>.yaml`
+  - scope=`project:<id>`：`<WORKSPACE>/projects/<id>/state/ledger/tasks/<TASK_ID>.yaml`
+- 日志目录：
+  - scope=`teamos`：`team-os/.team-os/logs/tasks/<TASK_ID>/`
+  - scope=`project:<id>`：`<WORKSPACE>/projects/<id>/state/logs/tasks/<TASK_ID>/`
   - `00_intake.md`：需求接收与澄清
   - `01_plan.md`：计划/拆分/风险/闸门
   - `02_todo.md`：可执行 TODO（可并行）

@@ -1,0 +1,63 @@
+schema_version: 1
+
+# Team OS evolution policy: how the system should split roles/workflows and propose improvements.
+# This is a "policy" input for self-improve scanning (it does not execute changes by itself).
+
+complexity_vector:
+  # D: Domain complexity (number of distinct domains/workstreams involved)
+  D:
+    low: 1
+    med: 2
+    high: 3
+  # M: Modularity pressure (how many subsystems need coordination / interfaces)
+  M:
+    low: 1
+    med: 2
+    high: 3
+  # A: Automation level required (CI/CD, panel sync, cluster routing)
+  A:
+    low: 1
+    med: 2
+    high: 3
+  # R: Risk level (R0..R3)
+  R:
+    low: "R0"
+    med: "R2"
+    high: "R3"
+  # U: Unknowns (external dependencies, unclear requirements, prompt-injection exposure)
+  U:
+    low: 1
+    med: 2
+    high: 3
+  # T: Time sensitivity (incidents, deadlines)
+  T:
+    low: 1
+    med: 2
+    high: 3
+  # E: Execution environment diversity (multi-node, devices)
+  E:
+    low: 1
+    med: 2
+    high: 3
+  # F: Feedback loop strength (telemetry, tests, observability)
+  F:
+    low: 1
+    med: 2
+    high: 3
+
+split_triggers:
+  role_split:
+    # If a task spans >= this many workstreams, suggest splitting into sub-tasks/workstreams.
+    workstreams_ge: 3
+  workflow_plugin_add:
+    # If a recurring gate is detected, suggest adding a plugin.
+    recurring_failures_ge: 2
+  gate_tune:
+    # If "approval needed" blocks repeatedly, suggest clarifying gates.
+    waiting_approval_ge: 2
+
+self_improve:
+  debounce_hours: 6
+  min_proposals_per_run: 3
+  remote_writes_default: "dry_run"  # dry_run | require_explicit_enable
+

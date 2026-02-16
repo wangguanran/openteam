@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -47,7 +48,19 @@ class EventRow:
     payload: dict[str, Any]
 
 
-class RuntimeDB:
+@dataclass(frozen=True)
+class NodeRow:
+    instance_id: str
+    role_preference: str
+    base_url: str
+    heartbeat_at: str
+    capabilities: list[str]
+    resources: dict[str, Any]
+    agent_policy: dict[str, Any]
+    tags: list[str]
+
+
+class SQLiteRuntimeDB:
     def __init__(self, db_path: str):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +113,22 @@ class RuntimeDB:
                   project_id TEXT NOT NULL,
                   workstream_id TEXT NOT NULL,
                   payload_json TEXT NOT NULL
+                )
+                """
+            )
+
+            # Cluster node registry (local cache; GitHub is the authoritative bus when enabled).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS nodes (
+                  instance_id TEXT PRIMARY KEY,
+                  role_preference TEXT NOT NULL,
+                  base_url TEXT NOT NULL,
+                  heartbeat_at TEXT NOT NULL,
+                  capabilities_json TEXT NOT NULL,
+                  resources_json TEXT NOT NULL,
+                  agent_policy_json TEXT NOT NULL,
+                  tags_json TEXT NOT NULL
                 )
                 """
             )
@@ -399,6 +428,80 @@ class RuntimeDB:
         finally:
             conn.close()
 
+    # --- Nodes (local registry cache) ---
+    def upsert_node(
+        self,
+        *,
+        instance_id: str,
+        role_preference: str,
+        base_url: str,
+        capabilities: list[str],
+        resources: dict[str, Any],
+        agent_policy: dict[str, Any],
+        tags: list[str],
+    ) -> None:
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO nodes (instance_id, role_preference, base_url, heartbeat_at, capabilities_json, resources_json, agent_policy_json, tags_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                  role_preference=excluded.role_preference,
+                  base_url=excluded.base_url,
+                  heartbeat_at=excluded.heartbeat_at,
+                  capabilities_json=excluded.capabilities_json,
+                  resources_json=excluded.resources_json,
+                  agent_policy_json=excluded.agent_policy_json,
+                  tags_json=excluded.tags_json
+                """,
+                (
+                    instance_id,
+                    role_preference,
+                    base_url,
+                    now,
+                    json.dumps(capabilities, ensure_ascii=False),
+                    json.dumps(resources, ensure_ascii=False),
+                    json.dumps(agent_policy, ensure_ascii=False),
+                    json.dumps(tags, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def heartbeat_node(self, *, instance_id: str) -> None:
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute("UPDATE nodes SET heartbeat_at=? WHERE instance_id=?", (now, instance_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_nodes(self) -> list[NodeRow]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM nodes ORDER BY heartbeat_at DESC").fetchall()
+            out: list[NodeRow] = []
+            for r in rows:
+                out.append(
+                    NodeRow(
+                        instance_id=str(r["instance_id"]),
+                        role_preference=str(r["role_preference"]),
+                        base_url=str(r["base_url"]),
+                        heartbeat_at=str(r["heartbeat_at"]),
+                        capabilities=json.loads(str(r["capabilities_json"] or "[]") or "[]"),
+                        resources=json.loads(str(r["resources_json"] or "{}") or "{}"),
+                        agent_policy=json.loads(str(r["agent_policy_json"] or "{}") or "{}"),
+                        tags=json.loads(str(r["tags_json"] or "[]") or "[]"),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
     # --- Panel sync health/cache ---
     def record_panel_sync_run(
         self,
@@ -540,3 +643,590 @@ class RuntimeDB:
             return {"key": row["key"], "value": data, "updated_at": row["updated_at"]}
         finally:
             conn.close()
+
+
+def _is_postgres_dsn(s: str) -> bool:
+    s = (s or "").strip().lower()
+    return s.startswith("postgres://") or s.startswith("postgresql://")
+
+
+class PostgresRuntimeDB:
+    """
+    Postgres backend for RuntimeDB.
+
+    Enabled by env:
+      TEAMOS_DB_URL=postgresql://...
+    """
+
+    def __init__(self, dsn: str):
+        self.dsn = dsn
+        self._init()
+
+    def _connect(self):
+        import psycopg  # type: ignore
+        from psycopg.rows import dict_row  # type: ignore
+
+        return psycopg.connect(self.dsn, row_factory=dict_row)
+
+    def _init(self) -> None:
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agents (
+                  agent_id TEXT PRIMARY KEY,
+                  role_id TEXT NOT NULL,
+                  project_id TEXT NOT NULL,
+                  workstream_id TEXT NOT NULL,
+                  task_id TEXT NOT NULL,
+                  state TEXT NOT NULL,
+                  started_at TEXT NOT NULL,
+                  last_heartbeat TEXT NOT NULL,
+                  current_action TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                  run_id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  workstream_id TEXT NOT NULL,
+                  objective TEXT NOT NULL,
+                  state TEXT NOT NULL,
+                  started_at TEXT NOT NULL,
+                  last_update TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                  id BIGSERIAL PRIMARY KEY,
+                  ts TEXT NOT NULL,
+                  event_type TEXT NOT NULL,
+                  actor TEXT NOT NULL,
+                  project_id TEXT NOT NULL,
+                  workstream_id TEXT NOT NULL,
+                  payload_json TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS nodes (
+                  instance_id TEXT PRIMARY KEY,
+                  role_preference TEXT NOT NULL,
+                  base_url TEXT NOT NULL,
+                  heartbeat_at TEXT NOT NULL,
+                  capabilities_json TEXT NOT NULL,
+                  resources_json TEXT NOT NULL,
+                  agent_policy_json TEXT NOT NULL,
+                  tags_json TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS panel_sync_runs (
+                  id BIGSERIAL PRIMARY KEY,
+                  ts_start TEXT NOT NULL,
+                  ts_end TEXT NOT NULL,
+                  project_id TEXT NOT NULL,
+                  panel_type TEXT NOT NULL,
+                  mode TEXT NOT NULL,
+                  dry_run INTEGER NOT NULL,
+                  ok INTEGER NOT NULL,
+                  stats_json TEXT NOT NULL,
+                  error TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS panel_kv (
+                  key TEXT PRIMARY KEY,
+                  value_json TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --- Agents ---
+    def register_agent(
+        self,
+        *,
+        role_id: str,
+        project_id: str,
+        workstream_id: str,
+        task_id: str = "",
+        state: str = "IDLE",
+        current_action: str = "",
+    ) -> str:
+        agent_id = str(uuid.uuid4())
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO agents (agent_id, role_id, project_id, workstream_id, task_id, state, started_at, last_heartbeat, current_action)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (agent_id, role_id, project_id, workstream_id, task_id, state, now, now, current_action),
+            )
+            conn.commit()
+            return agent_id
+        finally:
+            conn.close()
+
+    def heartbeat(self, *, agent_id: str, state: Optional[str] = None, current_action: Optional[str] = None) -> None:
+        now = utc_now_iso()
+        sets = ["last_heartbeat = %s"]
+        params: list[Any] = [now]
+        if state is not None:
+            sets.append("state = %s")
+            params.append(state)
+        if current_action is not None:
+            sets.append("current_action = %s")
+            params.append(current_action)
+        params.append(agent_id)
+        conn = self._connect()
+        try:
+            conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE agent_id = %s", params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_assignment(
+        self,
+        *,
+        agent_id: str,
+        project_id: Optional[str] = None,
+        workstream_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        state: Optional[str] = None,
+        current_action: Optional[str] = None,
+    ) -> None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if project_id is not None:
+            sets.append("project_id = %s")
+            params.append(project_id)
+        if workstream_id is not None:
+            sets.append("workstream_id = %s")
+            params.append(workstream_id)
+        if task_id is not None:
+            sets.append("task_id = %s")
+            params.append(task_id)
+        if state is not None:
+            sets.append("state = %s")
+            params.append(state)
+        if current_action is not None:
+            sets.append("current_action = %s")
+            params.append(current_action)
+        sets.append("last_heartbeat = %s")
+        params.append(utc_now_iso())
+        params.append(agent_id)
+        if not sets:
+            return
+        conn = self._connect()
+        try:
+            conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE agent_id = %s", params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_agents(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        workstream_id: Optional[str] = None,
+        state: Optional[str] = None,
+        role_id: Optional[str] = None,
+    ) -> list[AgentRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if project_id:
+            clauses.append("project_id = %s")
+            params.append(project_id)
+        if workstream_id:
+            clauses.append("workstream_id = %s")
+            params.append(workstream_id)
+        if state:
+            clauses.append("state = %s")
+            params.append(state)
+        if role_id:
+            clauses.append("role_id = %s")
+            params.append(role_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        conn = self._connect()
+        try:
+            rows = conn.execute(f"SELECT * FROM agents {where} ORDER BY started_at ASC", params).fetchall()
+            return [
+                AgentRow(
+                    agent_id=str(r["agent_id"]),
+                    role_id=str(r["role_id"]),
+                    project_id=str(r["project_id"]),
+                    workstream_id=str(r["workstream_id"]),
+                    task_id=str(r["task_id"]),
+                    state=str(r["state"]),
+                    started_at=str(r["started_at"]),
+                    last_heartbeat=str(r["last_heartbeat"]),
+                    current_action=str(r["current_action"]),
+                )
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    # --- Runs ---
+    def upsert_run(self, *, run_id: Optional[str], project_id: str, workstream_id: str, objective: str, state: str) -> str:
+        rid = run_id or str(uuid.uuid4())
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO runs (run_id, project_id, workstream_id, objective, state, started_at, last_update)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  project_id=EXCLUDED.project_id,
+                  workstream_id=EXCLUDED.workstream_id,
+                  objective=EXCLUDED.objective,
+                  state=EXCLUDED.state,
+                  last_update=EXCLUDED.last_update
+                """,
+                (rid, project_id, workstream_id, objective, state, now, now),
+            )
+            conn.commit()
+            return rid
+        finally:
+            conn.close()
+
+    def list_runs(self, *, project_id: Optional[str] = None, workstream_id: Optional[str] = None) -> list[RunRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if project_id:
+            clauses.append("project_id = %s")
+            params.append(project_id)
+        if workstream_id:
+            clauses.append("workstream_id = %s")
+            params.append(workstream_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        conn = self._connect()
+        try:
+            rows = conn.execute(f"SELECT * FROM runs {where} ORDER BY started_at DESC", params).fetchall()
+            return [
+                RunRow(
+                    run_id=str(r["run_id"]),
+                    project_id=str(r["project_id"]),
+                    workstream_id=str(r["workstream_id"]),
+                    objective=str(r["objective"]),
+                    state=str(r["state"]),
+                    started_at=str(r["started_at"]),
+                    last_update=str(r["last_update"]),
+                )
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    def get_run(self, run_id: str) -> Optional[RunRow]:
+        conn = self._connect()
+        try:
+            r = conn.execute("SELECT * FROM runs WHERE run_id = %s", (run_id,)).fetchone()
+            if not r:
+                return None
+            return RunRow(
+                run_id=str(r["run_id"]),
+                project_id=str(r["project_id"]),
+                workstream_id=str(r["workstream_id"]),
+                objective=str(r["objective"]),
+                state=str(r["state"]),
+                started_at=str(r["started_at"]),
+                last_update=str(r["last_update"]),
+            )
+        finally:
+            conn.close()
+
+    def update_run_state(self, *, run_id: str, state: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("UPDATE runs SET state=%s, last_update=%s WHERE run_id=%s", (state, utc_now_iso(), run_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --- Events ---
+    def add_event(self, *, event_type: str, actor: str, project_id: str, workstream_id: str, payload: dict[str, Any]) -> int:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "INSERT INTO events (ts, event_type, actor, project_id, workstream_id, payload_json) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                (utc_now_iso(), event_type, actor, project_id, workstream_id, json.dumps(payload, ensure_ascii=False)),
+            ).fetchone()
+            conn.commit()
+            return int(row["id"]) if row and row.get("id") is not None else 0
+        finally:
+            conn.close()
+
+    def list_events(self, *, after_id: int = 0, limit: int = 200) -> list[EventRow]:
+        lim = max(1, min(int(limit), 1000))
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM events WHERE id > %s ORDER BY id ASC LIMIT %s", (int(after_id), lim)).fetchall()
+            out: list[EventRow] = []
+            for r in rows:
+                try:
+                    payload = json.loads(str(r["payload_json"] or "{}"))
+                except Exception:
+                    payload = {"_raw": r.get("payload_json")}
+                out.append(
+                    EventRow(
+                        id=int(r["id"]),
+                        ts=str(r["ts"]),
+                        event_type=str(r["event_type"]),
+                        actor=str(r["actor"]),
+                        project_id=str(r["project_id"]),
+                        workstream_id=str(r["workstream_id"]),
+                        payload=payload,
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    # --- Nodes ---
+    def upsert_node(
+        self,
+        *,
+        instance_id: str,
+        role_preference: str,
+        base_url: str,
+        capabilities: list[str],
+        resources: dict[str, Any],
+        agent_policy: dict[str, Any],
+        tags: list[str],
+    ) -> None:
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO nodes (instance_id, role_preference, base_url, heartbeat_at, capabilities_json, resources_json, agent_policy_json, tags_json)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                  role_preference=EXCLUDED.role_preference,
+                  base_url=EXCLUDED.base_url,
+                  heartbeat_at=EXCLUDED.heartbeat_at,
+                  capabilities_json=EXCLUDED.capabilities_json,
+                  resources_json=EXCLUDED.resources_json,
+                  agent_policy_json=EXCLUDED.agent_policy_json,
+                  tags_json=EXCLUDED.tags_json
+                """,
+                (
+                    instance_id,
+                    role_preference,
+                    base_url,
+                    now,
+                    json.dumps(capabilities, ensure_ascii=False),
+                    json.dumps(resources, ensure_ascii=False),
+                    json.dumps(agent_policy, ensure_ascii=False),
+                    json.dumps(tags, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def heartbeat_node(self, *, instance_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("UPDATE nodes SET heartbeat_at=%s WHERE instance_id=%s", (utc_now_iso(), instance_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_nodes(self) -> list[NodeRow]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM nodes ORDER BY heartbeat_at DESC").fetchall()
+            out: list[NodeRow] = []
+            for r in rows:
+                out.append(
+                    NodeRow(
+                        instance_id=str(r["instance_id"]),
+                        role_preference=str(r["role_preference"]),
+                        base_url=str(r["base_url"]),
+                        heartbeat_at=str(r["heartbeat_at"]),
+                        capabilities=json.loads(str(r["capabilities_json"] or "[]") or "[]"),
+                        resources=json.loads(str(r["resources_json"] or "{}") or "{}"),
+                        agent_policy=json.loads(str(r["agent_policy_json"] or "{}") or "{}"),
+                        tags=json.loads(str(r["tags_json"] or "[]") or "[]"),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    # --- Panel sync health/cache ---
+    def record_panel_sync_run(
+        self,
+        *,
+        project_id: str,
+        panel_type: str,
+        mode: str,
+        dry_run: bool,
+        ok: bool,
+        stats: dict[str, Any],
+        error: str = "",
+        ts_start: Optional[str] = None,
+        ts_end: Optional[str] = None,
+    ) -> int:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                INSERT INTO panel_sync_runs (ts_start, ts_end, project_id, panel_type, mode, dry_run, ok, stats_json, error)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                """,
+                (
+                    ts_start or utc_now_iso(),
+                    ts_end or utc_now_iso(),
+                    str(project_id),
+                    str(panel_type),
+                    str(mode),
+                    1 if dry_run else 0,
+                    1 if ok else 0,
+                    json.dumps(stats, ensure_ascii=False),
+                    (error or "")[:2000],
+                ),
+            ).fetchone()
+            conn.commit()
+            return int(row["id"]) if row and row.get("id") is not None else 0
+        finally:
+            conn.close()
+
+    def get_last_panel_sync(self, *, project_id: Optional[str] = None, panel_type: str = "github_projects") -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            if project_id:
+                row = conn.execute(
+                    "SELECT * FROM panel_sync_runs WHERE panel_type=%s AND project_id=%s ORDER BY id DESC LIMIT 1",
+                    (panel_type, str(project_id)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM panel_sync_runs WHERE panel_type=%s ORDER BY id DESC LIMIT 1",
+                    (panel_type,),
+                ).fetchone()
+            if not row:
+                return None
+            try:
+                stats = json.loads(str(row["stats_json"] or "{}"))
+            except Exception:
+                stats = {"_raw": row.get("stats_json")}
+            return {
+                "id": int(row["id"]),
+                "ts_start": str(row["ts_start"]),
+                "ts_end": str(row["ts_end"]),
+                "project_id": str(row["project_id"]),
+                "panel_type": str(row["panel_type"]),
+                "mode": str(row["mode"]),
+                "dry_run": bool(int(row["dry_run"])),
+                "ok": bool(int(row["ok"])),
+                "stats": stats,
+                "error": str(row.get("error") or ""),
+            }
+        finally:
+            conn.close()
+
+    def get_panel_sync_summary(self, *, project_id: str, panel_type: str = "github_projects") -> dict[str, Any]:
+        conn = self._connect()
+        try:
+            total = conn.execute(
+                "SELECT COUNT(1) AS c FROM panel_sync_runs WHERE panel_type=%s AND project_id=%s",
+                (str(panel_type), str(project_id)),
+            ).fetchone()["c"]
+            failures = conn.execute(
+                "SELECT COUNT(1) AS c FROM panel_sync_runs WHERE panel_type=%s AND project_id=%s AND ok=0",
+                (str(panel_type), str(project_id)),
+            ).fetchone()["c"]
+            last_ok = conn.execute(
+                "SELECT ts_end, mode, dry_run FROM panel_sync_runs WHERE panel_type=%s AND project_id=%s AND ok=1 ORDER BY id DESC LIMIT 1",
+                (str(panel_type), str(project_id)),
+            ).fetchone()
+            last_fail = conn.execute(
+                "SELECT ts_end, mode, dry_run, error FROM panel_sync_runs WHERE panel_type=%s AND project_id=%s AND ok=0 ORDER BY id DESC LIMIT 1",
+                (str(panel_type), str(project_id)),
+            ).fetchone()
+            return {
+                "runs_total": int(total or 0),
+                "failures_total": int(failures or 0),
+                "last_success": (
+                    {"ts_end": last_ok["ts_end"], "mode": last_ok["mode"], "dry_run": bool(int(last_ok["dry_run"]))} if last_ok else None
+                ),
+                "last_failure": (
+                    {
+                        "ts_end": last_fail["ts_end"],
+                        "mode": last_fail["mode"],
+                        "dry_run": bool(int(last_fail["dry_run"])),
+                        "error": (last_fail["error"] or "")[:500],
+                    }
+                    if last_fail
+                    else None
+                ),
+            }
+        finally:
+            conn.close()
+
+    def set_panel_kv(self, *, key: str, value: dict[str, Any]) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO panel_kv (key, value_json, updated_at) VALUES (%s,%s,%s)
+                ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json, updated_at=EXCLUDED.updated_at
+                """,
+                (key, json.dumps(value, ensure_ascii=False), utc_now_iso()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_panel_kv(self, *, key: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM panel_kv WHERE key=%s", (key,)).fetchone()
+            if not row:
+                return None
+            try:
+                data = json.loads(str(row["value_json"] or "{}"))
+            except Exception:
+                data = {"_raw": row.get("value_json")}
+            return {"key": str(row["key"]), "value": data, "updated_at": str(row["updated_at"])}
+        finally:
+            conn.close()
+
+
+class RuntimeDB:
+    """
+    RuntimeDB facade.
+
+    - Default: sqlite (db_path from RUNTIME_DB_PATH or .team-os/state/runtime.db)
+    - Optional: Postgres when TEAMOS_DB_URL is set to a postgres DSN.
+    """
+
+    def __init__(self, db_path_or_url: str):
+        dsn = (os.getenv("TEAMOS_DB_URL") or "").strip() or str(db_path_or_url)
+        if _is_postgres_dsn(dsn):
+            self._impl = PostgresRuntimeDB(dsn)
+        else:
+            self._impl = SQLiteRuntimeDB(db_path_or_url)
+
+    def __getattr__(self, name: str):
+        return getattr(self._impl, name)

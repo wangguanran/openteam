@@ -1,31 +1,19 @@
-schema_version: 1
+schema_version: 2
+
+# DEPRECATED (governance: repo vs workspace separation)
+#
+# Team OS repo must contain only Team OS itself. Any project-scoped truth-source
+# files (requirements/ledger/logs/prompts/plan/repo workdir) MUST live in the
+# Workspace (default: ~/.teamos/workspace).
+#
+# This file is kept only for backwards compatibility with older docs/scripts.
+# It MUST NOT be used as a registry for external projects anymore.
+
 projects:
-  - project_id: "DEMO"
-    name: "Demo Project (Team OS Mechanism)"
-    requirements_dir: "docs/requirements/DEMO"
-    workstreams:
-      - "backend"
-      - "ai"
-      - "devops"
-      - "web"
-    default_workstream_id: "ai"
-
-  - project_id: "demo"
-    name: "Demo Project (GitHub Projects Panel)"
-    # Note: on case-insensitive filesystems, avoid project_id collisions like "DEMO" vs "demo".
-    # This demo uses a distinct directory name to prevent path conflicts while keeping project_id="demo".
-    requirements_dir: "docs/requirements/demo_panel"
-    plan_dir: "docs/plan/demo"
-    workstreams:
-      - "backend"
-      - "ai"
-      - "devops"
-      - "web"
-    default_workstream_id: "devops"
-
   - project_id: "teamos"
-    name: "Team OS Development"
-    requirements_dir: "docs/requirements/teamos"
+    name: "Team OS Development (self)"
+    # Team OS self truth sources are allowed inside this repo (scope=teamos):
+    requirements_dir: "docs/teamos/requirements"
     plan_dir: "docs/plan/teamos"
     workstreams:
       - "backend"
@@ -37,3 +25,4 @@ projects:
       - "wechat"
       - "data"
     default_workstream_id: "devops"
+

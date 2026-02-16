@@ -4,7 +4,8 @@ from typing import Any, Optional
 
 import yaml
 
-from .state_store import plan_dir_for_project
+from .state_store import teamos_plan_dir
+from .workspace_store import ensure_project_scaffold, plan_dir
 
 
 class PlanError(Exception):
@@ -23,9 +24,12 @@ class Milestone:
 
 
 def load_plan_yaml(project_id: str) -> Optional[dict[str, Any]]:
-    d = plan_dir_for_project(project_id)
-    if not d:
-        return None
+    if str(project_id) == "teamos":
+        d = teamos_plan_dir()
+    else:
+        # Ensure project scaffold exists so plan dir can be created lazily.
+        ensure_project_scaffold(project_id)
+        d = plan_dir(project_id)
     y = d / "plan.yaml"
     if not y.exists():
         return None
@@ -57,4 +61,3 @@ def list_milestones(project_id: str) -> list[Milestone]:
         except Exception:
             continue
     return [m for m in out if m.milestone_id and m.title]
-

@@ -4,27 +4,35 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 ROOT="$(teamos_root)"
-FULL=0
-if [[ "${1:-}" == "--full" ]]; then
+# Default policy: always create full 00~07 logs + metrics.jsonl (compliance requirement).
+# `--short` is available for special cases; `--full` is accepted as a no-op alias.
+FULL=1
+if [[ "${1:-}" == "--short" ]]; then
+  FULL=0
+  shift
+elif [[ "${1:-}" == "--full" ]]; then
   FULL=1
   shift
 fi
 
 TITLE="${1:-}"
 if [[ -z "$TITLE" ]]; then
-  echo "Usage: ./scripts/teamos.sh new-task [--full] \"<title>\"" >&2
+  echo "Usage: ./scripts/teamos.sh new-task [--full|--short] \"<title>\"" >&2
   exit 2
 fi
 shift || true
 
-# Allow `--full` after title as well.
-if [[ "${1:-}" == "--full" ]]; then
+# Allow `--short`/`--full` after title as well.
+if [[ "${1:-}" == "--short" ]]; then
+  FULL=0
+  shift
+elif [[ "${1:-}" == "--full" ]]; then
   FULL=1
   shift
 fi
 if [[ "${1:-}" != "" ]]; then
   echo "Unexpected argument: $1" >&2
-  echo "Usage: ./scripts/teamos.sh new-task [--full] \"<title>\"" >&2
+  echo "Usage: ./scripts/teamos.sh new-task [--full|--short] \"<title>\"" >&2
   exit 2
 fi
 
@@ -89,6 +97,16 @@ if [[ "$FULL" -eq 1 ]]; then
   render_log "$ROOT/.team-os/templates/task_log_06_observe.md" "$logs_dir/06_observe.md"
   render_log "$ROOT/.team-os/templates/task_log_07_retro.md" "$logs_dir/07_retro.md"
 fi
+
+# metrics.jsonl (telemetry; must never include secrets)
+metrics_out="$logs_dir/metrics.jsonl"
+if [[ -e "$metrics_out" ]]; then
+  echo "Refusing to overwrite: $metrics_out" >&2
+  exit 1
+fi
+cat >"$metrics_out" <<EOF
+{"ts":"$NOW_ISO","event_type":"TASK_CREATED","actor":"teamos.sh","task_id":"$task_id","project_id":"teamos","workstream_id":"general","severity":"INFO","message":"task scaffold created","payload":{"ledger":"$ledger_out","logs_dir":"$logs_dir"}}
+EOF
 
 echo "created_task_id=$task_id"
 echo "ledger=$ledger_out"

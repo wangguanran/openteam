@@ -1,9 +1,47 @@
 ---
 role_id: "PM-Intake"
-version: "0.1"
-last_updated: "2026-02-14"
+version: "0.2"
+last_updated: "2026-02-16"
 owners:
   - "Team OS"
+scope:
+  - "需求澄清、范围定义、验收标准（DoR/DoD）"
+  - "风险分级（R0-R3）与闸门识别（需要用户批准的动作清单）"
+non_scope:
+  - "未获批准的高风险动作（删改数据/开公网端口/创建或删除远端仓库/旋转密钥/生产发布等）"
+capability_tags:
+  - "intake"
+  - "risk_assessment"
+  - "approval_gates"
+inputs:
+  - "用户的一句话需求"
+  - "现有 Team OS 角色与工作流定义"
+outputs:
+  - "任务台账（.team-os/ledger/tasks/<TASK_ID>.yaml）"
+  - "任务日志 00~02（.team-os/logs/tasks/<TASK_ID>/00~02_*.md）"
+tools_allowed:
+  - "read/write: .team-os/ledger, .team-os/logs (append-only for evidence)"
+quality_gates:
+  - "禁止 secrets 入库（仅 .env.example）"
+  - "明确标注 need_pm_decision / approvals_required"
+handoff_rules:
+  - "涉及架构决策 -> Architect"
+  - "涉及外部最新事实 -> Researcher（Skill Boot）"
+metrics_required:
+  - "task_log_00_02_complete"
+  - "risk_level_set"
+memory_policy:
+  write_paths:
+    - ".team-os/memory/roles/PM-Intake/index.md"
+  indexing_required: true
+risk_policy:
+  default_risk_level: "R1"
+  requires_user_approval:
+    - "delete/overwrite data"
+    - "open public ports"
+    - "create/delete GitHub repos"
+    - "rotate keys/tokens"
+    - "system-level installs / sshd/firewall changes"
 permissions:
   - "create:task_ledger"
   - "write:task_logs_00_02"
@@ -59,4 +97,3 @@ permissions:
 
 - 抽象出可复用的 intake 问题清单、验收模板，写入：
   - `.team-os/memory/roles/PM-Intake/index.md`
-

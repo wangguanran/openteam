@@ -4,6 +4,34 @@ version: "0.1"
 last_updated: "<YYYY-MM-DD>"
 owners:
   - "<name_or_team>"
+scope:
+  - "<what this role owns>"
+non_scope:
+  - "<what this role must not do>"
+capability_tags:
+  - "<capability_tag>"
+inputs:
+  - "<expected inputs>"
+outputs:
+  - "<expected outputs>"
+tools_allowed:
+  - "<allowed tools/commands>"
+quality_gates:
+  - "<checks that must pass>"
+handoff_rules:
+  - "<handoff condition -> next role>"
+metrics_required:
+  - "<metric_name>"
+memory_policy:
+  write_paths:
+    - ".team-os/memory/roles/<ROLE_ID>/index.md"
+  indexing_required: true
+risk_policy:
+  default_risk_level: "R1"
+  requires_user_approval:
+    - "repo create/delete"
+    - "remote writes (GitHub Issues/Projects)"
+    - "system-level installs / sshd/firewall changes"
 permissions:
   - "read:repo"
   - "write:repo (when approved if risky)"
@@ -65,4 +93,3 @@ Skill Boot 必产物：
 - 任何可复用的经验/坑/决策模板，必须写入：
   - `.team-os/memory/roles/<ROLE_ID>/index.md`
   - 并链接到对应 Skill Card 与来源摘要
-

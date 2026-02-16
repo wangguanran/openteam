@@ -1,0 +1,57 @@
+id: "TASK-20260216-120619"
+title: "仓库概览：实现内容梳理"
+project_id: "teamos" # project registry: .team-os/state/projects.yaml
+workstream_id: "general" # workstream registry: .team-os/state/workstreams.yaml
+status: "closed" # intake|plan|todo|doing|test|release|observe|retro|closed (aliases: work|running -> doing)
+risk_level: "R0" # R0|R1|R2|R3
+need_pm_decision: false
+repo:
+  locator: ""      # owner/name, url, or local path (optional)
+  workdir: "/Users/wangguanran/OpenTeam/team-os"      # local checkout path (optional)
+  branch: ""       # working branch (optional)
+  mode: "auto"     # auto|bootstrap|upgrade
+checkpoint:
+  stage: "closed"
+  last_event_ts: "2026-02-16T12:20:02Z"
+recovery:
+  last_scan_at: ""
+  last_resume_at: ""
+  notes: ""
+approvals_required:
+  - "none"
+owners:
+  - "Developer-AI"
+roles_involved:
+  - "Developer-AI"
+  - "Process-Guardian"
+workflows:
+  - "Discovery"
+created_at: "2026-02-16T12:06:19Z"
+updated_at: "2026-02-16T12:20:02Z"
+links:
+  pr: ""
+  issue: ""
+artifacts:
+  ledger: ".team-os/ledger/tasks/TASK-20260216-120619.yaml"
+  logs_dir: ".team-os/logs/tasks/TASK-20260216-120619/"
+evidence:
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/00_intake.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/01_plan.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/02_todo.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/03_work.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/04_test.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/05_release.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/06_observe.md"
+  - type: "log"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/07_retro.md"
+  - type: "metrics"
+    path: ".team-os/logs/tasks/TASK-20260216-120619/metrics.jsonl"
+  - type: "self_improve"
+    path: ".team-os/ledger/self_improve/20260216-121936_self-improve.md"

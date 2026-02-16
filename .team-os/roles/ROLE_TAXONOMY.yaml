@@ -1,0 +1,63 @@
+schema_version: 1
+
+# Role taxonomy is a registry of role_id naming conventions and examples.
+# It supports "on-demand instantiation": new roles can be added without refactoring the whole system.
+#
+# Examples:
+# - Developer-Backend (generic)
+# - Developer-Device/driver.camera (specialized workstream)
+# - QA/ios (platform QA)
+
+conventions:
+  separator: "/"
+  examples:
+    - "Developer-Backend"
+    - "Developer-AI"
+    - "Developer-Web"
+    - "Release-Ops"
+    - "Developer-Device/driver.camera"
+    - "Developer-Device/driver.lcd"
+    - "Developer-Device/driver.sensor"
+
+workstream_role_examples:
+  backend:
+    - "Developer-Backend"
+    - "Reviewer/backend"
+  ai:
+    - "Developer-AI"
+    - "Researcher/ai"
+  web:
+    - "Developer-Web"
+    - "QA/web"
+  ios:
+    - "Developer-iOS"
+    - "QA/ios"
+  android:
+    - "Developer-Android"
+    - "QA/android"
+  wechat:
+    - "Developer-WeChat"
+    - "QA/wechat"
+  data:
+    - "Data-Analyst"
+  devops:
+    - "Release-Ops"
+  driver.camera:
+    - "Developer-Device/driver.camera"
+  driver.lcd:
+    - "Developer-Device/driver.lcd"
+  driver.sensor:
+    - "Developer-Device/driver.sensor"
+
+capability_tags:
+  # Capability tags are used by cluster routing and task required_capabilities.
+  allowed_examples:
+    - "repo_rw"
+    - "build_linux"
+    - "docker"
+    - "adb_device_debug"
+    - "serial_console"
+    - "github_projects_sync"
+    - "requirements_conflict_check"
+    - "security_review"
+

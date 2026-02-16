@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Team OS Telemetry Event (JSONL line)",
+  "type": "object",
+  "required": ["ts", "event_type", "actor"],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp, e.g. 2026-02-15T23:34:00Z"
+    },
+    "event_type": {
+      "type": "string",
+      "description": "Machine-readable event type, e.g. TASK_CREATED, SELF_IMPROVE_PROPOSAL_CREATED."
+    },
+    "actor": {
+      "type": "string",
+      "description": "Who emitted the event (role/agent/cli/control-plane)."
+    },
+    "task_id": { "type": ["string", "null"] },
+    "project_id": { "type": ["string", "null"] },
+    "workstream_id": { "type": ["string", "null"] },
+    "severity": {
+      "type": ["string", "null"],
+      "enum": ["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL", null]
+    },
+    "message": { "type": ["string", "null"] },
+    "payload": {
+      "type": ["object", "null"],
+      "description": "Arbitrary structured payload (must not contain secrets).",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
+

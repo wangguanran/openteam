@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import argparse
+import datetime as _dt
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -21,6 +23,9 @@ except Exception:  # pragma: no cover
 
 CONFIG_DIR = Path.home() / ".teamos"
 CONFIG_PATH = CONFIG_DIR / "config.toml"
+DEFAULT_WORKSPACE_ROOT = Path.home() / ".teamos" / "workspace"
+
+_PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def eprint(*a: Any) -> None:
@@ -64,6 +69,17 @@ def _dump_toml(cfg: dict[str, Any]) -> str:
     out: list[str] = []
     if cur:
         out.append(f'current_profile = "{cur}"')
+        out.append("")
+    # Workspace (local filesystem). This is user config (never committed).
+    if cfg.get("workspace_root"):
+        out.append(f'workspace_root = "{cfg.get("workspace_root")}"')
+        out.append("")
+    if cfg.get("default_project_id"):
+        out.append(f'default_project_id = "{cfg.get("default_project_id")}"')
+        out.append("")
+    if "leader_only_writes" in cfg:
+        v = bool(cfg.get("leader_only_writes"))
+        out.append(f"leader_only_writes = {'true' if v else 'false'}")
         out.append("")
     for name, p in profiles.items():
         out.append(f"[profiles.{name}]")
@@ -132,16 +148,389 @@ def _agent_is_active(agent_state: Any) -> bool:
     return bool(s) and s not in ("IDLE", "DONE")
 
 
+def _find_team_os_repo_root() -> Optional[Path]:
+    """
+    Best-effort Team OS repo root detection for local self-improve.
+    Priority:
+    1) env TEAM_OS_REPO_PATH
+    2) current directory or parents containing `.team-os/` + `AGENTS.md`
+    """
+    env = (os.getenv("TEAM_OS_REPO_PATH") or "").strip()
+    if env:
+        p = Path(env).expanduser().resolve()
+        if (p / ".team-os").exists():
+            return p
+
+    cur = Path.cwd().resolve()
+    for p in [cur] + list(cur.parents):
+        if (p / ".team-os").exists() and (p / "AGENTS.md").exists():
+            return p
+    return None
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _workspace_root_from_cfg(cfg: dict[str, Any]) -> Path:
+    v = str(cfg.get("workspace_root") or "").strip()
+    if not v:
+        v = str(os.getenv("TEAMOS_WORKSPACE_ROOT") or "").strip()
+    if not v:
+        v = str(DEFAULT_WORKSPACE_ROOT)
+    return Path(v).expanduser().resolve()
+
+
+def _workspace_root(args: argparse.Namespace) -> Path:
+    v = str(getattr(args, "workspace_root", "") or "").strip()
+    if v:
+        return Path(v).expanduser().resolve()
+    cfg = _load_config()
+    return _workspace_root_from_cfg(cfg)
+
+
+def _workspace_project_dir(workspace_root: Path, project_id: str) -> Path:
+    pid = _norm(project_id)
+    if not pid:
+        raise RuntimeError("project_id is required")
+    return workspace_root / "projects" / pid
+
+
+def _is_safe_project_id(pid: str) -> bool:
+    s = _norm(pid)
+    return bool(s) and (s == s.lower()) and bool(_PROJECT_ID_RE.match(s))
+
+
+def _ensure_project_scaffold(workspace_root: Path, project_id: str) -> None:
+    """
+    Ensure per-project Workspace structure exists (idempotent).
+
+    This mirrors control-plane expectations:
+      <WORKSPACE>/projects/<id>/{repo,state/...}
+    """
+    pid = _norm(project_id)
+    if not _is_safe_project_id(pid):
+        # Don't create unsafe paths; doctor will fail and user can rename.
+        return
+
+    pdir = workspace_root / "projects" / pid
+    repo = pdir / "repo"
+    state = pdir / "state"
+
+    (repo).mkdir(parents=True, exist_ok=True)
+    (state / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
+    (state / "ledger" / "conversations" / pid).mkdir(parents=True, exist_ok=True)
+    (state / "logs" / "tasks").mkdir(parents=True, exist_ok=True)
+    (state / "requirements" / "conflicts").mkdir(parents=True, exist_ok=True)
+    (state / "prompts").mkdir(parents=True, exist_ok=True)
+    (state / "plan").mkdir(parents=True, exist_ok=True)
+    (state / "kb").mkdir(parents=True, exist_ok=True)
+    (state / "cluster").mkdir(parents=True, exist_ok=True)
+
+    mp = state / "prompts" / "MASTER_PROMPT.md"
+    if not mp.exists():
+        mp.write_text(f"# MASTER PROMPT ({pid})\n\n- TODO\n", encoding="utf-8")
+
+    plan_yaml = state / "plan" / "plan.yaml"
+    if not plan_yaml.exists():
+        plan_yaml.write_text(f"schema_version: 1\nproject_id: \"{pid}\"\nmilestones: []\n", encoding="utf-8")
+    plan_md = state / "plan" / "PLAN.md"
+    if not plan_md.exists():
+        plan_md.write_text(f"# PLAN ({pid})\n\n- TODO\n", encoding="utf-8")
+
+    req_yaml = state / "requirements" / "requirements.yaml"
+    if not req_yaml.exists():
+        req_yaml.write_text(
+            "\n".join(
+                [
+                    "schema_version: 1",
+                    f"project_id: {pid}",
+                    "next_req_seq: 1",
+                    "requirements: []",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    req_md = state / "requirements" / "REQUIREMENTS.md"
+    if not req_md.exists():
+        req_md.write_text(f"# Requirements ({pid})\n\n", encoding="utf-8")
+    ch = state / "requirements" / "CHANGELOG.md"
+    if not ch.exists():
+        ch.write_text(f"# Requirements Changelog ({pid})\n\n", encoding="utf-8")
+
+
+def _ensure_workspace_scaffold(workspace_root: Path) -> None:
+    # Idempotent.
+    (workspace_root / "projects").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "shared" / "cache").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "shared" / "tmp").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "config").mkdir(parents=True, exist_ok=True)
+    cfg = workspace_root / "config" / "workspace.toml"
+    if not cfg.exists():
+        cfg.write_text(
+            "\n".join(
+                [
+                    "# Team OS Workspace config (local; not committed)",
+                    "",
+                    f'workspace_root = "{workspace_root}"',
+                    "",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    # Repair: ensure existing projects have required per-project subdirs.
+    projects_dir = workspace_root / "projects"
+    if projects_dir.exists():
+        for d in sorted(projects_dir.iterdir()):
+            if d.is_dir():
+                _ensure_project_scaffold(workspace_root, d.name)
+
+
+def cmd_workspace_init(args: argparse.Namespace) -> None:
+    path = Path(args.path).expanduser().resolve() if getattr(args, "path", "") else _workspace_root(args)
+    _ensure_workspace_scaffold(path)
+    print(f"workspace_root={path}")
+    print("workspace_init: OK")
+
+
+def cmd_workspace_show(args: argparse.Namespace) -> None:
+    root = _workspace_root(args)
+    projects_dir = root / "projects"
+    projects = []
+    if projects_dir.exists():
+        for d in sorted(projects_dir.iterdir()):
+            if d.is_dir():
+                projects.append(d.name)
+    print(f"workspace_root={root}")
+    print(f"projects_count={len(projects)}")
+    if projects:
+        for pid in projects[:200]:
+            pdir = projects_dir / pid
+            repo_ok = (pdir / "repo").exists()
+            state_ok = (pdir / "state").exists()
+            print(f"- {pid} repo={repo_ok} state={state_ok}")
+
+
+def cmd_workspace_doctor(args: argparse.Namespace) -> None:
+    root = _workspace_root(args)
+    if not root.exists():
+        print(f"workspace: FAIL missing_root={root}")
+        print("next: teamos workspace init")
+        raise SystemExit(2)
+
+    # Governance: workspace must be OUTSIDE the team-os repo.
+    repo_root = _find_team_os_repo_root()
+    if repo_root and _is_within(root, repo_root):
+        print(f"workspace: FAIL workspace_root_inside_repo root={root} repo={repo_root}")
+        print("next: teamos workspace init --path ~/.teamos/workspace")
+        raise SystemExit(2)
+
+    must = [
+        root / "projects",
+        root / "shared" / "cache",
+        root / "shared" / "tmp",
+        root / "config",
+    ]
+    miss = [str(p) for p in must if not p.exists()]
+    if miss:
+        print("workspace: FAIL missing_paths=" + ",".join(miss[:5]))
+        print("next: teamos workspace init")
+        raise SystemExit(2)
+    # Basic writability check.
+    try:
+        t = root / "shared" / "tmp" / f"doctor_{os.getpid()}.tmp"
+        t.write_text("ok\n", encoding="utf-8")
+        t.unlink(missing_ok=True)
+    except Exception as e:
+        print(f"workspace: FAIL not_writable err={e}")
+        raise SystemExit(2)
+    print(f"workspace_root={root}")
+
+    # Per-project structure checks.
+    bad_projects: list[str] = []
+    missing_by_project: dict[str, list[str]] = {}
+    projects_dir = root / "projects"
+    if projects_dir.exists():
+        for d in sorted(projects_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            pid = d.name
+            if not _is_safe_project_id(pid):
+                bad_projects.append(pid)
+                continue
+            req = d / "state" / "requirements" / "requirements.yaml"
+            must_paths = [
+                d / "repo",
+                d / "state" / "ledger" / "tasks",
+                d / "state" / "logs" / "tasks",
+                d / "state" / "requirements" / "conflicts",
+                d / "state" / "prompts" / "MASTER_PROMPT.md",
+                d / "state" / "plan" / "plan.yaml",
+                d / "state" / "plan" / "PLAN.md",
+                d / "state" / "kb",
+                d / "state" / "cluster",
+                req,
+            ]
+            miss = [str(p.relative_to(d)) for p in must_paths if not p.exists()]
+            if miss:
+                missing_by_project[pid] = miss
+    if bad_projects:
+        print("workspace: FAIL invalid_project_ids=" + ",".join(bad_projects[:10]))
+        print("next: rename project dirs to lowercase [a-z0-9][a-z0-9_-]{0,63}")
+        raise SystemExit(2)
+    if missing_by_project:
+        first = sorted(missing_by_project.keys())[0]
+        print(f"workspace: FAIL missing_project_paths project_id={first} missing={missing_by_project[first][:8]}")
+        print("next: teamos workspace init  # idempotent repair")
+        raise SystemExit(2)
+
+    print("workspace: OK")
+
+
+def cmd_workspace_migrate(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root (for --from-repo migration).")
+    if not getattr(args, "from_repo", False):
+        raise RuntimeError("Only supported mode: --from-repo")
+
+    root = _workspace_root(args)
+    # Local governance script (no remote writes).
+    script = repo_root / ".team-os" / "scripts" / "governance" / "migrate_repo_projects.py"
+    if not script.exists():
+        raise RuntimeError(f"migration script missing: {script}")
+
+    apply = bool(getattr(args, "force", False))
+    if apply and (not bool(getattr(args, "yes", False))):
+        eprint("HIGH RISK: this will MOVE legacy project artifacts out of the team-os git repo into your Workspace.")
+        eprint("This may delete files from the repo working tree (they will still exist in the Workspace).")
+        ans = input("Proceed? type YES to continue: ").strip()
+        if ans != "YES":
+            eprint("aborted")
+            raise SystemExit(2)
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(root),
+    ]
+    if getattr(args, "dry_run", False) or (not apply):
+        cmd.append("--dry-run")
+    if apply:
+        cmd.append("--force")
+    p = subprocess.run(cmd, check=False)
+    if p.returncode != 0:
+        raise SystemExit(p.returncode)
+
+
+def cmd_project_list(args: argparse.Namespace) -> None:
+    root = _workspace_root(args)
+    projects_dir = root / "projects"
+    if not projects_dir.exists():
+        print(f"workspace_missing: {root}")
+        print("next: teamos workspace init")
+        raise SystemExit(2)
+    rows: list[list[str]] = []
+    for d in sorted(projects_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        pid = d.name
+        repo = d / "repo"
+        state = d / "state"
+        req = state / "requirements" / "requirements.yaml"
+        tasks = state / "ledger" / "tasks"
+        rows.append(
+            [
+                pid,
+                "Y" if repo.exists() else "",
+                "Y" if state.exists() else "",
+                "Y" if req.exists() else "",
+                str(len(list(tasks.glob("*.yaml")))) if tasks.exists() else "0",
+            ]
+        )
+    print(_fmt_table(["project_id", "repo", "state", "requirements", "tasks"], rows))
+
+
+def _read_last_self_improve_run(repo_root: Path) -> Optional[dict[str, Any]]:
+    p = repo_root / ".team-os" / "state" / "self_improve_last_run.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _should_auto_wake_self_improve(repo_root: Path, *, debounce_hours: int = 6) -> bool:
+    d = _read_last_self_improve_run(repo_root) or {}
+    last = str(d.get("last_run_at") or "").strip()
+    if not last:
+        return True
+    try:
+        dt = _dt.datetime.fromisoformat(last.replace("Z", "+00:00"))
+        now = _dt.datetime.now(_dt.timezone.utc)
+        hours = (now - dt).total_seconds() / 3600.0
+        return hours >= float(debounce_hours)
+    except Exception:
+        return True
+
+
+def _auto_wake_self_improve(args: argparse.Namespace) -> None:
+    """
+    Always-on self-improve scheduler wake.
+
+    Policy:
+    - Non-blocking: spawn a detached child process.
+    - Debounced: default 6h, stored in `.team-os/state/self_improve_last_run.json` (gitignored).
+    - Safe-by-default: dry-run (no remote writes).
+    """
+    if os.getenv("TEAMOS_SELF_IMPROVE_DISABLE", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
+        return
+    if os.getenv("TEAMOS_SELF_IMPROVE_CHILD", "").strip() == "1":
+        return
+    if getattr(args, "cmd", "") in ("self-improve",):
+        return
+
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        return
+
+    env = os.environ.copy()
+    env["TEAMOS_SELF_IMPROVE_CHILD"] = "1"
+    env.setdefault("TEAM_OS_REPO_PATH", str(repo_root))
+
+    argv = [sys.executable, str(Path(__file__).resolve())]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["self-improve", "--dry-run", "--auto", "--quiet"]
+
+    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+
+
 def cmd_config_init(_args: argparse.Namespace) -> None:
     if CONFIG_PATH.exists():
         eprint(f"config_exists={CONFIG_PATH}")
         return
     cfg = {
         "current_profile": "local",
+        "workspace_root": str(DEFAULT_WORKSPACE_ROOT),
+        "default_project_id": "teamos",
+        "leader_only_writes": True,
         "profiles": {
             "local": {
                 "base_url": "http://127.0.0.1:8787",
-                "default_project_id": "DEMO",
+                # Prefer the real Team OS dev project by default; demos are opt-in.
+                "default_project_id": "teamos",
             }
         },
     }
@@ -186,7 +575,7 @@ def _base_url(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
 
 
 def _default_project_id(prof: dict[str, Any], args: argparse.Namespace) -> str:
-    return args.project or (prof.get("default_project_id") or "DEMO")
+    return args.project or (prof.get("default_project_id") or "teamos")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -232,8 +621,19 @@ def cmd_status(args: argparse.Namespace) -> None:
         print()
 
     print(f"profile={prof['name']} instance_id={instance_id}")
+    if st.get("workspace_root") is not None:
+        print(f"workspace_root={st.get('workspace_root','')}")
+    if st.get("workspace_projects_count") is not None:
+        print(f"workspace_projects_count={st.get('workspace_projects_count','')}")
     print(f"focus.objective={focus.get('objective','')}")
     print(f"focus.updated_at={focus.get('updated_at','')}")
+    repo_root = _find_team_os_repo_root()
+    if repo_root:
+        si = _read_last_self_improve_run(repo_root) or {}
+        if si.get("last_run_at"):
+            print(f"self_improve.last_run_at={si.get('last_run_at')}")
+            if si.get("proposals") is not None:
+                print(f"self_improve.proposals={si.get('proposals')}")
     print()
 
     agents = st.get("agents") or []
@@ -519,19 +919,25 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
+    ok = True
     base, prof = _base_url(args)
     print(f"profile={prof['name']} base_url={base}")
     try:
         hz = _http_json("GET", base + "/healthz", timeout_sec=5)
         print(f"control_plane: OK healthz.status={hz.get('status','')}")
+        db = hz.get("db") or {}
+        if isinstance(db, dict) and db:
+            print(f"control_plane_db: backend={db.get('backend')} ok={db.get('ok')} err={str(db.get('error',''))[:120]}")
         st = _http_json("GET", base + "/v1/status", timeout_sec=5)
         print(f"control_plane: OK instance_id={st.get('instance_id','')}")
     except Exception as e:
         print(f"control_plane: FAIL {e}")
+        ok = False
 
     # OAuth status (Codex CLI) - local check
     if shutil_which("codex") is None:
         print("codex: MISS (install codex CLI, then: codex login)")
+        ok = False
     else:
         p = subprocess.run(["codex", "login", "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out = (p.stdout or b"").decode("utf-8", errors="replace").strip()
@@ -541,8 +947,26 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             print(f"codex: OK {msg}".rstrip())
         else:
             print("codex: FAIL (run: codex login --device-auth)")
+            ok = False
             if msg:
                 print("  " + msg.splitlines()[0][:200])
+
+    # GitHub auth (prefer gh OAuth; allow env token fallback)
+    if shutil_which("gh") is None:
+        tok = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
+        if tok:
+            print("gh: OK (env token present; recommend: gh auth login)")
+        else:
+            print("gh: MISS (install gh CLI, then: gh auth login)")
+    else:
+        p = subprocess.run(["gh", "auth", "status", "-h", "github.com"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out = ((p.stdout or b"") + b"\n" + (p.stderr or b"")).decode("utf-8", errors="replace").strip()
+        if p.returncode == 0:
+            print("gh: OK logged_in=true")
+        else:
+            print("gh: FAIL (run: gh auth login)")
+            if out:
+                print("  " + out.splitlines()[0][:200])
 
     # Server-side auth status (best-effort)
     try:
@@ -550,6 +974,105 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print(f"control_plane_auth: backend={auth.get('backend')} logged_in={auth.get('logged_in')} msg={str(auth.get('message',''))[:120]}")
     except Exception as e:
         print(f"control_plane_auth: WARN {e}")
+
+    # Repo structure checks (local truth)
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        print("repo: WARN (cannot find repo root; set env TEAM_OS_REPO_PATH)")
+        ok = False
+    else:
+        must = [
+            repo_root / ".team-os" / "ledger" / "tasks",
+            repo_root / ".team-os" / "logs" / "tasks",
+            # `docs/requirements` must NOT exist anymore (projects live in workspace; teamos lives under docs/teamos/).
+            repo_root / ".team-os" / "workflows",
+            repo_root / ".team-os" / "roles",
+            repo_root / "evals",
+        ]
+        miss = [str(p) for p in must if not p.exists()]
+        if miss:
+            print("repo: FAIL missing_paths=" + ",".join(miss[:5]))
+            ok = False
+        else:
+            print("repo: OK")
+
+        # Repo purity enforcement (no project truth-source artifacts inside repo).
+        purity = repo_root / ".team-os" / "scripts" / "governance" / "check_repo_purity.py"
+        if purity.exists():
+            p = subprocess.run([sys.executable, str(purity), "--repo-root", str(repo_root), "--quiet"], check=False)
+            if p.returncode == 0:
+                print("repo_purity: OK")
+            else:
+                print("repo_purity: FAIL (run: teamos workspace migrate --from-repo)")
+                ok = False
+        else:
+            print(f"repo_purity: WARN missing_checker={purity}")
+            ok = False
+
+    # Workspace checks (local)
+    try:
+        cmd_workspace_doctor(args)
+    except SystemExit:
+        ok = False
+    except Exception as e:
+        print(f"workspace: FAIL {e}")
+        ok = False
+
+    # Control-plane API coverage (safe: openapi.json only)
+    try:
+        spec = _http_json("GET", base + "/openapi.json", timeout_sec=5)
+        paths = spec.get("paths") or {}
+        required = [
+            "/v1/status",
+            "/v1/agents",
+            "/v1/tasks",
+            "/v1/focus",
+            "/v1/chat",
+            "/v1/requirements",
+            "/v1/panel/github/sync",
+            "/v1/panel/github/health",
+            "/v1/panel/github/config",
+            "/v1/cluster/status",
+            "/v1/cluster/elect/attempt",
+            "/v1/nodes",
+            "/v1/nodes/register",
+            "/v1/nodes/heartbeat",
+            "/v1/tasks/new",
+            "/v1/recovery/scan",
+            "/v1/recovery/resume",
+            "/v1/self_improve/run",
+        ]
+        missing = [p for p in required if p not in paths]
+        if missing:
+            print(f"control_plane_api: FAIL missing_paths={len(missing)} sample={missing[:3]}")
+            ok = False
+        else:
+            print("control_plane_api: OK")
+    except Exception as e:
+        print(f"control_plane_api: WARN {e}")
+        ok = False
+
+    if not ok:
+        raise SystemExit(2)
+
+
+def cmd_policy_check(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    script = repo_root / ".team-os" / "scripts" / "policy_check.py"
+    if not script.exists():
+        raise RuntimeError(f"policy_check script missing: {script}")
+
+    cmd = [sys.executable, str(script), "--repo-root", str(repo_root)]
+    if getattr(args, "json", False):
+        cmd.append("--json")
+    if getattr(args, "quiet", False):
+        cmd.append("--quiet")
+    p = subprocess.run(cmd)
+    if p.returncode != 0:
+        raise SystemExit(p.returncode)
 
 
 def cmd_panel_show(args: argparse.Namespace) -> None:
@@ -654,6 +1177,291 @@ def cmd_panel_open(args: argparse.Namespace) -> None:
         print(url)
 
 
+def _import_self_improve_runner(repo_root: Path):
+    # Import from the runtime template (source of truth for control-plane logic).
+    # Keep optional so the CLI can still run as a pure HTTP client.
+    app_dir = repo_root / ".team-os" / "templates" / "runtime" / "orchestrator"
+    sys.path.insert(0, str(app_dir))
+    from app import self_improve_runner  # type: ignore
+
+    return self_improve_runner
+
+
+def cmd_self_improve(args: argparse.Namespace) -> None:
+    """
+    Run one self-improve iteration.
+
+    Default:
+    - Try control-plane `/v1/self_improve/run` first.
+    - Fall back to local runner if control-plane is unreachable or not configured.
+    """
+    if not args.local:
+        try:
+            base, prof = _base_url(args)
+            payload = {
+                "dry_run": bool(args.dry_run),
+                "force": bool(args.force),
+                "trigger": "cli_auto" if args.auto else "manual",
+            }
+            out = _http_json("POST", base + "/v1/self_improve/run", payload, timeout_sec=300)
+            if not args.quiet:
+                print(json.dumps(out, ensure_ascii=False, indent=2))
+            return
+        except Exception as e:
+            if not args.quiet:
+                eprint(f"self_improve: control_plane_failed -> local_fallback: {e}")
+
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    os.environ["TEAM_OS_REPO_PATH"] = str(repo_root)
+    runner = _import_self_improve_runner(repo_root)
+    out = runner.run(
+        dry_run=bool(args.dry_run),
+        force=bool(args.force),
+        actor="cli",
+        trigger="cli_auto" if args.auto else "manual",
+        api_routes=None,
+        project_id="teamos",
+    )
+    if not args.quiet:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+def _parse_metrics_jsonl(path: Path) -> list[str]:
+    issues: list[str] = []
+    if not path.exists():
+        return [f"missing: {path}"]
+    for i, raw in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            if not isinstance(obj, dict):
+                issues.append(f"{path}:{i} not an object")
+                continue
+            for k in ("ts", "event_type", "actor"):
+                if not str(obj.get(k) or "").strip():
+                    issues.append(f"{path}:{i} missing field: {k}")
+        except Exception as e:
+            issues.append(f"{path}:{i} invalid json: {e}")
+    return issues
+
+
+def cmd_metrics_check(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    required_schema = repo_root / ".team-os" / "schemas" / "telemetry_event.schema.json"
+    if not required_schema.exists():
+        print(f"FAIL missing_schema={required_schema}")
+        raise SystemExit(2)
+
+    tasks_root = repo_root / ".team-os" / "logs" / "tasks"
+    if not tasks_root.exists():
+        print(f"FAIL missing_tasks_logs_dir={tasks_root}")
+        raise SystemExit(2)
+
+    want_logs = [
+        "00_intake.md",
+        "01_plan.md",
+        "02_todo.md",
+        "03_work.md",
+        "04_test.md",
+        "05_release.md",
+        "06_observe.md",
+        "07_retro.md",
+    ]
+
+    missing_files: list[str] = []
+    metrics_issues: list[str] = []
+    checked_tasks = 0
+
+    for d in sorted(tasks_root.iterdir()):
+        if not d.is_dir():
+            continue
+        checked_tasks += 1
+        for f in want_logs:
+            if not (d / f).exists():
+                missing_files.append(f"{d.name}/{f}")
+        metrics_issues.extend(_parse_metrics_jsonl(d / "metrics.jsonl"))
+
+    ok = (not missing_files) and (not metrics_issues)
+    print(f"ok={ok} tasks_checked={checked_tasks} missing_files={len(missing_files)} metrics_issues={len(metrics_issues)}")
+    if missing_files and not args.quiet:
+        print("missing:")
+        for x in missing_files[:50]:
+            print(f"- {x}")
+    if metrics_issues and not args.quiet:
+        print("metrics_issues:")
+        for x in metrics_issues[:50]:
+            print(f"- {x}")
+    if not ok:
+        raise SystemExit(2)
+
+
+def cmd_metrics_analyze(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    script = repo_root / ".team-os" / "scripts" / "metrics" / "analyze_evolution.py"
+    if not script.exists():
+        raise RuntimeError(f"missing metrics analyzer: {script}")
+    p = subprocess.run([sys.executable, str(script), "--tasks-dir", str(repo_root / ".team-os" / "logs" / "tasks")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out = (p.stdout or b"").decode("utf-8", errors="replace").strip()
+    err = (p.stderr or b"").decode("utf-8", errors="replace").strip()
+    if p.returncode != 0:
+        raise RuntimeError(f"metrics analyze failed: {err[:200]}")
+    print(out)
+
+
+def cmd_metrics_bootstrap(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    script = repo_root / ".team-os" / "scripts" / "migrations" / "bootstrap_task_artifacts.py"
+    if not script.exists():
+        raise RuntimeError(f"missing bootstrap script: {script}")
+    argv = [sys.executable, str(script), "--full"]
+    if args.dry_run:
+        argv.append("--dry-run")
+    p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    sys.stdout.write((p.stdout or b"").decode("utf-8", errors="replace"))
+    if p.returncode != 0:
+        sys.stderr.write((p.stderr or b"").decode("utf-8", errors="replace"))
+        raise SystemExit(p.returncode)
+
+
+def cmd_cluster_status(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    out = _http_json("GET", base + "/v1/cluster/status", timeout_sec=10)
+    leader = out.get("leader") or {}
+    nodes = out.get("nodes") or []
+    pending = out.get("pending_decisions") or []
+    print(f"profile={prof['name']} base_url={base}")
+    print(f"leader.instance_id={leader.get('leader_instance_id','')}")
+    print(f"leader.backend={leader.get('backend','')}")
+    if leader.get("leader_base_url"):
+        print(f"leader.base_url={leader.get('leader_base_url')}")
+    if pending:
+        print(f"PENDING_DECISIONS={len(pending)}")
+    print(f"nodes={len(nodes)}")
+    if nodes:
+        rows = []
+        for n in nodes[:50]:
+            rows.append(
+                [
+                    str(n.get("instance_id", ""))[:8],
+                    str(n.get("role_preference", "")),
+                    str(n.get("heartbeat_at", "")),
+                    ",".join(n.get("capabilities") or [])[:30],
+                    ",".join(n.get("tags") or [])[:30],
+                ]
+            )
+        print(_fmt_table(["node", "role_pref", "heartbeat", "capabilities", "tags"], rows))
+
+
+def cmd_node_join_script(args: argparse.Namespace) -> None:
+    # Print a join command to run on the new server (no secrets included).
+    base, prof = _base_url(args)
+    brain_url = args.brain_base_url or base
+    cluster_repo = args.cluster_repo
+    if not cluster_repo:
+        raise RuntimeError("missing --cluster-repo owner/name")
+    caps = args.capabilities or ""
+    tags = args.tags or ""
+    role = args.role or "auto"
+    print(
+        f'bash scripts/cluster/join_node.sh --cluster-repo "{cluster_repo}" --brain-base-url "{brain_url}" --role "{role}" --capabilities "{caps}" --tags "{tags}"'
+    )
+
+
+def cmd_node_add(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Run from within the repo or set TEAM_OS_REPO_PATH.")
+    script = repo_root / "scripts" / "cluster" / "bootstrap_remote_node.sh"
+    if not script.exists():
+        raise RuntimeError(f"missing script: {script}")
+    base, prof = _base_url(args)
+    argv = [
+        "bash",
+        str(script),
+        "--host",
+        args.host,
+        "--user",
+        args.user,
+        "--cluster-repo",
+        args.cluster_repo,
+        "--brain-base-url",
+        args.brain_base_url or base,
+        "--role",
+        args.role or "auto",
+        "--capabilities",
+        args.capabilities or "",
+        "--tags",
+        args.tags or "",
+    ]
+    if args.ssh_key:
+        argv += ["--ssh-key", args.ssh_key]
+    if args.execute:
+        argv += ["--execute"]
+    p = subprocess.run(argv, check=False)
+    if p.returncode != 0:
+        raise SystemExit(p.returncode)
+
+
+def cmd_repo_create(args: argparse.Namespace) -> None:
+    if shutil_which("gh") is None:
+        raise RuntimeError("gh CLI not found. Install gh then run: gh auth login")
+
+    name = args.name
+    org = args.org or ""
+    full = f"{org}/{name}" if org else name
+    vis = "--public" if bool(getattr(args, "public", False)) else "--private"
+    cmd = ["gh", "repo", "create", full, vis]
+    if args.clone_dir:
+        cmd += ["--clone", "--", str(args.clone_dir)]
+
+    if not args.approve:
+        print("approval_required: repo_create is high risk")
+        print("would_run: " + " ".join(cmd))
+        print("next: re-run with --approve to execute")
+        return
+
+    p = subprocess.run(cmd, check=False)
+    if p.returncode != 0:
+        raise SystemExit(p.returncode)
+
+
+def cmd_task_new(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    payload = {
+        "title": args.title,
+        "project_id": args.project or _default_project_id(prof, args),
+        "repo_locator": args.repo,
+        "create_repo_if_missing": bool(args.create_repo),
+        "visibility": "public" if bool(getattr(args, "public", False)) else "private",
+        "org": args.org,
+        "workstreams": (args.workstreams.split(",") if args.workstreams else None),
+        "required_capabilities": (args.required_capabilities.split(",") if args.required_capabilities else None),
+        "mode": args.mode or "auto",
+        "dry_run": bool(args.dry_run),
+    }
+    out = _http_json("POST", base + "/v1/tasks/new", payload, timeout_sec=120)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+def cmd_task_resume(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    payload = {"task_id": args.task_id or None, "all": bool(args.all)}
+    out = _http_json("POST", base + "/v1/recovery/resume", payload, timeout_sec=120)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
 def shutil_which(cmd: str) -> Optional[str]:
     import shutil
 
@@ -663,6 +1471,7 @@ def shutil_which(cmd: str) -> Optional[str]:
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="teamos", description="Team OS CLI (Control Plane client)")
     p.add_argument("--profile", help="profile name (from ~/.teamos/config.toml)")
+    p.add_argument("--workspace-root", help="override workspace root (default: ~/.teamos/workspace or config)")
 
     sp = p.add_subparsers(dest="cmd", required=True)
 
@@ -679,6 +1488,26 @@ def main(argv: Optional[list[str]] = None) -> int:
     up.add_argument("name")
     up.set_defaults(fn=cmd_config_use)
     cfg_sp.add_parser("show").set_defaults(fn=cmd_config_show)
+
+    # workspace
+    ws = sp.add_parser("workspace", help="Local Workspace (project truth sources live outside the repo)")
+    ws_sp = ws.add_subparsers(dest="subcmd", required=True)
+    wi = ws_sp.add_parser("init", help="Initialize workspace directories (idempotent)")
+    wi.add_argument("--path", help="workspace root path (default from config)")
+    wi.set_defaults(fn=cmd_workspace_init)
+    ws_sp.add_parser("show", help="Show workspace root and project summary").set_defaults(fn=cmd_workspace_show)
+    ws_sp.add_parser("doctor", help="Validate workspace structure and permissions").set_defaults(fn=cmd_workspace_doctor)
+    wm = ws_sp.add_parser("migrate", help="Migrate legacy project artifacts out of the team-os repo (default dry-run)")
+    wm.add_argument("--from-repo", action="store_true", help="scan current team-os repo for legacy project artifacts")
+    wm.add_argument("--dry-run", action="store_true", help="plan only (default)")
+    wm.add_argument("--force", action="store_true", help="apply moves (high risk; requires your approval)")
+    wm.add_argument("--yes", action="store_true", help="skip interactive confirmation (still high risk)")
+    wm.set_defaults(fn=cmd_workspace_migrate)
+
+    # projects (workspace)
+    pr = sp.add_parser("project", help="Workspace projects")
+    pr_sp = pr.add_subparsers(dest="subcmd", required=True)
+    pr_sp.add_parser("list", help="List projects under workspace").set_defaults(fn=cmd_project_list)
 
     st = sp.add_parser("status")
     st.add_argument("--project")
@@ -724,6 +1553,64 @@ def main(argv: Optional[list[str]] = None) -> int:
     ps.add_argument("--dry-run", action="store_true", help="compute planned actions only (no GitHub calls)")
     ps.set_defaults(fn=cmd_panel_sync)
 
+    cl = sp.add_parser("cluster", help="Multi-node cluster status (Brain/Assistant)")
+    cl_sp = cl.add_subparsers(dest="subcmd", required=True)
+    cl_sp.add_parser("status").set_defaults(fn=cmd_cluster_status)
+
+    nd = sp.add_parser("node", help="Cluster node operations")
+    nd_sp = nd.add_subparsers(dest="subcmd", required=True)
+    na = nd_sp.add_parser("add", help="Bootstrap a remote node via SSH (default: dry-run)")
+    na.add_argument("--host", required=True)
+    na.add_argument("--user", required=True)
+    na.add_argument("--ssh-key")
+    na.add_argument("--cluster-repo", required=True, help="owner/name for cluster bus repo")
+    na.add_argument("--brain-base-url", help="override brain control-plane base url")
+    na.add_argument("--role", default="auto")
+    na.add_argument("--capabilities", default="")
+    na.add_argument("--tags", default="")
+    na.add_argument("--execute", action="store_true", help="execute ssh/scp (high risk; requires your approval)")
+    na.set_defaults(fn=cmd_node_add)
+    nj = nd_sp.add_parser("join-script", help="Print a join command to run on the new server")
+    nj.add_argument("--cluster-repo", required=True, help="owner/name for cluster bus repo")
+    nj.add_argument("--brain-base-url", help="override brain control-plane base url")
+    nj.add_argument("--role", default="auto")
+    nj.add_argument("--capabilities", default="")
+    nj.add_argument("--tags", default="")
+    nj.set_defaults(fn=cmd_node_join_script)
+
+    rp = sp.add_parser("repo", help="Repo operations (GitHub)")
+    rp_sp = rp.add_subparsers(dest="subcmd", required=True)
+    rc = rp_sp.add_parser("create", help="Create a new GitHub repo (high risk; requires --approve)")
+    rc.add_argument("--name", required=True)
+    rc.add_argument("--org")
+    rc_vis = rc.add_mutually_exclusive_group()
+    rc_vis.add_argument("--public", action="store_true", help="create public repo")
+    rc_vis.add_argument("--private", action="store_true", help="create private repo (default)")
+    rc.add_argument("--clone-dir")
+    rc.add_argument("--approve", action="store_true")
+    rc.set_defaults(fn=cmd_repo_create)
+
+    ts = sp.add_parser("task", help="Task lifecycle commands")
+    ts_sp = ts.add_subparsers(dest="subcmd", required=True)
+    tn = ts_sp.add_parser("new", help="Create a new task (repo optional; default dry-run)")
+    tn.add_argument("--title", required=True)
+    tn.add_argument("--project")
+    tn.add_argument("--repo")
+    tn.add_argument("--create-repo", action="store_true")
+    tn.add_argument("--org")
+    tn_vis = tn.add_mutually_exclusive_group()
+    tn_vis.add_argument("--public", action="store_true", help="public visibility (default: private)")
+    tn_vis.add_argument("--private", action="store_true", help="private visibility (default)")
+    tn.add_argument("--workstreams", help="comma-separated")
+    tn.add_argument("--required-capabilities", help="comma-separated")
+    tn.add_argument("--mode", default="auto", help="auto|bootstrap|upgrade")
+    tn.add_argument("--dry-run", action="store_true", help="safety default: do not touch remotes")
+    tn.set_defaults(fn=cmd_task_new)
+    tr = ts_sp.add_parser("resume", help="Resume tasks after interruption (placeholder)")
+    tr.add_argument("--all", action="store_true")
+    tr.add_argument("--task-id")
+    tr.set_defaults(fn=cmd_task_resume)
+
     ch = sp.add_parser("chat")
     ch.add_argument("--project")
     ch.add_argument("--workstream")
@@ -750,11 +1637,39 @@ def main(argv: Optional[list[str]] = None) -> int:
     rc.add_argument("--project")
     rc.set_defaults(fn=cmd_req_conflicts)
 
+    mt = sp.add_parser("metrics", help="Telemetry/metrics checks and analysis (local truth source)")
+    mt_sp = mt.add_subparsers(dest="subcmd", required=True)
+    mc = mt_sp.add_parser("check", help="Validate task logs 00~07 + metrics.jsonl against minimal schema")
+    mc.add_argument("--quiet", action="store_true")
+    mc.set_defaults(fn=cmd_metrics_check)
+    ma = mt_sp.add_parser("analyze", help="Analyze metrics/logs to propose evolution improvements")
+    ma.set_defaults(fn=cmd_metrics_analyze)
+    mb = mt_sp.add_parser("bootstrap", help="Create missing task artifacts (logs/metrics/ledger fields)")
+    mb.add_argument("--dry-run", action="store_true")
+    mb.set_defaults(fn=cmd_metrics_bootstrap)
+
+    pol = sp.add_parser("policy", help="Local policy checks (no remote writes)")
+    pol_sp = pol.add_subparsers(dest="subcmd", required=True)
+    pc = pol_sp.add_parser("check", help="Enforce codified Team OS norms (no secrets, external project layout, runtime mount)")
+    pc.add_argument("--json", action="store_true")
+    pc.add_argument("--quiet", action="store_true")
+    pc.set_defaults(fn=cmd_policy_check)
+
     doc = sp.add_parser("doctor")
     doc.set_defaults(fn=cmd_doctor)
 
+    si = sp.add_parser("self-improve", help="Always-on self improvement (scan -> proposals -> pending issues)")
+    si.add_argument("--dry-run", action="store_true", help="no remote writes; still writes local proposal artifacts")
+    si.add_argument("--force", action="store_true", help="ignore debounce and run now")
+    si.add_argument("--local", action="store_true", help="run local scanner (skip control-plane call)")
+    si.add_argument("--auto", action="store_true", help="internal: invoked by auto scheduler")
+    si.add_argument("--quiet", action="store_true", help="suppress output (for auto scheduler)")
+    si.set_defaults(fn=cmd_self_improve)
+
     args = p.parse_args(argv)
     try:
+        # Always-on self-improve wake (non-blocking, debounced).
+        _auto_wake_self_improve(args)
         args.fn(args)
         return 0
     except Exception as e:

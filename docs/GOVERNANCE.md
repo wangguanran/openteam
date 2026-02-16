@@ -42,3 +42,30 @@
 - 业务仓库与 Team OS 仓库可以并行演进。
 - Team OS 的改动通过 Self-Improve 工作流管理，避免干扰业务交付节奏。
 
+## 5. Repo Purity（硬隔离：Repo vs Workspace）
+
+硬规则：
+
+- `team-os/` git 仓库只允许 scope=`teamos` 的文件（Team OS 自身：代码/模板/策略/文档/evals/集成适配器等）。
+- 任何 scope=`project:<id>` 的真相源文件（requirements/冲突报告/ledger/logs/prompts/plan/项目 repo workdir 等）必须落在 Workspace（默认 `~/.teamos/workspace`），不得出现在 `team-os/` 目录树内。
+
+强制执行：
+
+- `teamos doctor` / `./scripts/teamos.sh doctor` 必须检查并在违规时失败
+- 回归测试必须覆盖 repo_purity（见 `evals/test_repo_purity.py`）
+
+违规处理：
+
+1. 先看迁移计划（不改动文件）：
+
+```bash
+cd team-os
+./teamos workspace migrate --from-repo
+```
+
+2. 迁移执行属于高风险动作（会移动仓库内文件到 Workspace；数据不会丢，但会产生 git deletions），需人工确认后执行：
+
+```bash
+cd team-os
+./teamos workspace migrate --from-repo --force
+```

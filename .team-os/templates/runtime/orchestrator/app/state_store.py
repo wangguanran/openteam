@@ -13,17 +13,28 @@ class StateError(Exception):
 def team_os_root() -> Path:
     return Path(os.getenv("TEAM_OS_REPO_PATH", "/team-os")).resolve()
 
-
 def state_dir() -> Path:
     return team_os_root() / ".team-os" / "state"
 
 
 def ledger_tasks_dir() -> Path:
+    # Team OS self task ledgers (scope=teamos).
     return team_os_root() / ".team-os" / "ledger" / "tasks"
 
+def logs_tasks_dir() -> Path:
+    # Team OS self task logs (scope=teamos).
+    return team_os_root() / ".team-os" / "logs" / "tasks"
 
-def conversations_dir(project_id: str) -> Path:
-    return team_os_root() / ".team-os" / "ledger" / "conversations" / project_id
+
+def teamos_requirements_dir() -> Path:
+    # Team OS self requirements truth source (scope=teamos).
+    # Project requirements must live in Workspace.
+    return team_os_root() / "docs" / "teamos" / "requirements"
+
+
+def teamos_plan_dir() -> Path:
+    # Team OS self planning overlay (scope=teamos).
+    return team_os_root() / "docs" / "plan" / "teamos"
 
 
 def _utc_now_iso() -> str:
@@ -129,46 +140,6 @@ def load_workstreams() -> list[dict[str, Any]]:
     p = state_dir() / "workstreams.yaml"
     data = _read_yaml(p)
     return list(data.get("workstreams") or [])
-
-
-def load_projects() -> list[dict[str, Any]]:
-    p = state_dir() / "projects.yaml"
-    data = _read_yaml(p)
-    return list(data.get("projects") or [])
-
-
-def get_project(project_id: str) -> Optional[dict[str, Any]]:
-    for p in load_projects():
-        if str(p.get("project_id")) == project_id:
-            return p
-    return None
-
-
-def requirements_dir_for_project(project_id: str) -> Path:
-    p = get_project(project_id)
-    if not p:
-        raise StateError(f"unknown project_id={project_id}; register in .team-os/state/projects.yaml")
-    rel = str(p.get("requirements_dir") or "").strip()
-    if not rel:
-        raise StateError(f"project {project_id} missing requirements_dir in .team-os/state/projects.yaml")
-    return team_os_root() / rel
-
-
-def plan_dir_for_project(project_id: str) -> Optional[Path]:
-    """
-    Optional planning overlay directory, used for Roadmap/milestones sync.
-
-    Convention (recommended):
-    - docs/plan/<project_id>/plan.yaml
-    - docs/plan/<project_id>/PLAN.md
-    """
-    p = get_project(project_id)
-    if not p:
-        return None
-    rel = str(p.get("plan_dir") or "").strip()
-    if not rel:
-        return None
-    return team_os_root() / rel
 
 
 def github_projects_mapping_path() -> Path:

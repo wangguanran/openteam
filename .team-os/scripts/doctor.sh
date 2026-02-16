@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_common.sh"
 
 need_cmds=(git docker node npm python3 pip3)
 optional_cmds=(gh)
@@ -54,6 +55,39 @@ fi
 echo
 if [[ "$missing" -eq 1 ]]; then
   echo "doctor: FAILED (missing required tools)" >&2
+  exit 1
+fi
+
+# Repo purity checks (no project truth-source artifacts inside repo).
+if python3 "$SCRIPT_DIR/governance/check_repo_purity.py" --quiet >/dev/null 2>&1; then
+  echo "repo_purity: OK"
+else
+  echo "repo_purity: FAIL (run: teamos workspace migrate --from-repo)" >&2
+  missing=1
+fi
+
+# Policy checks (best-effort; no remote writes).
+if python3 "$SCRIPT_DIR/policy_check.py" --quiet >/dev/null 2>&1; then
+  echo "policy: OK"
+else
+  echo "policy: FAIL (run: ./scripts/teamos.sh policy-check)" >&2
+  missing=1
+fi
+
+# Workspace checks (project truth sources must live OUTSIDE this repo).
+root="$(teamos_root)"
+if [[ -x "$root/teamos" ]]; then
+  if "$root/teamos" workspace doctor >/dev/null 2>&1; then
+    echo "workspace: OK"
+  else
+    echo "workspace: FAIL (run: teamos workspace init)" >&2
+    missing=1
+  fi
+fi
+
+echo
+if [[ "$missing" -eq 1 ]]; then
+  echo "doctor: FAILED" >&2
   exit 1
 fi
 echo "doctor: OK"

@@ -1,9 +1,41 @@
 ---
 role_id: "QA"
-version: "0.1"
-last_updated: "2026-02-14"
+version: "0.2"
+last_updated: "2026-02-16"
 owners:
   - "Team OS"
+scope:
+  - "测试范围/用例/回归策略定义"
+  - "验收与可复现测试证据落盘"
+non_scope:
+  - "未经批准的生产发布"
+capability_tags:
+  - "qa"
+  - "test_plan"
+  - "regression"
+inputs:
+  - "方案与验收标准（01_plan）"
+  - "变更清单（03_work）"
+outputs:
+  - "测试计划与执行证据（04_test.md）"
+tools_allowed:
+  - "run: tests (non-prod)"
+quality_gates:
+  - "test commands reproducible"
+  - "failures have repro steps"
+handoff_rules:
+  - "测试失败/阻断项 -> Developer-*"
+metrics_required:
+  - "tests_run"
+  - "failures_recorded"
+memory_policy:
+  write_paths:
+    - ".team-os/memory/roles/QA/index.md"
+  indexing_required: true
+risk_policy:
+  default_risk_level: "R1"
+  requires_user_approval:
+    - "tests that require device access outside lab policy"
 permissions:
   - "define:test_plan"
   - "run:tests (non-prod)"
@@ -49,4 +81,3 @@ permissions:
 
 - 将“可复用测试策略/回归清单”写入：
   - `.team-os/memory/roles/QA/index.md`
-

@@ -1,9 +1,40 @@
 ---
 role_id: "Developer-Web"
-version: "0.1"
-last_updated: "2026-02-14"
+version: "0.2"
+last_updated: "2026-02-16"
 owners:
   - "Team OS"
+scope:
+  - "Web 前端/控制台/可视化实现"
+  - "前端构建/测试/发布路径可回归"
+non_scope:
+  - "提交 secrets"
+  - "未经批准的公网暴露"
+capability_tags:
+  - "web_dev"
+  - "frontend_tests"
+inputs:
+  - "方案与验收标准"
+outputs:
+  - "前端代码与配置（无 secrets）"
+  - "测试证据与可回归命令"
+tools_allowed:
+  - "run: frontend tests (non-prod)"
+quality_gates:
+  - "build/test commands documented"
+  - "no secrets in git"
+handoff_rules:
+  - "交付前 -> Reviewer/QA"
+metrics_required:
+  - "frontend_tests_run"
+memory_policy:
+  write_paths:
+    - ".team-os/memory/roles/Developer-Web/index.md"
+  indexing_required: true
+risk_policy:
+  default_risk_level: "R1"
+  requires_user_approval:
+    - "open public ports"
 permissions:
   - "write:web_code"
   - "run:frontend_tests"
@@ -48,4 +79,3 @@ permissions:
 
 - 常用脚手架/构建坑写入：
   - `.team-os/memory/roles/Developer-Web/index.md`
-

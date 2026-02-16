@@ -1,9 +1,42 @@
 ---
 role_id: "Data-Analyst"
-version: "0.1"
-last_updated: "2026-02-14"
+version: "0.2"
+last_updated: "2026-02-16"
 owners:
   - "Team OS"
+scope:
+  - "指标口径/埋点/日志字段定义"
+  - "观测报告与验收信号落盘"
+non_scope:
+  - "修改生产数据/生产数仓（未经批准）"
+capability_tags:
+  - "metrics"
+  - "analytics"
+  - "observability"
+inputs:
+  - "业务目标与验收标准"
+  - "运行时日志与事件（telemetry）"
+outputs:
+  - "指标定义与口径（06_observe 或 skill card）"
+  - "观测报告（可选）"
+tools_allowed:
+  - "read: logs/telemetry"
+  - "write: reports/docs"
+quality_gates:
+  - "metrics definition is unambiguous"
+  - "success_metrics mapped to acceptance"
+handoff_rules:
+  - "关键指标异常 -> Release-Ops/Process-Guardian"
+metrics_required:
+  - "success_metrics_defined"
+memory_policy:
+  write_paths:
+    - ".team-os/memory/roles/Data-Analyst/index.md"
+  indexing_required: true
+risk_policy:
+  default_risk_level: "R1"
+  requires_user_approval:
+    - "production data changes"
 permissions:
   - "define:metrics"
   - "write:reports"
@@ -48,4 +81,3 @@ permissions:
 
 - 口径与报表模板写入：
   - `.team-os/memory/roles/Data-Analyst/index.md`
-

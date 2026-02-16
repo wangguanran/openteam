@@ -32,8 +32,15 @@
   - 活跃 agents 与心跳
   - tasks 状态（RUNNING/BLOCKED/WAITING_PM 等）
   - NEED_PM_DECISION（冲突/决策点）
-  - milestones（来自 `docs/plan/<project_id>/plan.yaml` 的里程碑）
-- **真相源仍在本仓库与运行态状态库**：`.team-os/ledger/**`、`docs/requirements/**`、`.team-os/state/**`、`.team-os/state/runtime.db`（忽略入库）。
+  - milestones（项目：`<WORKSPACE>/projects/<id>/state/plan/plan.yaml`；Team OS 自身：`docs/plan/teamos/plan.yaml`）
+- **真相源分层（Repo vs Workspace）**：
+  - scope=`teamos`：真相源允许落盘在 `team-os/` git 仓库内（用于 Team OS 自我升级与 Roadmap）
+  - scope=`project:<id>`：真相源必须落盘在 **Workspace**（不在 `team-os/` 目录树内）
+    - requirements：`<WORKSPACE>/projects/<id>/state/requirements/**`
+    - ledger/logs：`<WORKSPACE>/projects/<id>/state/ledger/**`、`<WORKSPACE>/projects/<id>/state/logs/**`
+    - prompts/plan/kb：`<WORKSPACE>/projects/<id>/state/prompts|plan|kb/**`
+    - repo workdir：`<WORKSPACE>/projects/<id>/repo/**`
+  - Control Plane 运行态状态库：`.team-os/state/runtime.db`（忽略入库；可迁移 Postgres）
 - Panel 必须可随时从真相源 **全量重建/重同步**：
   - 通过 Control Plane 的 `POST /v1/panel/github/sync`（`mode=full`）实现
   - 字段/状态/workstream 映射以 `.team-os/integrations/github_projects/mapping.yaml` 为准
@@ -51,7 +58,7 @@
 
 Team OS 以文件系统为“真相源”，结构见 `AGENTS.md` 与仓库内 `.team-os/`。
 
-关键资产：
+关键资产（以 **Team OS 自身仓库** 为准；项目 scope 的真相源在 Workspace 内）：
 
 - 角色定义：`.team-os/roles/*.md`
 - 工作流定义：`.team-os/workflows/*.yaml`
@@ -60,10 +67,12 @@ Team OS 以文件系统为“真相源”，结构见 `AGENTS.md` 与仓库内 `
   - `roles/`：按角色沉淀的 Skill Cards
   - `platforms/`：按平台/子系统沉淀的 Skill Cards
 - 角色长期记忆：`.team-os/memory/roles/<Role>/index.md`
-- 台账：`.team-os/ledger/**`
-- 任务日志：`.team-os/logs/tasks/<TASK_ID>/**`
+- 台账（scope=teamos）：`.team-os/ledger/**`
+- 任务日志（scope=teamos）：`.team-os/logs/tasks/<TASK_ID>/**`
+- 项目台账/日志（scope=project:<id>）：`<WORKSPACE>/projects/<id>/state/ledger/**`、`<WORKSPACE>/projects/<id>/state/logs/**`
 - 运行态状态（实例/Focus/项目/Workstream）：`.team-os/state/**`
-- 需求主文档（按 project_id）：`docs/requirements/<project_id>/**`
+- Team OS 自身需求主文档（scope=teamos）：`docs/teamos/requirements/**`
+- 项目需求主文档（scope=project:<id>）：`<WORKSPACE>/projects/<id>/state/requirements/**`
   - `requirements.yaml`（机读事实源）
   - `REQUIREMENTS.md`（人读）
   - `conflicts/`（冲突报告）

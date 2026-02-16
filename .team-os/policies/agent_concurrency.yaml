@@ -1,0 +1,27 @@
+schema_version: 1
+
+# Agent concurrency policy.
+#
+# - max_agents=0 means "no hard cap" (subject to soft limits).
+# - Soft limits are enforced by resource guard before starting new agents.
+
+max_agents: 0
+
+soft_limits:
+  # OS load average (1min). If higher, do not start new agents.
+  loadavg_1m_max: 6.0
+  # Minimum free memory (GB) required to start a new agent.
+  mem_free_gb_min: 2.0
+  # Minimum free disk (GB) required in workdir.
+  disk_free_gb_min: 5.0
+
+  # GitHub API budget (best-effort; caller must implement token bucket).
+  github_api_qps_max: 2.0
+
+  # LLM RPM budget (best-effort; caller must implement limit).
+  llm_rpm_max: 20
+
+notes:
+  - "Tune thresholds per node capability (build server vs device node)."
+  - "Soft limits are guardrails; they should prefer queuing over failing."
+

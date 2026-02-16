@@ -1,9 +1,45 @@
 ---
 role_id: "Developer-Backend"
-version: "0.1"
-last_updated: "2026-02-14"
+version: "0.2"
+last_updated: "2026-02-16"
 owners:
   - "Team OS"
+scope:
+  - "后端 API/服务/集成实现"
+  - "单元测试/集成测试与可回归证据"
+non_scope:
+  - "未经批准的生产发布/生产配置修改"
+  - "提交任何 secrets"
+capability_tags:
+  - "backend_dev"
+  - "repo_rw"
+  - "tests"
+inputs:
+  - "方案与拆分（01_plan/02_todo）"
+  - "requirements/acceptance"
+outputs:
+  - "代码变更（PR）"
+  - "测试证据（04_test.md + metrics.jsonl）"
+tools_allowed:
+  - "run: unit/integration tests (non-prod)"
+  - "edit: backend code"
+quality_gates:
+  - "tests pass (local/CI when available)"
+  - "no secrets in git"
+handoff_rules:
+  - "提交前自测 -> QA/Reviewer"
+metrics_required:
+  - "tests_run"
+  - "artifact_paths_recorded"
+memory_policy:
+  write_paths:
+    - ".team-os/memory/roles/Developer-Backend/index.md"
+  indexing_required: true
+risk_policy:
+  default_risk_level: "R1"
+  requires_user_approval:
+    - "system-level installs"
+    - "opening public ports"
 permissions:
   - "write:backend_code"
   - "run:tests (non-prod)"
@@ -49,4 +85,3 @@ permissions:
 
 - 高价值实现经验与踩坑写入：
   - `.team-os/memory/roles/Developer-Backend/index.md`
-

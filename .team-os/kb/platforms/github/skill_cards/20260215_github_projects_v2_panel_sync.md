@@ -7,7 +7,10 @@
 
 ## 真相源与视图层边界（Hard Rule）
 
-- 真相源：`.team-os/ledger/**`、`docs/requirements/**`、`.team-os/state/**`、`.team-os/state/runtime.db`
+- 真相源：
+  - scope=`teamos`：`team-os/.team-os/ledger/**`、`team-os/docs/teamos/requirements/**`、`team-os/.team-os/state/**`
+  - scope=`project:<id>`：`<WORKSPACE>/projects/<id>/state/{ledger,logs,requirements,plan,prompts}`
+  - 运行态 DB：`team-os/.team-os/state/runtime.db`（或 Postgres）
 - 视图层：GitHub Projects v2（Table/Board/Roadmap）
 - 任何在 Projects UI 的手工编辑，不得成为事实源；需要回写时必须先落盘到真相源，再触发同步。
 
@@ -53,11 +56,11 @@ Control Plane endpoints：
 
 同步数据源聚合：
 
-- tasks：`.team-os/ledger/tasks/*.yaml`
+- tasks：scope=`teamos`（repo）+ scope=`project:<id>`（Workspace）聚合
 - focus：`.team-os/state/focus.yaml`
-- agents：运行态 SQLite（`.team-os/state/runtime.db`）
-- decisions：`docs/requirements/**/requirements.yaml` 中的 `NEED_PM_DECISION`
-- milestones：`docs/plan/<project_id>/plan.yaml`
+- agents：运行态 DB（SQLite/Postgres）
+- decisions：requirements.yaml 中的 `NEED_PM_DECISION`（Team OS 自身 + Workspace 项目）
+- milestones：`<WORKSPACE>/projects/<id>/state/plan/plan.yaml`（Team OS 自身为 `docs/plan/teamos/plan.yaml`）
 
 稳定映射键：
 
@@ -82,4 +85,3 @@ Control Plane endpoints：
   - `Workstreams` 为 TEXT（逗号分隔），使用 contains/filter
 - 同步太频繁导致 rate limit：
   - 关闭自动同步或增加 `TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC`
-

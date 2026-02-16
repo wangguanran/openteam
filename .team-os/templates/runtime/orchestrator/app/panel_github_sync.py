@@ -23,7 +23,8 @@ from .github_projects_client import (
 from .panel_mapping import MappingDoc, PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import list_milestones
 from .runtime_db import RuntimeDB
-from .state_store import ledger_tasks_dir, load_focus, requirements_dir_for_project, team_os_root
+from .state_store import ledger_tasks_dir, load_focus, team_os_root, teamos_requirements_dir
+from .workspace_store import ensure_project_scaffold, ledger_tasks_dir as ws_ledger_tasks_dir, requirements_dir as ws_requirements_dir
 
 
 class PanelSyncError(Exception):
@@ -69,7 +70,11 @@ def _parse_date_from_iso(ts: str) -> str:
 
 
 def _load_tasks(project_id: str) -> list[dict[str, Any]]:
-    d = ledger_tasks_dir()
+    if str(project_id) == "teamos":
+        d = ledger_tasks_dir()
+    else:
+        ensure_project_scaffold(project_id)
+        d = ws_ledger_tasks_dir(project_id)
     if not d.exists():
         return []
     out: list[dict[str, Any]] = []
@@ -87,7 +92,11 @@ def _load_tasks(project_id: str) -> list[dict[str, Any]]:
 
 
 def _load_requirements_need_pm(project_id: str) -> list[dict[str, Any]]:
-    req_dir = requirements_dir_for_project(project_id)
+    if str(project_id) == "teamos":
+        req_dir = teamos_requirements_dir()
+    else:
+        ensure_project_scaffold(project_id)
+        req_dir = ws_requirements_dir(project_id)
     y = req_dir / "requirements.yaml"
     if not y.exists():
         return []
@@ -97,6 +106,19 @@ def _load_requirements_need_pm(project_id: str) -> list[dict[str, Any]]:
         if str(r.get("status") or "").upper() == "NEED_PM_DECISION":
             out.append(r)
     return out
+
+
+def _load_requirements(project_id: str) -> list[dict[str, Any]]:
+    if str(project_id) == "teamos":
+        req_dir = teamos_requirements_dir()
+    else:
+        ensure_project_scaffold(project_id)
+        req_dir = ws_requirements_dir(project_id)
+    y = req_dir / "requirements.yaml"
+    if not y.exists():
+        return []
+    data = yaml.safe_load(y.read_text(encoding="utf-8")) or {}
+    return list(data.get("requirements") or [])
 
 
 def _join_links(links: Any) -> str:
@@ -185,6 +207,53 @@ def _desired_items(
             )
         )
 
+    # Requirements (Backlog view): sync ACTIVE/DEPRECATED/CONFLICT as draft items.
+    # NOTE: NEED_PM_DECISION requirements are represented as DECISION items below for visibility.
+    for r in _load_requirements(project_id):
+        rid = str(r.get("req_id") or "").strip()
+        if not rid:
+            continue
+        st = str(r.get("status") or "ACTIVE").strip().upper()
+        if st == "NEED_PM_DECISION":
+            continue
+        ws = list(r.get("workstreams") or []) or ["general"]
+        status_key = "TODO"
+        if st in ("DEPRECATED", "DONE", "CLOSED"):
+            status_key = "DONE"
+        elif st in ("CONFLICT",):
+            status_key = "BLOCKED"
+        items.append(
+            DesiredItem(
+                key=f"REQ:{rid}",
+                kind="REQ",
+                title=f"[REQ] {rid} {str(r.get('title') or '').strip()}".strip(),
+                body="\n".join(
+                    [
+                        f"Requirement ID: {rid}",
+                        f"Status: {st}",
+                        f"Priority: {r.get('priority','')}",
+                        "",
+                        "Text:",
+                        str(r.get("text") or "").strip(),
+                        "",
+                        "Refs:",
+                        "\n".join([str(x) for x in (r.get("decision_log_refs") or []) if str(x).strip()]) or "(none)",
+                    ]
+                ).strip()
+                + "\n",
+                workstreams=[str(x) for x in ws],
+                status_key=status_key,
+                risk_key="LOW",
+                need_pm=(st in ("CONFLICT",)),
+                focus=focus_obj,
+                active_agents=0,
+                last_heartbeat="",
+                start_date="",
+                target_date="",
+                links_text="",
+            )
+        )
+
     # Decisions from requirements NEED_PM_DECISION
     for r in _load_requirements_need_pm(project_id):
         rid = str(r.get("req_id") or "").strip()
@@ -236,7 +305,11 @@ def _desired_items(
                         "",
                         m.objective or "",
                         "",
-                        f"Plan: docs/plan/{project_id}/plan.yaml",
+                        (
+                            f"Plan: docs/plan/teamos/plan.yaml"
+                            if str(project_id) == "teamos"
+                            else f"Plan: <WORKSPACE>/projects/{project_id}/state/plan/plan.yaml"
+                        ),
                         "",
                         "Links:",
                         links_text or "(none)",

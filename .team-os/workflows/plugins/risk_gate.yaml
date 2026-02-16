@@ -1,0 +1,26 @@
+schema_version: 1
+plugin_id: "risk_gate"
+version: "0.1"
+last_updated: "2026-02-16"
+
+description: >
+  Approval gate plugin for risky operations and higher risk levels.
+
+triggers:
+  any:
+    - field: "task.risk_level"
+      op: "in"
+      value: ["R2", "R3"]
+
+attached_to_stages: ["plan", "release"]
+
+gates:
+  - id: "require_user_approval_for_high_risk"
+    policy: "WAITING_APPROVAL"
+    message: "High-risk task (R2/R3): require explicit user approval before performing risky operations (repo create/delete, remote writes, system install, etc)."
+
+acceptance:
+  required_in_logs:
+    - "approval_request"
+    - "approval_granted_or_denied"
+

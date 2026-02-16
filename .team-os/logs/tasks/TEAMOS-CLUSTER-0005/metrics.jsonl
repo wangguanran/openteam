@@ -1,0 +1,1 @@
+{"ts": "2026-02-16T00:26:17Z", "event_type": "TASK_METRICS_BOOTSTRAPPED", "actor": "migration", "task_id": "TEAMOS-CLUSTER-0005", "project_id": "", "workstream_id": "", "severity": "INFO", "message": "created missing metrics.jsonl", "payload": {"logs_dir": "/Users/wangguanran/OpenTeam/team-os/.team-os/logs/tasks/TEAMOS-CLUSTER-0005"}}
