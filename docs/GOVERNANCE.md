@@ -69,3 +69,25 @@ cd team-os
 cd team-os
 ./teamos workspace migrate --from-repo --force
 ```
+
+## 6. 需求处理协议 v2（Raw‑First）
+
+核心原则：
+
+- **Baseline 不可覆盖**：`baseline/original_description_v1.md` 创建后不得覆盖，只能新增版本（v2/v3...）。
+- **Raw‑First**：任何“新增需求输入”（CLI/API/chat 的 `NEW_REQUIREMENT`）必须先逐字写入 `raw_inputs.jsonl`（append-only），再生成/更新 Expanded。
+- **Expanded 禁止手改**：`requirements.yaml` / `REQUIREMENTS.md` 由生成器维护；手工修改会被判定为 drift，并应通过 `rebuild` 恢复决定性渲染。
+- **冲突与漂移必须显式决策**：
+  - 新输入与既有 Expanded 冲突：生成 `conflicts/*.md` 并进入 `NEED_PM_DECISION`
+  - Expanded 与 Baseline 漂移（drift）：生成 `conflicts/*-DRIFT.md` 并进入 `NEED_PM_DECISION`
+- **幂等与可追溯**：每次更新必须写入 `CHANGELOG.md`，并引用 `raw_inputs.jsonl` 的时间戳作为证据（`raw=<timestamp>`）。
+
+强制执行（工具链）：
+
+- CLI：
+  - `teamos req add`：写入 Raw + 更新 Expanded（自动 drift/conflict 检测）
+  - `teamos req verify`：仅校验（drift/conflict）
+  - `teamos req rebuild`：决定性重渲染（禁止手改时用于恢复）
+  - `teamos req baseline set-v2`：baseline v2 提案（默认进入 `NEED_PM_DECISION`）
+- Control Plane：
+  - 写操作必须 leader-only（非 leader 返回 409 + leader 信息，CLI 自动转发到 leader）

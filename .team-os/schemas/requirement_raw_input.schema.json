@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TeamOS Requirement Raw Input (v2 Raw-First)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["timestamp", "scope", "channel", "text"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp, e.g. 2026-02-16T00:39:59Z"
+    },
+    "scope": {
+      "type": "string",
+      "description": "teamos | project:<project_id>"
+    },
+    "user": {
+      "type": "string",
+      "description": "Optional user identifier (do not include secrets)."
+    },
+    "channel": {
+      "type": "string",
+      "description": "Input channel",
+      "enum": ["cli", "api", "chat", "import", "migration", "baseline"]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Raw requirement text (verbatim)."
+    },
+    "meta": {
+      "type": "object",
+      "description": "Optional metadata (priority/workstreams/etc)."
+    }
+  }
+}
+

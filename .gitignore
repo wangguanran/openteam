@@ -74,3 +74,6 @@ tmp/
 
 # Backup files created by Team OS scripts/migrations (keep local)
 *.bak.*
+
+# Local safety snapshots (should not exist for scope=teamos; keep local if present)
+docs/teamos/requirements/history/

@@ -18,7 +18,13 @@ from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraph
 from .n8n_hook import emit_n8n_event
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
-from .requirements_store import RequirementsError, add_requirement
+from .requirements_store import (
+    RequirementsError,
+    add_requirement_raw_first,
+    rebuild_requirements_md,
+    verify_requirements_raw_first,
+    propose_baseline_v2,
+)
 from .runtime_db import RuntimeDB
 from .self_improve_runner import SelfImproveError
 from . import self_improve_runner
@@ -155,6 +161,57 @@ def _requirements_dir(project_id: str, *, ensure: bool) -> Path:
     if ensure:
         workspace_store.ensure_project_scaffold(project_id)
     return workspace_store.requirements_dir(project_id)
+
+
+def _parse_scope_to_project_id(scope: str) -> str:
+    s = str(scope or "").strip()
+    if not s:
+        raise HTTPException(status_code=400, detail={"error": "invalid_scope", "hint": "scope is required: teamos | project:<id>"})
+    if s == "teamos":
+        return "teamos"
+    if s.startswith("project:"):
+        pid = s.split(":", 1)[1].strip()
+        if not pid:
+            raise HTTPException(status_code=400, detail={"error": "invalid_scope", "hint": "scope=project:<id> missing <id>"})
+        return pid
+    # Backward compatible: treat a bare id as project:<id>.
+    return s
+
+
+def _scope_from_project_id(project_id: str) -> str:
+    pid = str(project_id or "").strip()
+    return "teamos" if pid == "teamos" else f"project:{pid}"
+
+
+def _local_base_url() -> str:
+    return str(os.getenv("TEAMOS_BASE_URL") or os.getenv("CONTROL_PLANE_BASE_URL") or "http://127.0.0.1:8787").strip()
+
+
+def _require_leader_write() -> dict[str, Any]:
+    """
+    Enforce leader-only writes (Brain-only).
+    If cluster is enabled and another leader holds the lease, return HTTP 409 with leader info.
+    """
+    instance_id = ensure_instance_id()
+    cfg = cluster_manager.load_cluster_config()
+    if not cluster_manager.cluster_enabled(cfg):
+        return {"leader_instance_id": instance_id, "leader_base_url": _local_base_url(), "backend": "local", "lease_expires_at": ""}
+
+    cur = cluster_manager.read_leader(cfg)
+    if cur and cur.leader_instance_id and (cur.leader_instance_id != instance_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "NOT_LEADER",
+                "instance_id": instance_id,
+                "leader_instance_id": cur.leader_instance_id,
+                "leader_base_url": cur.leader_base_url,
+                "lease_expires_at": cur.lease_expires_at,
+                "backend": cur.backend,
+                "issue_url": cur.issue_url,
+            },
+        )
+    return cur.__dict__ if cur else {"leader_instance_id": instance_id, "leader_base_url": _local_base_url(), "backend": "local", "lease_expires_at": ""}
 
 
 def _plan_dir(project_id: str, *, ensure: bool) -> Path:
@@ -366,6 +423,39 @@ class RequirementIn(BaseModel):
     constraints: Optional[list[str]] = None
     acceptance: Optional[list[str]] = None
     source: Optional[str] = "api"
+
+
+class RequirementAddV2In(BaseModel):
+    scope: str = Field(..., min_length=1, description="teamos | project:<project_id>")
+    text: str = Field(..., min_length=1)
+    workstream_id: Optional[str] = None
+    priority: Optional[str] = "P2"  # P0..P3
+    rationale: Optional[str] = ""
+    constraints: Optional[list[str]] = None
+    acceptance: Optional[list[str]] = None
+    source: Optional[str] = "api"  # cli|api|chat|import
+
+
+class RequirementImportV2In(BaseModel):
+    scope: str = Field(..., min_length=1)
+    filename: Optional[str] = None
+    content_text: str = Field(..., min_length=1, description="File content to import (treated as a raw requirement input)")
+    workstream_id: Optional[str] = None
+    source: Optional[str] = "import"
+
+
+class RequirementVerifyV2In(BaseModel):
+    scope: str = Field(..., min_length=1)
+
+
+class RequirementRebuildV2In(BaseModel):
+    scope: str = Field(..., min_length=1)
+
+
+class BaselineSetV2In(BaseModel):
+    scope: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1, description="New baseline v2 text (verbatim)")
+    reason: str = Field(..., min_length=1, description="Why baseline must be restated as v2 (requires PM decision)")
 
 
 class PanelSyncIn(BaseModel):
@@ -714,6 +804,7 @@ def v1_chat(payload: ChatIn):
         return {"response_text": "\n".join(response_lines).strip() + "\n", "actions_taken": actions, "pending_decisions": pending}
 
     if msg_type == "NEW_REQUIREMENT":
+        _require_leader_write()
         out = _handle_new_requirement(
             project_id=project_id,
             workstream_id=workstream_id,
@@ -740,8 +831,158 @@ def v1_chat(payload: ChatIn):
     return {"response_text": "\n".join(response_lines).strip() + "\n", "actions_taken": actions, "pending_decisions": pending}
 
 
+def _baseline_versions(req_dir: Path) -> list[int]:
+    d = req_dir / "baseline"
+    if not d.exists():
+        return []
+    out: list[int] = []
+    for p in sorted(d.glob("original_description_v*.md")):
+        name = p.name
+        try:
+            v = int(name.split("_v", 1)[1].split(".md", 1)[0])
+            out.append(v)
+        except Exception:
+            continue
+    return sorted(set(out))
+
+
+@app.get("/v1/requirements/show")
+def v1_requirements_show(scope: str = Query(..., min_length=1)):
+    project_id = _parse_scope_to_project_id(scope)
+    req_dir = _requirements_dir(project_id, ensure=False)
+    y = req_dir / "requirements.yaml"
+    reqs: list[dict[str, Any]] = []
+    if y.exists():
+        try:
+            data = yaml.safe_load(y.read_text(encoding="utf-8")) or {}
+            reqs = list(data.get("requirements") or [])
+        except Exception:
+            reqs = []
+    raw = req_dir / "raw_inputs.jsonl"
+    raw_count = 0
+    if raw.exists():
+        try:
+            raw_count = sum(1 for ln in raw.read_text(encoding="utf-8").splitlines() if ln.strip())
+        except Exception:
+            raw_count = 0
+    return {
+        "scope": scope,
+        "project_id": project_id,
+        "requirements_dir": str(req_dir),
+        "baseline_versions": _baseline_versions(req_dir),
+        "raw_inputs_path": str(raw),
+        "raw_inputs_count": raw_count,
+        "requirements": reqs,
+        "conflicts_dir": str(req_dir / "conflicts"),
+        "changelog_path": str(req_dir / "CHANGELOG.md"),
+        "requirements_yaml": str(req_dir / "requirements.yaml"),
+        "requirements_md": str(req_dir / "REQUIREMENTS.md"),
+    }
+
+
+@app.post("/v1/requirements/verify")
+def v1_requirements_verify(payload: RequirementVerifyV2In):
+    project_id = _parse_scope_to_project_id(payload.scope)
+    req_dir = _requirements_dir(project_id, ensure=False)
+    return verify_requirements_raw_first(req_dir, project_id=project_id)
+
+
+@app.post("/v1/requirements/rebuild")
+def v1_requirements_rebuild(payload: RequirementRebuildV2In):
+    _require_leader_write()
+    project_id = _parse_scope_to_project_id(payload.scope)
+    req_dir = _requirements_dir(project_id, ensure=True)
+    return rebuild_requirements_md(req_dir, project_id=project_id)
+
+
+@app.get("/v1/requirements/baseline/show")
+def v1_requirements_baseline_show(scope: str = Query(..., min_length=1), max_chars: int = 4000):
+    project_id = _parse_scope_to_project_id(scope)
+    req_dir = _requirements_dir(project_id, ensure=False)
+    d = req_dir / "baseline"
+    items: list[dict[str, Any]] = []
+    if d.exists():
+        for p in sorted(d.glob("original_description_v*.md")):
+            try:
+                txt = p.read_text(encoding="utf-8")
+            except Exception:
+                txt = ""
+            items.append(
+                {
+                    "path": str(p),
+                    "name": p.name,
+                    "text_preview": (txt[: max(0, int(max_chars))] if txt else ""),
+                }
+            )
+    return {"scope": scope, "project_id": project_id, "baselines": items}
+
+
+@app.post("/v1/requirements/baseline/set-v2")
+def v1_requirements_baseline_set_v2(payload: BaselineSetV2In):
+    _require_leader_write()
+    project_id = _parse_scope_to_project_id(payload.scope)
+    req_dir = _requirements_dir(project_id, ensure=True)
+    out = propose_baseline_v2(
+        req_dir,
+        project_id=project_id,
+        new_baseline_text=payload.text,
+        reason=payload.reason,
+        channel="api",
+        user="user",
+    )
+    DB.add_event(
+        event_type="BASELINE_V2_PROPOSED",
+        actor="user",
+        project_id=project_id,
+        workstream_id=_default_workstream_id(),
+        payload=out,
+    )
+    _mark_panel_dirty(project_id)
+    return out
+
+
+@app.post("/v1/requirements/add")
+def v1_requirements_add_v2(payload: RequirementAddV2In):
+    _require_leader_write()
+    project_id = _parse_scope_to_project_id(payload.scope)
+    workstream_id = payload.workstream_id or _default_workstream_id()
+    out = _handle_new_requirement(
+        project_id=project_id,
+        workstream_id=workstream_id,
+        requirement_text=payload.text,
+        priority=payload.priority or "P2",
+        rationale=payload.rationale or "",
+        constraints=payload.constraints,
+        acceptance=payload.acceptance,
+        source=payload.source or "api",
+    )
+    out["scope"] = payload.scope
+    return out
+
+
+@app.post("/v1/requirements/import")
+def v1_requirements_import_v2(payload: RequirementImportV2In):
+    _require_leader_write()
+    project_id = _parse_scope_to_project_id(payload.scope)
+    workstream_id = payload.workstream_id or _default_workstream_id()
+    out = _handle_new_requirement(
+        project_id=project_id,
+        workstream_id=workstream_id,
+        requirement_text=payload.content_text,
+        priority="P2",
+        rationale="import",
+        constraints=None,
+        acceptance=None,
+        source=payload.source or "import",
+    )
+    out["scope"] = payload.scope
+    out["import_filename"] = payload.filename or ""
+    return out
+
+
 @app.post("/v1/requirements")
 def v1_requirements_add(payload: RequirementIn):
+    _require_leader_write()
     project_id = payload.project_id
     workstream_id = payload.workstream_id or _default_workstream_id()
     out = _handle_new_requirement(
@@ -765,11 +1006,7 @@ def v1_requirements_list(project_id: str):
         return {"project_id": project_id, "requirements": [], "conflicts_dir": str(req_dir / "conflicts")}
     with y.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    return {
-        "project_id": project_id,
-        "requirements_dir": str(req_dir),
-        "requirements": data.get("requirements") or [],
-    }
+    return {"project_id": project_id, "requirements_dir": str(req_dir), "requirements": data.get("requirements") or []}
 
 
 @app.get("/v1/nodes")
@@ -1160,8 +1397,11 @@ def _handle_new_requirement(
     source: str = "chat",
 ) -> dict[str, Any]:
     req_dir = _requirements_dir(project_id, ensure=True)
+    ch = str(source or "").strip().lower()
+    if ch not in ("cli", "api", "chat", "import"):
+        ch = "chat" if source == "chat" else "api"
     try:
-        outcome = add_requirement(
+        outcome = add_requirement_raw_first(
             project_id=project_id,
             req_dir=req_dir,
             requirement_text=requirement_text,
@@ -1170,6 +1410,8 @@ def _handle_new_requirement(
             constraints=constraints,
             acceptance=acceptance,
             source=source,
+            channel=ch,
+            user="user" if ch == "chat" else ch,
         )
     except (StateError, RequirementsError) as e:
         DB.add_event(
@@ -1192,11 +1434,13 @@ def _handle_new_requirement(
             "duplicate_of": outcome.duplicate_of or "",
             "conflicts_with": outcome.conflicts_with,
             "conflict_report_path": outcome.conflict_report_path or "",
+            "drift_report_path": outcome.drift_report_path or "",
+            "raw_input_timestamp": outcome.raw_input_timestamp or "",
         },
     )
     _mark_panel_dirty(project_id)
 
-    if outcome.classification == "CONFLICT":
+    if outcome.classification in ("CONFLICT", "DRIFT", "NEED_PM_DECISION"):
         # Optional notification hook (n8n): pending decision created.
         try:
             emit_n8n_event(
@@ -1207,6 +1451,7 @@ def _handle_new_requirement(
                     "req_id": outcome.req_id or "",
                     "conflicts_with": outcome.conflicts_with,
                     "conflict_report_path": outcome.conflict_report_path or "",
+                    "drift_report_path": outcome.drift_report_path or "",
                 },
             )
         except Exception:
@@ -1230,6 +1475,16 @@ def _handle_new_requirement(
                 f"- conflict_report={outcome.conflict_report_path}",
                 f"- requirements_yaml={req_dir / 'requirements.yaml'}",
                 "Next: resolve pending decision via PM (choose A/B/C in the conflict report).",
+            ]
+        )
+    elif outcome.classification == "DRIFT":
+        summary = "\n".join(
+            [
+                "NEW_REQUIREMENT blocked: DRIFT detected -> NEED_PM_DECISION",
+                f"- raw_input_ts={outcome.raw_input_timestamp}",
+                f"- drift_report={outcome.drift_report_path}",
+                f"- requirements_yaml={req_dir / 'requirements.yaml'}",
+                "Next: fix drift first (see DRIFT report options A/B/C).",
             ]
         )
     else:

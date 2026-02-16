@@ -133,6 +133,10 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     (s / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
     (s / "logs" / "tasks").mkdir(parents=True, exist_ok=True)
     (s / "requirements" / "conflicts").mkdir(parents=True, exist_ok=True)
+    (s / "requirements" / "baseline").mkdir(parents=True, exist_ok=True)
+    raw = s / "requirements" / "raw_inputs.jsonl"
+    if not raw.exists():
+        raw.write_text("", encoding="utf-8")
     (s / "prompts").mkdir(parents=True, exist_ok=True)
     (s / "kb").mkdir(parents=True, exist_ok=True)
     (s / "cluster").mkdir(parents=True, exist_ok=True)

@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import yaml
 
-from .requirements_store import AddReqOutcome, add_requirement, ensure_scaffold
+from .requirements_store import AddReqOutcome, add_requirement_raw_first
 from .state_store import team_os_root, teamos_requirements_dir
 from . import workspace_store
 
@@ -564,8 +564,6 @@ def run(
         workspace_store.assert_project_paths_outside_repo(team_os_root=repo_root)
         workspace_store.ensure_project_scaffold(project_id)
         req_dir = workspace_store.requirements_dir(project_id)
-    ensure_scaffold(req_dir, project_id=project_id)
-
     outcomes: list[dict[str, Any]] = []
     pending_issue_paths: list[str] = []
     created_req_ids: list[str] = []
@@ -582,7 +580,7 @@ def run(
                 *[f"- {x}" for x in pr.acceptance],
             ]
         ).strip()
-        out = add_requirement(
+        out = add_requirement_raw_first(
             project_id=project_id,
             req_dir=req_dir,
             requirement_text=text,
@@ -591,6 +589,8 @@ def run(
             constraints=["no secrets in git", "remote writes gated by env/approval"],
             acceptance=pr.acceptance,
             source="self-improve",
+            channel="api",
+            user="self-improve",
         )
         o = {
             "title": pr.title,

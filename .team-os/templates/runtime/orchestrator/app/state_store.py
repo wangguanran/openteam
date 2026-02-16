@@ -11,7 +11,23 @@ class StateError(Exception):
 
 
 def team_os_root() -> Path:
-    return Path(os.getenv("TEAM_OS_REPO_PATH", "/team-os")).resolve()
+    """
+    Team OS repo root.
+
+    In container runtime this is injected via TEAM_OS_REPO_PATH (default mount: /team-os).
+    For local execution (unit tests / scripts) we fall back to discovering the repo root by
+    walking up from this file until we find `.team-os/` + `AGENTS.md`.
+    """
+    env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+
+    p = Path(__file__).resolve()
+    for parent in [p.parent] + list(p.parents):
+        if (parent / ".team-os").exists() and (parent / "AGENTS.md").exists():
+            return parent.resolve()
+
+    return Path("/team-os").resolve()
 
 def state_dir() -> Path:
     return team_os_root() / ".team-os" / "state"

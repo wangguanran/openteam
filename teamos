@@ -32,7 +32,14 @@ def eprint(*a: Any) -> None:
     print(*a, file=sys.stderr)
 
 
-def _http_json(method: str, url: str, payload: Optional[dict[str, Any]] = None, timeout_sec: int = 10) -> dict[str, Any]:
+def _http_json(
+    method: str,
+    url: str,
+    payload: Optional[dict[str, Any]] = None,
+    timeout_sec: int = 10,
+    *,
+    _redirect_depth: int = 0,
+) -> dict[str, Any]:
     data = None
     headers = {"Accept": "application/json"}
     if payload is not None:
@@ -45,6 +52,24 @@ def _http_json(method: str, url: str, payload: Optional[dict[str, Any]] = None, 
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
+        # Leader-only writes: auto-forward to Brain when server returns 409 with leader info.
+        if e.code == 409 and _redirect_depth < 1:
+            try:
+                j = json.loads(body) if body else {}
+            except Exception:
+                j = {}
+            leader_base = ""
+            if isinstance(j, dict):
+                leader_base = str(j.get("leader_base_url") or "").strip()
+                if not leader_base and isinstance(j.get("detail"), dict):
+                    leader_base = str((j.get("detail") or {}).get("leader_base_url") or "").strip()
+            if leader_base:
+                p = urllib.parse.urlparse(url)
+                leader_base = leader_base.rstrip("/")
+                new_url = leader_base + p.path
+                if p.query:
+                    new_url += "?" + p.query
+                return _http_json(method, new_url, payload, timeout_sec, _redirect_depth=_redirect_depth + 1)
         raise RuntimeError(f"HTTP {e.code} {e.reason}: {body[:2000]}") from e
     except urllib.error.URLError as e:
         raise RuntimeError(f"HTTP request failed: {e}") from e
@@ -226,6 +251,10 @@ def _ensure_project_scaffold(workspace_root: Path, project_id: str) -> None:
     (state / "ledger" / "conversations" / pid).mkdir(parents=True, exist_ok=True)
     (state / "logs" / "tasks").mkdir(parents=True, exist_ok=True)
     (state / "requirements" / "conflicts").mkdir(parents=True, exist_ok=True)
+    (state / "requirements" / "baseline").mkdir(parents=True, exist_ok=True)
+    raw_inputs = state / "requirements" / "raw_inputs.jsonl"
+    if not raw_inputs.exists():
+        raw_inputs.write_text("", encoding="utf-8")
     (state / "prompts").mkdir(parents=True, exist_ok=True)
     (state / "plan").mkdir(parents=True, exist_ok=True)
     (state / "kb").mkdir(parents=True, exist_ok=True)
@@ -578,6 +607,14 @@ def _default_project_id(prof: dict[str, Any], args: argparse.Namespace) -> str:
     return args.project or (prof.get("default_project_id") or "teamos")
 
 
+def _default_scope(prof: dict[str, Any], args: argparse.Namespace) -> str:
+    s = _norm(getattr(args, "scope", "") or "")
+    if s:
+        return s
+    pid = _default_project_id(prof, args)
+    return "teamos" if pid == "teamos" else f"project:{pid}"
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
     st = _http_json("GET", base + "/v1/status")
@@ -799,18 +836,18 @@ def cmd_tasks(args: argparse.Namespace) -> None:
 
 def cmd_req_add(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
-    project_id = _default_project_id(prof, args)
+    scope = _default_scope(prof, args)
     payload = {
-        "project_id": project_id,
+        "scope": scope,
         "workstream_id": args.workstream,
-        "requirement_text": args.text,
+        "text": args.text,
         "priority": args.priority,
         "rationale": args.rationale or "",
         "constraints": args.constraints or None,
         "acceptance": args.acceptance or None,
         "source": args.source or "cli",
     }
-    out = _http_json("POST", base + "/v1/requirements", payload, timeout_sec=120)
+    out = _http_json("POST", base + "/v1/requirements/add", payload, timeout_sec=120)
     print(out.get("summary", "").rstrip())
     if out.get("pending_decisions"):
         print("\nPENDING_DECISIONS:")
@@ -820,8 +857,8 @@ def cmd_req_add(args: argparse.Namespace) -> None:
 
 def cmd_req_list(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
-    project_id = _default_project_id(prof, args)
-    out = _http_json("GET", base + "/v1/requirements?project_id=" + urllib.parse.quote(project_id))
+    scope = _default_scope(prof, args)
+    out = _http_json("GET", base + "/v1/requirements/show?scope=" + urllib.parse.quote(scope))
     reqs = out.get("requirements") or []
     rows = []
     for r in reqs:
@@ -850,8 +887,8 @@ def cmd_req_list(args: argparse.Namespace) -> None:
 
 def cmd_req_conflicts(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
-    project_id = _default_project_id(prof, args)
-    out = _http_json("GET", base + "/v1/requirements?project_id=" + urllib.parse.quote(project_id))
+    scope = _default_scope(prof, args)
+    out = _http_json("GET", base + "/v1/requirements/show?scope=" + urllib.parse.quote(scope))
     reqs = out.get("requirements") or []
     rows = []
     for r in reqs:
@@ -870,6 +907,76 @@ def cmd_req_conflicts(args: argparse.Namespace) -> None:
         print(_fmt_table(["req_id", "status", "conflicts_with", "refs", "title"], rows))
     else:
         print("(none)")
+
+
+def cmd_req_import(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    scope = _default_scope(prof, args)
+    p = Path(args.file).expanduser()
+    if not p.exists():
+        raise RuntimeError(f"file not found: {p}")
+    content = p.read_text(encoding="utf-8")
+    payload = {"scope": scope, "filename": p.name, "content_text": content, "workstream_id": args.workstream, "source": "import"}
+    out = _http_json("POST", base + "/v1/requirements/import", payload, timeout_sec=120)
+    print(out.get("summary", "").rstrip())
+    if out.get("pending_decisions"):
+        print("\nPENDING_DECISIONS:")
+        for d in out["pending_decisions"]:
+            print(json.dumps(d, ensure_ascii=False))
+
+
+def cmd_req_verify(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    scope = _default_scope(prof, args)
+    out = _http_json("POST", base + "/v1/requirements/verify", {"scope": scope}, timeout_sec=60)
+    ok = bool(out.get("ok"))
+    print(f"ok={ok} scope={scope}")
+    drift = out.get("drift") or {}
+    if not drift.get("ok"):
+        print("drift: FAIL")
+        for p in drift.get("points") or []:
+            print(f"- {p}")
+    conflicts = out.get("conflicts") or []
+    if conflicts:
+        print(f"conflicts: {len(conflicts)}")
+        for c in conflicts[:50]:
+            print(json.dumps(c, ensure_ascii=False))
+
+
+def cmd_req_rebuild(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    scope = _default_scope(prof, args)
+    out = _http_json("POST", base + "/v1/requirements/rebuild", {"scope": scope}, timeout_sec=60)
+    print(json.dumps(out, ensure_ascii=False, indent=2).rstrip())
+
+
+def cmd_req_baseline_show(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    scope = _default_scope(prof, args)
+    url = base + "/v1/requirements/baseline/show?scope=" + urllib.parse.quote(scope) + "&max_chars=" + urllib.parse.quote(str(args.max_chars))
+    out = _http_json("GET", url, timeout_sec=60)
+    print(f"scope={scope}")
+    items = out.get("baselines") or []
+    if not items:
+        print("(none)")
+        return
+    for it in items[:50]:
+        name = _norm(it.get("name"))
+        path = _norm(it.get("path"))
+        print(f"\n== {name} ==")
+        if path:
+            print(f"path={path}")
+        prev = _norm(it.get("text_preview"))
+        if prev:
+            print(prev.rstrip())
+
+
+def cmd_req_baseline_set_v2(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    scope = _default_scope(prof, args)
+    payload = {"scope": scope, "text": args.text, "reason": args.reason}
+    out = _http_json("POST", base + "/v1/requirements/baseline/set-v2", payload, timeout_sec=120)
+    print(json.dumps(out, ensure_ascii=False, indent=2).rstrip())
 
 
 def cmd_chat(args: argparse.Namespace) -> None:
@@ -1621,6 +1728,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     req_sp = req.add_subparsers(dest="subcmd", required=True)
     ra = req_sp.add_parser("add")
     ra.add_argument("text")
+    ra.add_argument("--scope", help="teamos | project:<id> (default derived from --project/default_project_id)")
     ra.add_argument("--project")
     ra.add_argument("--workstream")
     ra.add_argument("--priority", default="P2")
@@ -1629,13 +1737,42 @@ def main(argv: Optional[list[str]] = None) -> int:
     ra.add_argument("--acceptance", nargs="*")
     ra.add_argument("--source")
     ra.set_defaults(fn=cmd_req_add)
+    ri = req_sp.add_parser("import", help="Import a requirement text file (Raw-First)")
+    ri.add_argument("--file", required=True)
+    ri.add_argument("--scope")
+    ri.add_argument("--project")
+    ri.add_argument("--workstream")
+    ri.set_defaults(fn=cmd_req_import)
     rl = req_sp.add_parser("list")
+    rl.add_argument("--scope")
     rl.add_argument("--project")
     rl.add_argument("--show-conflicts", action="store_true")
     rl.set_defaults(fn=cmd_req_list)
     rc = req_sp.add_parser("conflicts")
+    rc.add_argument("--scope")
     rc.add_argument("--project")
     rc.set_defaults(fn=cmd_req_conflicts)
+    rv = req_sp.add_parser("verify", help="Run drift/conflict verification (check-only)")
+    rv.add_argument("--scope")
+    rv.add_argument("--project")
+    rv.set_defaults(fn=cmd_req_verify)
+    rb = req_sp.add_parser("rebuild", help="Re-render REQUIREMENTS.md from requirements.yaml (deterministic)")
+    rb.add_argument("--scope")
+    rb.add_argument("--project")
+    rb.set_defaults(fn=cmd_req_rebuild)
+    rbase = req_sp.add_parser("baseline", help="Baseline operations (v2 Raw-First)")
+    rbase_sp = rbase.add_subparsers(dest="baseline_cmd", required=True)
+    rbs = rbase_sp.add_parser("show")
+    rbs.add_argument("--scope")
+    rbs.add_argument("--project")
+    rbs.add_argument("--max-chars", type=int, default=4000)
+    rbs.set_defaults(fn=cmd_req_baseline_show)
+    rb2 = rbase_sp.add_parser("set-v2", help="Propose baseline v2 (requires PM decision)")
+    rb2.add_argument("text")
+    rb2.add_argument("--reason", required=True)
+    rb2.add_argument("--scope")
+    rb2.add_argument("--project")
+    rb2.set_defaults(fn=cmd_req_baseline_set_v2)
 
     mt = sp.add_parser("metrics", help="Telemetry/metrics checks and analysis (local truth source)")
     mt_sp = mt.add_subparsers(dest="subcmd", required=True)

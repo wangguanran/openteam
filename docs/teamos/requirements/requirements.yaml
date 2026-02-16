@@ -36,3 +36,11 @@ requirements:
   supersedes: []
   conflicts_with: []
   decision_log_refs: []
+  raw_input_refs:
+  - '2026-02-16T00:39:59Z'
+baseline:
+  version: 1
+  sha256: db7654bd3adabca91f2751af77f10154d9ece89756f7f5eea84d5961e93a421d
+raw_inputs:
+  sha256: af003a71675814dd3facde9c393b0e849dc708aabb00e2893d219e655d36712d
+  count: 1

@@ -126,14 +126,21 @@ project_id 约束（跨平台文件系统安全）：
 - 必须为小写：`[a-z0-9][a-z0-9_-]{0,63}`
 - 原因：macOS 默认文件系统大小写不敏感，`DEMO`/`demo` 会发生目录冲突
 
-目录约定：
+目录约定（需求处理协议 v2：Raw‑First）：
 
-- Team OS 自身（scope=`teamos`）：`team-os/docs/teamos/requirements/**`
-- 项目（scope=`project:<id>`）：`<WORKSPACE>/projects/<id>/state/requirements/**`
-  - `requirements.yaml`（机读事实源）
-  - `REQUIREMENTS.md`（人读汇总）
-  - `conflicts/`（冲突报告）
-  - `CHANGELOG.md`（变更日志）
+- Team OS 自身（scope=`teamos`，允许在 repo 内）：`team-os/docs/teamos/requirements/**`
+- 项目（scope=`project:<id>`，必须在 Workspace）：`<WORKSPACE>/projects/<id>/state/requirements/**`
+
+每个 scope 的 requirements 根目录必须包含：
+
+- `baseline/`
+  - `original_description_v1.md`（Baseline v1：不可覆盖，只能新增版本）
+  - `original_description_v2.md`（如需重述 baseline：只能新增 v2/v3...，且进入 `NEED_PM_DECISION`）
+- `raw_inputs.jsonl`（Raw Inputs：逐字落盘、append-only）
+- `requirements.yaml`（Expanded：机读事实源）
+- `REQUIREMENTS.md`（Expanded：人读汇总，由 YAML 决定性渲染）
+- `CHANGELOG.md`（变更日志）
+- `conflicts/`（冲突/漂移报告）
 
 首次使用请先初始化 Workspace：
 
@@ -148,11 +155,13 @@ cd team-os
 
 - `teamos workspace init` 幂等，可用于“修复”已存在项目目录的缺失结构（例如补齐 `repo/`、`state/prompts/MASTER_PROMPT.md`、`state/kb/`、`state/cluster/` 等）。
 
-新增需求（两种方式等价）：
+新增需求（两种方式等价，均遵守 Raw‑First）：
 
 ```bash
 cd team-os
-./teamos req add "需求文本" --project demo --workstream devops --priority P1
+./teamos req add "需求文本" --scope project:demo --workstream devops --priority P1
+# Team OS 自身需求：
+./teamos req add "改进 Team OS 的需求文本" --scope teamos --priority P2
 ```
 
 或：
@@ -167,14 +176,29 @@ cd team-os
 
 ```bash
 cd team-os
-./teamos req list --project demo --show-conflicts
-./teamos req conflicts --project demo
+./teamos req list --scope project:demo --show-conflicts
+./teamos req conflicts --scope project:demo
+./teamos req verify --scope project:demo
+./teamos req rebuild --scope project:demo
 ```
 
 当出现 `NEED_PM_DECISION`：
 
 1. 打开冲突报告（路径会在 CLI 输出或 `/v1/status.pending_decisions` 中给出；文件位于 `<WORKSPACE>/projects/<id>/state/requirements/conflicts/*.md`）。
 2. PM 拍板并落盘决策：更新该项目的 `requirements.yaml`（将被否决的需求标记为 `DEPRECATED`，并补齐 `supersedes/conflicts_with/decision_log_refs`）。
+
+Baseline 管理：
+
+```bash
+cd team-os
+./teamos req baseline show --scope project:demo
+# 仅提案：baseline v2 需要理由，并进入 NEED_PM_DECISION（不会覆盖 v1）
+./teamos req baseline set-v2 "新的 baseline 原文" --reason "为什么必须重述 baseline" --scope project:demo
+```
+
+注意：
+
+- Expanded 文档（`requirements.yaml` / `REQUIREMENTS.md`）禁止手改；手改会在 `verify` 中被判定为 drift（并可通过 `rebuild` 恢复决定性渲染）。
 
 ### 5.3 Profiles（多实例）与 Workstream（多平台协作域）
 

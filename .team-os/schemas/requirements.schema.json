@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TeamOS Expanded Requirements (v2 Raw-First compatible)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "project_id", "next_req_seq", "requirements"],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "project_id": { "type": "string" },
+    "next_req_seq": { "type": "integer", "minimum": 1 },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "version": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string" }
+      }
+    },
+    "raw_inputs": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sha256": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["req_id", "created_at", "updated_at", "status", "title", "text", "workstreams", "priority", "source"],
+        "properties": {
+          "req_id": { "type": "string" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "status": { "type": "string", "enum": ["ACTIVE", "CONFLICT", "NEED_PM_DECISION", "DEPRECATED"] },
+          "title": { "type": "string" },
+          "text": { "type": "string" },
+          "workstreams": { "type": "array", "items": { "type": "string" } },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+          "rationale": { "type": "string" },
+          "constraints": { "type": "array", "items": { "type": "string" } },
+          "acceptance": { "type": "array", "items": { "type": "string" } },
+          "source": { "type": "string" },
+          "supersedes": { "type": "array", "items": { "type": "string" } },
+          "conflicts_with": { "type": "array", "items": { "type": "string" } },
+          "decision_log_refs": { "type": "array", "items": { "type": "string" } },
+          "raw_input_refs": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
+
