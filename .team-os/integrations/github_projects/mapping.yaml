@@ -104,6 +104,16 @@ projects:
         type: "TEXT"
         field_id: ""
 
+      repo_locator:
+        name: "Repo Locator"
+        type: "TEXT"
+        field_id: ""
+
+      repo_mode:
+        name: "Repo Mode"
+        type: "TEXT"
+        field_id: ""
+
     # --- Normalization rules ---
     status_mapping:
       # ledger_state -> TeamOS Status option key
@@ -222,6 +232,16 @@ projects:
 
       links:
         name: "Links"
+        type: "TEXT"
+        field_id: ""
+
+      repo_locator:
+        name: "Repo Locator"
+        type: "TEXT"
+        field_id: ""
+
+      repo_mode:
+        name: "Repo Mode"
         type: "TEXT"
         field_id: ""
 
