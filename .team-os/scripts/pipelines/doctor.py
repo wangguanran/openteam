@@ -108,6 +108,38 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
             pass
 
 
+def _self_improve_daemon_check(repo_root: Path) -> dict[str, Any]:
+    """
+    Best-effort local check for always-on self-improve daemon.
+    This is a runtime check (not a config gate): report status but do not fail doctor by itself.
+    """
+    pid_path = repo_root / ".team-os" / "state" / "self_improve_daemon.pid"
+    state_path = repo_root / ".team-os" / "state" / "self_improve_state.json"
+    pid = 0
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except Exception:
+            pid = 0
+
+    running = False
+    if pid > 0:
+        try:
+            os.kill(pid, 0)
+            running = True
+        except Exception:
+            running = False
+
+    return {
+        "ok": True,
+        "running": running,
+        "pid": pid,
+        "pid_path": str(pid_path),
+        "state_path": str(state_path),
+        "state_exists": state_path.exists(),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Team OS doctor (deterministic local checks)")
     add_default_args(ap)
@@ -160,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
     report["postgres_db"] = db
     if not bool(db.get("ok")):
         ok = False
+
+    # Always-on daemon status (informational).
+    report["self_improve_daemon"] = _self_improve_daemon_check(repo)
 
     # Control plane health + API coverage (best-effort; should pass when runtime matches repo template).
     base = str(args.base_url or "").strip().rstrip("/") or _load_base_url(profile=str(args.profile or ""))
@@ -218,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gh: {'OK' if gh_ok else 'FAIL'} {gh_msg}")
         dbs = report.get("postgres_db") or {}
         print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
+        sd = report.get("self_improve_daemon") or {}
+        if isinstance(sd, dict):
+            print(f"self_improve_daemon.running={str(bool(sd.get('running'))).lower()} pid={sd.get('pid',0)}")
         print(f"workspace_root={ws}")
         print(f"workspace: {'OK' if w.get('ok') else 'FAIL'}")
         print(f"repo: {'OK' if purity.get('ok') else 'FAIL'}")

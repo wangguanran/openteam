@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from _common import PipelineError, add_default_args, resolve_repo_root, utc_now_iso, write_json
+from _db import connect, get_db_url
+from db_migrate import apply_migrations as _apply_migrations
 
 
 def _http_json(url: str, *, timeout_sec: int = 5) -> dict[str, Any]:
@@ -469,6 +471,7 @@ def run_once(
         can_write = False
 
     ts = utc_now_iso().replace(":", "").replace("-", "")
+    run_id = f"si-{ts}"
     applied: list[dict[str, Any]] = []
     dedupe_cfg = si.get("dedupe") or {}
     dedupe_enabled = bool(dedupe_cfg.get("enabled"))
@@ -563,6 +566,80 @@ def run_once(
     state["dedupe"] = dedupe_map
     write_json(state_path, state, dry_run=False)
 
+    # Optional: record run into Postgres (shared hub) when configured.
+    db_record: dict[str, Any] = {"ok": False, "skipped": True, "reason": "TEAMOS_DB_URL not set"}
+    dsn = get_db_url()
+    if dsn:
+        try:
+            conn = connect(dsn)
+            try:
+                # Ensure schema (migrations are idempotent).
+                mig_dir = repo / ".team-os" / "db" / "migrations"
+                migrations: list[tuple[str, Path]] = []
+                for p in sorted(mig_dir.glob("*.sql")):
+                    name = p.name
+                    if len(name) >= 4 and name[:4].isdigit():
+                        migrations.append((name[:4], p))
+                if migrations:
+                    _apply_migrations(conn, migrations)
+
+                leader_instance_id = str(leader.get("leader_instance_id") or "")
+                instance_id = str(leader.get("instance_id") or leader_instance_id or "")
+                is_leader = bool(leader.get("is_leader"))
+
+                # Dedupe key for this run (stable for a given set of applied proposal keys).
+                applied_keys = sorted([str(x.get("key") or "") for x in applied if x.get("apply") == "APPLY" and str(x.get("key") or "").strip()])
+                dedupe_key = _sha256_text("\\n".join(applied_keys))[:32]
+
+                details = {
+                    "policy": {"enabled": enabled, "leader_only": leader_only, "debounce_ok": ok_deb, "debounce_reason": deb_reason},
+                    "leader": leader,
+                    "scan": scan,
+                    "panel_sync": panel_out,
+                }
+
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO self_improve_runs (
+                          run_id, ts, instance_id, is_leader, trigger, scope,
+                          ok, applied_count, dedupe_key, proposal_path, details
+                        ) VALUES (
+                          %s, now(), %s, %s, %s, %s,
+                          %s, %s, %s, %s, %s::jsonb
+                        )
+                        ON CONFLICT(run_id) DO UPDATE SET
+                          ts=EXCLUDED.ts,
+                          instance_id=EXCLUDED.instance_id,
+                          is_leader=EXCLUDED.is_leader,
+                          trigger=EXCLUDED.trigger,
+                          scope=EXCLUDED.scope,
+                          ok=EXCLUDED.ok,
+                          applied_count=EXCLUDED.applied_count,
+                          dedupe_key=EXCLUDED.dedupe_key,
+                          proposal_path=EXCLUDED.proposal_path,
+                          details=EXCLUDED.details
+                        """,
+                        (
+                            run_id,
+                            instance_id,
+                            True if is_leader else False,
+                            str(trigger or ""),
+                            str(scope or ""),
+                            True,
+                            int(success_applies),
+                            dedupe_key,
+                            str(proposal_path or ""),
+                            json.dumps(details, ensure_ascii=False, sort_keys=True),
+                        ),
+                    )
+                conn.commit()
+                db_record = {"ok": True, "skipped": False, "run_id": run_id}
+            finally:
+                conn.close()
+        except Exception as e:
+            db_record = {"ok": False, "skipped": False, "error": str(e)[:300]}
+
     return {
         "ok": True,
         "enabled": enabled,
@@ -573,6 +650,7 @@ def run_once(
         "applied_count": success_applies,
         "panel_sync": panel_out,
         "state_path": str(state_path),
+        "db_record": db_record,
     }
 
 

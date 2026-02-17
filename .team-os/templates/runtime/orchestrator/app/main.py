@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -399,6 +401,29 @@ def _startup_background_threads() -> None:
 
     rt = threading.Thread(target=_recovery_auto_once, name="recovery-auto-once", daemon=True)
     rt.start()
+
+    # Always-on self-improve: ensure the host-level daemon is running.
+    def _ensure_self_improve_daemon() -> None:
+        if str(os.getenv("TEAMOS_SELF_IMPROVE_AUTO_START", "1") or "").strip().lower() in ("0", "false", "no", "off"):
+            return
+        try:
+            time.sleep(3)
+            repo = team_os_root()
+            script = repo / ".team-os" / "scripts" / "pipelines" / "self_improve_daemon.py"
+            if not script.exists():
+                return
+            try:
+                ws = str(_workspace_root())
+            except Exception:
+                ws = str(Path.home() / ".teamos" / "workspace")
+            argv = [sys.executable, str(script), "--repo-root", str(repo), "--workspace-root", ws, "start"]
+            subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except Exception:
+            # Never crash server because of daemon management.
+            pass
+
+    st = threading.Thread(target=_ensure_self_improve_daemon, name="self-improve-daemon-ensure", daemon=True)
+    st.start()
 
 
 def _seed_if_enabled() -> None:
