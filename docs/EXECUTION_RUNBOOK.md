@@ -52,6 +52,13 @@ cd team-os
 ./teamos task close <TASK_ID> --scope teamos
 ```
 
+提交并推送（强制 close→闸门→commit→push）：
+
+```bash
+cd team-os
+./teamos task ship <TASK_ID> --scope teamos --summary "一句话变更摘要"
+```
+
 ## 5. Runtime 部署与运维 (team-os-runtime)
 
 Runtime 目录：`../team-os-runtime`

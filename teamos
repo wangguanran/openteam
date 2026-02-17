@@ -1474,6 +1474,34 @@ def cmd_task_close(args: argparse.Namespace) -> None:
     _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_close.py", argv)
 
 
+def cmd_task_ship(args: argparse.Namespace) -> None:
+    """
+    Enforce close -> commit -> push discipline for one task.
+    """
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        str(args.task_id),
+    ]
+    if getattr(args, "scope", ""):
+        argv += ["--scope", str(args.scope).strip()]
+    if getattr(args, "summary", ""):
+        argv += ["--summary", str(args.summary).strip()]
+    if getattr(args, "base", ""):
+        argv += ["--base", str(args.base).strip()]
+    if bool(getattr(args, "no_pr", False)):
+        argv.append("--no-pr")
+    if bool(getattr(args, "dry_run", False)):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_ship.py", argv)
+
+
 def cmd_prompt_compile(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
@@ -1641,6 +1669,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     tc.add_argument("--skip-tests", action="store_true")
     tc.add_argument("--dry-run", action="store_true")
     tc.set_defaults(fn=cmd_task_close)
+    tsh = ts_sp.add_parser("ship", help="Ship a task (close -> gates -> commit -> push)")
+    tsh.add_argument("task_id")
+    tsh.add_argument("--scope", help="optional: teamos | project:<id> (default: teamos)")
+    tsh.add_argument("--summary", help="commit summary (default: ledger title)")
+    tsh.add_argument("--base", default="main", help="PR base branch (gh only; default: main)")
+    tsh.add_argument("--no-pr", action="store_true", help="do not create PR")
+    tsh.add_argument("--dry-run", action="store_true", help="plan only; do not commit/push (still runs task close + scans)")
+    tsh.set_defaults(fn=cmd_task_ship)
     tr = ts_sp.add_parser("resume", help="Resume tasks after interruption (placeholder)")
     tr.add_argument("--all", action="store_true")
     tr.add_argument("--task-id")
