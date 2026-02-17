@@ -1,0 +1,51 @@
+# MASTER PROMPT (teamos)
+
+- build_id: a87262baac4864c902270fbebb69d9462a30953387be8e83fe53dc11ac80064b
+- baseline_v1_sha256: db7654bd3adabca91f2751af77f10154d9ece89756f7f5eea84d5961e93a421d
+- requirements_yaml_sha256: 70caab0ad94c425e1dbb2906540ac984a795c9c590c043f0f79fb3cf48bcc9d1
+- manifest: prompt-library/teamos/prompt_manifest.json
+
+## Baseline (verbatim excerpt)
+
+# Original Description (Baseline v1)
+
+- created_at: 2026-02-17T00:00:00Z
+- scope: teamos
+- note: This baseline describes **Team OS self** requirements scope only (this repo). Project scopes must live in Workspace.
+
+## Verbatim
+
+Team OS (scope=teamos) baseline:
+
+- Scope: only Team OS itself (this git repo), not external projects.
+- Goal: provide a long-running, auditable, expandable Team OS with clear governance, safety gates, and reproducible runtime templates.
+- Non-negotiables:
+  - No secrets in git (only `.env.example` tracked).
+  - Repo vs Workspace separation (project truth sources live outside this repo).
+  - Requirements protocol v2 Raw-First: capture verbatim raw inputs before expanding.
+  - Cluster leader-only writes for truth sources and remote sync.
+  - OAuth-first for LLM calls via Codex CLI (`codex login`).
+
+## Requirements Summary
+
+### Requirements (teamos)
+
+#### ACTIVE
+- REQ-0001 [P2] CI/evals entrypoint + OpenTelemetry observability implementation plan (local-safe, remote export off by default) (ws=ai,backend,devops,general)
+
+#### NEED_PM_DECISION
+- (none)
+
+#### CONFLICT
+- (none)
+
+#### DEPRECATED
+- (none)
+
+## Operating Rules (enforced)
+
+- No secrets in git. Use env vars only; only commit `.env.example`.
+- Repo vs Workspace: project truth sources MUST be outside the team-os repo.
+- Deterministic pipelines only for truth-source generation (requirements/prompt/task ledger).
+- High risk actions require explicit approval (data deletion/overwrite, public ports, prod deploy, force push).
+- Leader-only writes: only the elected Brain writes truth sources; assistants are read-only unless leased.

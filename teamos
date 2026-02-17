@@ -201,6 +201,21 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
+def _run_pipeline(repo_root: Path, script_rel: str, argv: list[str]) -> None:
+    """
+    Run a deterministic pipeline script from this repo.
+
+    Pipelines are the only allowed writers for truth-source artifacts.
+    """
+    script = (repo_root / script_rel).resolve()
+    if not script.exists():
+        raise RuntimeError(f"missing pipeline: {script}")
+    cmd = [sys.executable, str(script)] + list(argv or [])
+    p = subprocess.run(cmd, check=False)
+    if p.returncode != 0:
+        raise SystemExit(p.returncode)
+
+
 def _workspace_root_from_cfg(cfg: dict[str, Any]) -> Path:
     v = str(cfg.get("workspace_root") or "").strip()
     if not v:
@@ -490,60 +505,10 @@ def cmd_project_list(args: argparse.Namespace) -> None:
     print(_fmt_table(["project_id", "repo", "state", "requirements", "tasks"], rows))
 
 
-def _read_last_self_improve_run(repo_root: Path) -> Optional[dict[str, Any]]:
-    p = repo_root / ".team-os" / "state" / "self_improve_last_run.json"
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def _should_auto_wake_self_improve(repo_root: Path, *, debounce_hours: int = 6) -> bool:
-    d = _read_last_self_improve_run(repo_root) or {}
-    last = str(d.get("last_run_at") or "").strip()
-    if not last:
-        return True
-    try:
-        dt = _dt.datetime.fromisoformat(last.replace("Z", "+00:00"))
-        now = _dt.datetime.now(_dt.timezone.utc)
-        hours = (now - dt).total_seconds() / 3600.0
-        return hours >= float(debounce_hours)
-    except Exception:
-        return True
-
-
-def _auto_wake_self_improve(args: argparse.Namespace) -> None:
-    """
-    Always-on self-improve scheduler wake.
-
-    Policy:
-    - Non-blocking: spawn a detached child process.
-    - Debounced: default 6h, stored in `.team-os/state/self_improve_last_run.json` (gitignored).
-    - Safe-by-default: dry-run (no remote writes).
-    """
-    if os.getenv("TEAMOS_SELF_IMPROVE_DISABLE", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
-        return
-    if os.getenv("TEAMOS_SELF_IMPROVE_CHILD", "").strip() == "1":
-        return
-    if getattr(args, "cmd", "") in ("self-improve",):
-        return
-
-    repo_root = _find_team_os_repo_root()
-    if not repo_root:
-        return
-
-    env = os.environ.copy()
-    env["TEAMOS_SELF_IMPROVE_CHILD"] = "1"
-    env.setdefault("TEAM_OS_REPO_PATH", str(repo_root))
-
-    argv = [sys.executable, str(Path(__file__).resolve())]
-    if args.profile:
-        argv += ["--profile", args.profile]
-    argv += ["self-improve", "--dry-run", "--auto", "--quiet"]
-
-    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+#
+# NOTE: Self-improve is daemon-based (leader-only).
+# The CLI must NOT auto-wake self-improve on every command, to avoid untasked writes.
+#
 
 
 def cmd_config_init(_args: argparse.Namespace) -> None:
@@ -1026,141 +991,24 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
-    ok = True
-    base, prof = _base_url(args)
-    print(f"profile={prof['name']} base_url={base}")
-    try:
-        hz = _http_json("GET", base + "/healthz", timeout_sec=5)
-        print(f"control_plane: OK healthz.status={hz.get('status','')}")
-        db = hz.get("db") or {}
-        if isinstance(db, dict) and db:
-            print(f"control_plane_db: backend={db.get('backend')} ok={db.get('ok')} err={str(db.get('error',''))[:120]}")
-        st = _http_json("GET", base + "/v1/status", timeout_sec=5)
-        print(f"control_plane: OK instance_id={st.get('instance_id','')}")
-    except Exception as e:
-        print(f"control_plane: FAIL {e}")
-        ok = False
-
-    # OAuth status (Codex CLI) - local check
-    if shutil_which("codex") is None:
-        print("codex: MISS (install codex CLI, then: codex login)")
-        ok = False
-    else:
-        p = subprocess.run(["codex", "login", "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out = (p.stdout or b"").decode("utf-8", errors="replace").strip()
-        err = (p.stderr or b"").decode("utf-8", errors="replace").strip()
-        msg = out or err
-        if p.returncode == 0:
-            print(f"codex: OK {msg}".rstrip())
-        else:
-            print("codex: FAIL (run: codex login --device-auth)")
-            ok = False
-            if msg:
-                print("  " + msg.splitlines()[0][:200])
-
-    # GitHub auth (prefer gh OAuth; allow env token fallback)
-    if shutil_which("gh") is None:
-        tok = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
-        if tok:
-            print("gh: OK (env token present; recommend: gh auth login)")
-        else:
-            print("gh: MISS (install gh CLI, then: gh auth login)")
-    else:
-        p = subprocess.run(["gh", "auth", "status", "-h", "github.com"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out = ((p.stdout or b"") + b"\n" + (p.stderr or b"")).decode("utf-8", errors="replace").strip()
-        if p.returncode == 0:
-            print("gh: OK logged_in=true")
-        else:
-            print("gh: FAIL (run: gh auth login)")
-            if out:
-                print("  " + out.splitlines()[0][:200])
-
-    # Server-side auth status (best-effort)
-    try:
-        auth = _http_json("GET", base + "/v1/auth/status", timeout_sec=5)
-        print(f"control_plane_auth: backend={auth.get('backend')} logged_in={auth.get('logged_in')} msg={str(auth.get('message',''))[:120]}")
-    except Exception as e:
-        print(f"control_plane_auth: WARN {e}")
-
-    # Repo structure checks (local truth)
     repo_root = _find_team_os_repo_root()
     if not repo_root:
-        print("repo: WARN (cannot find repo root; set env TEAM_OS_REPO_PATH)")
-        ok = False
-    else:
-        must = [
-            repo_root / ".team-os" / "ledger" / "tasks",
-            repo_root / ".team-os" / "logs" / "tasks",
-            # `docs/requirements` must NOT exist anymore (projects live in workspace; teamos lives under docs/teamos/).
-            repo_root / ".team-os" / "workflows",
-            repo_root / ".team-os" / "roles",
-            repo_root / "evals",
-        ]
-        miss = [str(p) for p in must if not p.exists()]
-        if miss:
-            print("repo: FAIL missing_paths=" + ",".join(miss[:5]))
-            ok = False
-        else:
-            print("repo: OK")
-
-        # Repo purity enforcement (no project truth-source artifacts inside repo).
-        purity = repo_root / ".team-os" / "scripts" / "governance" / "check_repo_purity.py"
-        if purity.exists():
-            p = subprocess.run([sys.executable, str(purity), "--repo-root", str(repo_root), "--quiet"], check=False)
-            if p.returncode == 0:
-                print("repo_purity: OK")
-            else:
-                print("repo_purity: FAIL (run: teamos workspace migrate --from-repo)")
-                ok = False
-        else:
-            print(f"repo_purity: WARN missing_checker={purity}")
-            ok = False
-
-    # Workspace checks (local)
-    try:
-        cmd_workspace_doctor(args)
-    except SystemExit:
-        ok = False
-    except Exception as e:
-        print(f"workspace: FAIL {e}")
-        ok = False
-
-    # Control-plane API coverage (safe: openapi.json only)
-    try:
-        spec = _http_json("GET", base + "/openapi.json", timeout_sec=5)
-        paths = spec.get("paths") or {}
-        required = [
-            "/v1/status",
-            "/v1/agents",
-            "/v1/tasks",
-            "/v1/focus",
-            "/v1/chat",
-            "/v1/requirements",
-            "/v1/panel/github/sync",
-            "/v1/panel/github/health",
-            "/v1/panel/github/config",
-            "/v1/cluster/status",
-            "/v1/cluster/elect/attempt",
-            "/v1/nodes",
-            "/v1/nodes/register",
-            "/v1/nodes/heartbeat",
-            "/v1/tasks/new",
-            "/v1/recovery/scan",
-            "/v1/recovery/resume",
-            "/v1/self_improve/run",
-        ]
-        missing = [p for p in required if p not in paths]
-        if missing:
-            print(f"control_plane_api: FAIL missing_paths={len(missing)} sample={missing[:3]}")
-            ok = False
-        else:
-            print("control_plane_api: OK")
-    except Exception as e:
-        print(f"control_plane_api: WARN {e}")
-        ok = False
-
-    if not ok:
-        raise SystemExit(2)
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    base, prof = _base_url(args)
+    _run_pipeline(
+        repo_root,
+        ".team-os/scripts/pipelines/doctor.py",
+        [
+            "--repo-root",
+            str(repo_root),
+            "--workspace-root",
+            str(_workspace_root(args)),
+            "--profile",
+            str(prof.get("name") or ""),
+            "--base-url",
+            base,
+        ],
+    )
 
 
 def cmd_policy_check(args: argparse.Namespace) -> None:
@@ -1284,56 +1132,104 @@ def cmd_panel_open(args: argparse.Namespace) -> None:
         print(url)
 
 
-def _import_self_improve_runner(repo_root: Path):
-    # Import from the runtime template (source of truth for control-plane logic).
-    # Keep optional so the CLI can still run as a pure HTTP client.
-    app_dir = repo_root / ".team-os" / "templates" / "runtime" / "orchestrator"
-    sys.path.insert(0, str(app_dir))
-    from app import self_improve_runner  # type: ignore
-
-    return self_improve_runner
-
-
 def cmd_self_improve(args: argparse.Namespace) -> None:
     """
     Run one self-improve iteration.
 
-    Default:
-    - Try control-plane `/v1/self_improve/run` first.
-    - Fall back to local runner if control-plane is unreachable or not configured.
+    Deterministic + governance-safe:
+    - Runs the host-level deterministic pipeline (no LLM).
+    - Enforces leader-only writes (non-leader is scan-only).
+    - Remote writes (GitHub) are gated by policy; defaults to panel sync dry-run only.
     """
-    if not args.local:
-        try:
-            base, prof = _base_url(args)
-            payload = {
-                "dry_run": bool(args.dry_run),
-                "force": bool(args.force),
-                "trigger": "cli_auto" if args.auto else "manual",
-            }
-            out = _http_json("POST", base + "/v1/self_improve/run", payload, timeout_sec=300)
-            if not args.quiet:
-                print(json.dumps(out, ensure_ascii=False, indent=2))
-            return
-        except Exception as e:
-            if not args.quiet:
-                eprint(f"self_improve: control_plane_failed -> local_fallback: {e}")
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["run-once", "--scope", "teamos"]
+    if bool(args.force):
+        argv.append("--force")
+    # NOTE:
+    # - `--dry-run` / `--local` are kept for backwards compatibility; remote writes are governed by policy.
+    # - To compute proposals only (no local writes), run: teamos daemon status / or pipeline --dry-run-local
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
 
+
+def cmd_daemon_start(args: argparse.Namespace) -> None:
+    """
+    Start Team OS background daemons (currently: self-improve).
+    """
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
 
-    os.environ["TEAM_OS_REPO_PATH"] = str(repo_root)
-    runner = _import_self_improve_runner(repo_root)
-    out = runner.run(
-        dry_run=bool(args.dry_run),
-        force=bool(args.force),
-        actor="cli",
-        trigger="cli_auto" if args.auto else "manual",
-        api_routes=None,
-        project_id="teamos",
-    )
-    if not args.quiet:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    # Foreground is useful for debugging.
+    argv += ["daemon" if bool(getattr(args, "foreground", False)) else "start"]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+
+
+def cmd_daemon_stop(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["stop"]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+
+
+def cmd_daemon_status(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["status"]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+
+
+def cmd_audit_deterministic_gov(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if getattr(args, "out", ""):
+        argv += ["--out", str(args.out).strip()]
+    # Pass through CLI profile (used by the audit generator to run doctor/daemon status consistently).
+    if getattr(args, "profile", ""):
+        argv += ["--profile", str(args.profile).strip()]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/audit_deterministic_gov.py", argv)
 
 
 def _parse_metrics_jsonl(path: Path) -> list[str]:
@@ -1545,21 +1441,98 @@ def cmd_repo_create(args: argparse.Namespace) -> None:
 
 
 def cmd_task_new(args: argparse.Namespace) -> None:
-    base, prof = _base_url(args)
-    payload = {
-        "title": args.title,
-        "project_id": args.project or _default_project_id(prof, args),
-        "repo_locator": args.repo,
-        "create_repo_if_missing": bool(args.create_repo),
-        "visibility": "public" if bool(getattr(args, "public", False)) else "private",
-        "org": args.org,
-        "workstreams": (args.workstreams.split(",") if args.workstreams else None),
-        "required_capabilities": (args.required_capabilities.split(",") if args.required_capabilities else None),
-        "mode": args.mode or "auto",
-        "dry_run": bool(args.dry_run),
-    }
-    out = _http_json("POST", base + "/v1/tasks/new", payload, timeout_sec=120)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    cfg = _load_config()
+    prof = _get_profile(cfg, args.profile)
+    scope = _default_scope(prof, args)
+    if getattr(args, "scope", ""):
+        scope = str(args.scope).strip()
+
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        "--scope",
+        scope,
+        "--title",
+        args.title,
+        "--workstreams",
+        args.workstreams or "general",
+        "--risk-level",
+        getattr(args, "risk_level", "") or "R1",
+        "--mode",
+        args.mode or "auto",
+    ]
+    if bool(args.dry_run):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_create.py", argv)
+
+
+def cmd_task_close(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        str(args.task_id),
+    ]
+    if getattr(args, "scope", ""):
+        argv += ["--scope", str(args.scope).strip()]
+    if bool(getattr(args, "skip_tests", False)):
+        argv.append("--skip-tests")
+    if bool(getattr(args, "dry_run", False)):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_close.py", argv)
+
+
+def cmd_task_ship(args: argparse.Namespace) -> None:
+    """
+    Enforce close -> commit -> push discipline for one task.
+    """
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        str(args.task_id),
+    ]
+    if getattr(args, "scope", ""):
+        argv += ["--scope", str(args.scope).strip()]
+    if getattr(args, "summary", ""):
+        argv += ["--summary", str(args.summary).strip()]
+    if getattr(args, "base", ""):
+        argv += ["--base", str(args.base).strip()]
+    if bool(getattr(args, "no_pr", False)):
+        argv.append("--no-pr")
+    if bool(getattr(args, "dry_run", False)):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_ship.py", argv)
+
+
+def cmd_prompt_compile(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    cfg = _load_config()
+    prof = _get_profile(cfg, args.profile)
+    scope = _default_scope(prof, args)
+    if getattr(args, "scope", ""):
+        scope = str(args.scope).strip()
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--scope", scope]
+    if bool(getattr(args, "dry_run", False)):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/prompt_compile.py", argv)
 
 
 def cmd_task_resume(args: argparse.Namespace) -> None:
@@ -1699,20 +1672,29 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     ts = sp.add_parser("task", help="Task lifecycle commands")
     ts_sp = ts.add_subparsers(dest="subcmd", required=True)
-    tn = ts_sp.add_parser("new", help="Create a new task (repo optional; default dry-run)")
+    tn = ts_sp.add_parser("new", help="Create a new task (deterministic; local truth-source scaffold)")
     tn.add_argument("--title", required=True)
+    tn.add_argument("--scope", help="teamos | project:<id> (default derived from --project/default_project_id)")
     tn.add_argument("--project")
-    tn.add_argument("--repo")
-    tn.add_argument("--create-repo", action="store_true")
-    tn.add_argument("--org")
-    tn_vis = tn.add_mutually_exclusive_group()
-    tn_vis.add_argument("--public", action="store_true", help="public visibility (default: private)")
-    tn_vis.add_argument("--private", action="store_true", help="private visibility (default)")
     tn.add_argument("--workstreams", help="comma-separated")
-    tn.add_argument("--required-capabilities", help="comma-separated")
+    tn.add_argument("--risk-level", default="R1", help="R0|R1|R2|R3")
     tn.add_argument("--mode", default="auto", help="auto|bootstrap|upgrade")
-    tn.add_argument("--dry-run", action="store_true", help="safety default: do not touch remotes")
+    tn.add_argument("--dry-run", action="store_true", help="plan only (no filesystem writes)")
     tn.set_defaults(fn=cmd_task_new)
+    tc = ts_sp.add_parser("close", help="Close a task (validate DoD + mark ledger closed)")
+    tc.add_argument("task_id")
+    tc.add_argument("--scope", help="optional: teamos | project:<id> (auto-detect if omitted)")
+    tc.add_argument("--skip-tests", action="store_true")
+    tc.add_argument("--dry-run", action="store_true")
+    tc.set_defaults(fn=cmd_task_close)
+    tsh = ts_sp.add_parser("ship", help="Ship a task (close -> gates -> commit -> push)")
+    tsh.add_argument("task_id")
+    tsh.add_argument("--scope", help="optional: teamos | project:<id> (default: teamos)")
+    tsh.add_argument("--summary", help="commit summary (default: ledger title)")
+    tsh.add_argument("--base", default="main", help="PR base branch (gh only; default: main)")
+    tsh.add_argument("--no-pr", action="store_true", help="do not create PR")
+    tsh.add_argument("--dry-run", action="store_true", help="plan only; do not commit/push (still runs task close + scans)")
+    tsh.set_defaults(fn=cmd_task_ship)
     tr = ts_sp.add_parser("resume", help="Resume tasks after interruption (placeholder)")
     tr.add_argument("--all", action="store_true")
     tr.add_argument("--task-id")
@@ -1774,6 +1756,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     rb2.add_argument("--project")
     rb2.set_defaults(fn=cmd_req_baseline_set_v2)
 
+    pm = sp.add_parser("prompt", help="Prompt operations (deterministic pipelines)")
+    pm_sp = pm.add_subparsers(dest="subcmd", required=True)
+    pc2 = pm_sp.add_parser("compile", help="Compile MASTER_PROMPT.md deterministically")
+    pc2.add_argument("--scope")
+    pc2.add_argument("--project")
+    pc2.add_argument("--dry-run", action="store_true")
+    pc2.set_defaults(fn=cmd_prompt_compile)
+
     mt = sp.add_parser("metrics", help="Telemetry/metrics checks and analysis (local truth source)")
     mt_sp = mt.add_subparsers(dest="subcmd", required=True)
     mc = mt_sp.add_parser("check", help="Validate task logs 00~07 + metrics.jsonl against minimal schema")
@@ -1792,8 +1782,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     pc.add_argument("--quiet", action="store_true")
     pc.set_defaults(fn=cmd_policy_check)
 
+    au = sp.add_parser("audit", help="Deterministic audit generators (local-only)")
+    au_sp = au.add_subparsers(dest="subcmd", required=True)
+    dg = au_sp.add_parser("deterministic-gov", help="Generate deterministic governance audit report (scope=teamos)")
+    dg.add_argument("--out", help="override output path")
+    dg.set_defaults(fn=cmd_audit_deterministic_gov)
+
     doc = sp.add_parser("doctor")
     doc.set_defaults(fn=cmd_doctor)
+
+    dm = sp.add_parser("daemon", help="Background daemons (self-improve, etc.)")
+    dm_sp = dm.add_subparsers(dest="subcmd", required=True)
+    ds = dm_sp.add_parser("start", help="Start daemons (default: self-improve)")
+    ds.add_argument("--foreground", action="store_true", help="run in foreground (do not detach)")
+    ds.set_defaults(fn=cmd_daemon_start)
+    dx = dm_sp.add_parser("stop", help="Stop daemons (best-effort)")
+    dx.set_defaults(fn=cmd_daemon_stop)
+    dy = dm_sp.add_parser("status", help="Show daemon status/state")
+    dy.set_defaults(fn=cmd_daemon_status)
 
     si = sp.add_parser("self-improve", help="Always-on self improvement (scan -> proposals -> pending issues)")
     si.add_argument("--dry-run", action="store_true", help="no remote writes; still writes local proposal artifacts")
@@ -1805,8 +1811,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = p.parse_args(argv)
     try:
-        # Always-on self-improve wake (non-blocking, debounced).
-        _auto_wake_self_improve(args)
         args.fn(args)
         return 0
     except Exception as e:

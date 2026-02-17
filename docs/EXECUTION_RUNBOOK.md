@@ -33,22 +33,30 @@
 
 ```bash
 cd team-os
-./scripts/teamos.sh doctor
+./teamos doctor
 ```
 
 创建新任务：
 
 ```bash
 cd team-os
-./scripts/teamos.sh new-task "一句话需求标题"
+./teamos task new --scope teamos --title "一句话需求标题" --workstreams "governance"
+# 建议每任务一分支：
+git checkout -b teamos/<TASK_ID>-<slug>
 ```
 
-复盘与自我升级：
+关闭任务（提交前闸门）：
 
 ```bash
 cd team-os
-./scripts/teamos.sh retro <TASK_ID>
-./scripts/teamos.sh self-improve
+./teamos task close <TASK_ID> --scope teamos
+```
+
+提交并推送（强制 close→闸门→commit→push）：
+
+```bash
+cd team-os
+./teamos task ship <TASK_ID> --scope teamos --summary "一句话变更摘要"
 ```
 
 ## 5. Runtime 部署与运维 (team-os-runtime)
@@ -451,7 +459,7 @@ make ps
 
 标准顺序（最小闭环）：
 
-1. `new-task`：生成台账与 `00~02` 日志骨架
+1. `./teamos task new`：生成台账与 `00~07` 日志骨架 + `metrics.jsonl`
 2. Intake：澄清范围、风险、闸门、依赖
 3. 如需外部最新信息：执行 Skill Boot（检索 -> 来源摘要 -> Skill Card -> 记忆索引）
 4. 进入 Delivery：实现/测试/审查/发布/观测
@@ -472,8 +480,21 @@ make ps
 ## 10. 自我升级怎么做
 
 1. 在 `07_retro.md` 写清“Team OS 的缺陷/改进点”
-2. 运行 `./scripts/teamos.sh self-improve` 生成自我升级条目
-3. 若 `gh` 可用且已登录：优先创建 issue/PR；否则生成 pending 草稿到：
+2. 启动 self-improve daemon（leader-only；默认只做 panel sync dry-run，不做 GitHub 写入）：
+
+```bash
+cd team-os
+./teamos daemon start
+./teamos daemon status
+```
+
+3. 需要立刻跑一轮（跳过 debounce）：
+
+```bash
+cd team-os
+./teamos self-improve --force
+```
+4. 若 `gh` 可用且已登录：优先创建 issue/PR；否则生成 pending 草稿到：
    - `.team-os/ledger/team_os_issues_pending/`
 
 ## 11. 安全闸门
@@ -496,7 +517,7 @@ gh auth status
 
 ```bash
 cd team-os
-./scripts/teamos.sh self-improve
+./teamos self-improve
 ```
 
 ## 13. 常见故障排查

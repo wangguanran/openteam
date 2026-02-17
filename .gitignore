@@ -67,6 +67,8 @@ sshpass*
 
 # Self-improve runtime state (debounce checkpoints; not a source of truth)
 .team-os/state/self_improve_last_run.*
+.team-os/state/self_improve_state.json
+.team-os/state/self_improve_daemon.*
 
 # Common scratch dirs
 .tmp/

@@ -1,0 +1,68 @@
+# Repo Understanding (Gate Artifact)
+
+- repo: {{REPO}}
+- generated_at: {{GENERATED_AT}}
+- task_id: {{TASK_ID}}
+- git_sha: {{GIT_SHA}}
+- mode: upgrade
+
+## 总体架构
+
+{{ARCH_OVERVIEW}}
+
+## 模块边界与职责
+
+{{MODULES}}
+
+## 关键目录与入口
+
+{{ENTRYPOINTS}}
+
+## 构建方式
+
+```bash
+{{BUILD_COMMANDS}}
+```
+
+## 测试命令
+
+```bash
+{{TEST_COMMANDS}}
+```
+
+## 依赖/环境
+
+{{DEPENDENCIES}}
+
+## 风险点
+
+{{RISKS}}
+
+## 改动建议（最小改动策略）
+
+{{SUGGESTIONS}}
+
+## 回滚思路
+
+{{ROLLBACK}}
+
+## 证据（必须可复现）
+
+### tree/ls
+
+```text
+{{EVIDENCE_TREE}}
+```
+
+### rg
+
+```text
+{{EVIDENCE_RG}}
+```
+
+### build/test scripts
+
+```text
+{{EVIDENCE_SCRIPTS}}
+```
+

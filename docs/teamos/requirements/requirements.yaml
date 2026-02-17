@@ -1,6 +1,6 @@
 schema_version: 1
 project_id: teamos
-next_req_seq: 2
+next_req_seq: 6
 requirements:
 - req_id: REQ-0001
   created_at: '2026-02-16T00:39:59Z'
@@ -38,9 +38,140 @@ requirements:
   decision_log_refs: []
   raw_input_refs:
   - '2026-02-16T00:39:59Z'
+- req_id: REQ-0002
+  created_at: '2026-02-17T00:50:33Z'
+  updated_at: '2026-02-17T00:50:33Z'
+  status: ACTIVE
+  title: 'Workstream: governance'
+  text: 'Workstream: governance
+
+
+    self-improve test'
+  workstreams:
+  - general
+  priority: P3
+  rationale: ''
+  constraints: []
+  acceptance: []
+  source: self-improve
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs: []
+  raw_input_refs:
+  - '2026-02-17T00:50:33Z'
+- req_id: REQ-0003
+  created_at: '2026-02-17T00:52:13Z'
+  updated_at: '2026-02-17T00:52:13Z'
+  status: ACTIVE
+  title: 'Workstream: governance'
+  text: 'Workstream: governance
+
+
+    Implement task ship (close -> gates -> commit -> push; mark BLOCKED on push failure)
+
+
+    实现 `./teamos task ship <TASK_ID>`：强制 close→secrets/purity/tests→commit→push；push
+    失败则将任务标记 BLOCKED 并记录原因。
+
+
+    Evidence:
+
+    - missing: .team-os/scripts/pipelines/task_ship.py
+
+
+    Acceptance:
+
+    - 新增 pipeline: .team-os/scripts/pipelines/task_ship.py
+
+    - CLI: ./teamos task ship 可用并可 dry-run'
+  workstreams:
+  - ai
+  priority: P0
+  rationale: ''
+  constraints: []
+  acceptance: []
+  source: self-improve
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs: []
+  raw_input_refs:
+  - '2026-02-17T00:52:13Z'
+- req_id: REQ-0004
+  created_at: '2026-02-17T00:52:13Z'
+  updated_at: '2026-02-17T00:52:13Z'
+  status: ACTIVE
+  title: 'Workstream: governance'
+  text: 'Workstream: governance
+
+
+    Add WORKSPACE_RUNBOOK.md (repo/workspace boundary, init/migrate/doctor)
+
+
+    补齐 Workspace 运行手册：初始化/迁移/校验（repo purity）、常见故障与恢复；明确 project 真相源只能落在 Workspace（repo
+    外）。
+
+
+    Evidence:
+
+    - missing: docs/WORKSPACE_RUNBOOK.md
+
+
+    Acceptance:
+
+    - 新增 docs/WORKSPACE_RUNBOOK.md
+
+    - runbook 覆盖 workspace init/migrate/doctor 的可执行命令'
+  workstreams:
+  - general
+  priority: P1
+  rationale: ''
+  constraints: []
+  acceptance: []
+  source: self-improve
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs: []
+  raw_input_refs:
+  - '2026-02-17T00:52:13Z'
+- req_id: REQ-0005
+  created_at: '2026-02-17T00:52:13Z'
+  updated_at: '2026-02-17T00:52:13Z'
+  status: ACTIVE
+  title: 'Workstream: devops'
+  text: 'Workstream: devops
+
+
+    Add evals coverage for self_improve_daemon (scheduler/dedupe/leader-only)
+
+
+    补齐 evals：覆盖 self-improve daemon 的最小行为（>=3 proposals、state 更新、leader-only 写入拦截、debounce/dedupe）。
+
+
+    Evidence:
+
+    - missing: evals/test_self_improve_daemon.py
+
+
+    Acceptance:
+
+    - 新增 evals/test_self_improve_daemon.py（离线、决定性）
+
+    - CI/本地可运行并稳定通过'
+  workstreams:
+  - devops
+  priority: P1
+  rationale: ''
+  constraints: []
+  acceptance: []
+  source: self-improve
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs: []
+  raw_input_refs:
+  - '2026-02-17T00:52:13Z'
 baseline:
   version: 1
   sha256: db7654bd3adabca91f2751af77f10154d9ece89756f7f5eea84d5961e93a421d
 raw_inputs:
-  sha256: af003a71675814dd3facde9c393b0e849dc708aabb00e2893d219e655d36712d
-  count: 1
+  sha256: 155e7924f7a80c8c46ae1acfe5f1c050e2ddb1f2ce8ff87cec17f4b4417ced8b
+  count: 5

@@ -72,6 +72,7 @@ def _req_id(seq: int) -> str:
 
 _RAW_INPUT_CHANNELS = {"cli", "api", "chat", "import", "migration", "baseline"}
 _BASELINE_RE = re.compile(r"^original_description_v(\d+)\.md$")
+_TPL_RE = re.compile(r"{{\s*([A-Z0-9_]+)\s*}}")
 
 
 def _sha256_text(s: str) -> str:
@@ -253,6 +254,12 @@ def load_requirements(req_dir: Path) -> dict[str, Any]:
 
 
 def save_requirements(req_dir: Path, data: dict[str, Any]) -> None:
+    # Deterministic ordering: keep requirements stable by req_id.
+    try:
+        reqs = list(data.get("requirements") or [])
+        data["requirements"] = sorted(reqs, key=lambda r: str((r or {}).get("req_id") or ""))
+    except Exception:
+        pass
     _snapshot_if_workspace(req_dir, names=["requirements.yaml"], reason="write requirements.yaml")
     _write_yaml(req_dir / "requirements.yaml", data)
 
@@ -262,20 +269,45 @@ def render_requirements_md(project_id: str, reqs: list[dict[str, Any]]) -> str:
     for r in reqs:
         by_status.setdefault(str(r.get("status", "ACTIVE")).upper(), []).append(r)
 
-    def line(r: dict[str, Any]) -> str:
-        ws = ",".join(r.get("workstreams", []) or [])
-        pr = r.get("priority", "")
-        return f"- {r.get('req_id')}: {r.get('title','').strip()} ({pr}; ws={ws})"
+    def render_list(items: list[dict[str, Any]]) -> str:
+        if not items:
+            return "- (none)"
+        lines: list[str] = []
+        for r in sorted(items, key=lambda x: str(x.get("req_id") or "")):
+            ws = ",".join(r.get("workstreams", []) or [])
+            pr = r.get("priority", "")
+            rid = str(r.get("req_id") or "").strip()
+            title = str(r.get("title") or "").strip()
+            lines.append(f"- {rid}: {title} ({pr}; ws={ws})".rstrip())
+        return "\n".join(lines).rstrip()
 
+    def render_template(tpl: str, values: dict[str, str]) -> str:
+        def repl(m: re.Match[str]) -> str:
+            k = m.group(1).strip()
+            return str(values.get(k, ""))
+
+        return _TPL_RE.sub(repl, tpl)
+
+    tpl_path = team_os_root() / ".team-os" / "templates" / "requirements_md.j2"
+    if tpl_path.exists():
+        tpl = tpl_path.read_text(encoding="utf-8", errors="replace")
+        body = render_template(
+            tpl,
+            {
+                "PROJECT_ID": project_id,
+                "ACTIVE_LIST": render_list(by_status.get("ACTIVE", [])),
+                "NEED_PM_DECISION_LIST": render_list(by_status.get("NEED_PM_DECISION", [])),
+                "CONFLICT_LIST": render_list(by_status.get("CONFLICT", [])),
+                "DEPRECATED_LIST": render_list(by_status.get("DEPRECATED", [])),
+            },
+        )
+        return body.rstrip() + "\n"
+
+    # Fallback (legacy) if template is missing.
     out = [f"# Requirements ({project_id})", ""]
     for st in ["ACTIVE", "NEED_PM_DECISION", "CONFLICT", "DEPRECATED"]:
         out.append(f"## {st}")
-        items = by_status.get(st, [])
-        if not items:
-            out.append("- (none)")
-        else:
-            for r in items:
-                out.append(line(r))
+        out.append(render_list(by_status.get(st, [])))
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
