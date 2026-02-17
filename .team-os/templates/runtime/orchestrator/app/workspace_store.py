@@ -132,6 +132,7 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     s = pdir / "state"
     (s / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
     (s / "logs" / "tasks").mkdir(parents=True, exist_ok=True)
+    (s / "locks").mkdir(parents=True, exist_ok=True)
     (s / "requirements" / "conflicts").mkdir(parents=True, exist_ok=True)
     (s / "requirements" / "baseline").mkdir(parents=True, exist_ok=True)
     raw = s / "requirements" / "raw_inputs.jsonl"

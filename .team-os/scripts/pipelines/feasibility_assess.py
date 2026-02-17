@@ -20,6 +20,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import locks
+
 from _common import PipelineError, add_default_args, append_jsonl, read_text, resolve_repo_root, resolve_workspace_root, utc_now_iso, validate_or_die, write_text
 
 
@@ -139,10 +141,25 @@ def main(argv: list[str] | None = None) -> int:
     would_write = not (existing and str(existing.get("report_sha256") or "") == report_sha and str(existing.get("outcome") or "") == assessment.outcome)
 
     if not args.dry_run and would_write:
-        # Write report (stable content).
-        write_text(report_path, report_md, dry_run=False)
-        # Append index record (append-only).
-        append_jsonl(assess_idx_path, record, dry_run=False)
+        repo_lock = None
+        scope_lock = None
+        try:
+            if scope == "teamos":
+                repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+            scope_lock = locks.acquire_scope_lock(
+                scope,
+                repo_root=repo,
+                workspace_root=ws_root,
+                req_dir=req_dir,
+                task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+            )
+            # Write report (stable content).
+            write_text(report_path, report_md, dry_run=False)
+            # Append index record (append-only).
+            append_jsonl(assess_idx_path, record, dry_run=False)
+        finally:
+            locks.release_lock(scope_lock)
+            locks.release_lock(repo_lock)
 
     out = {
         "ok": True,
@@ -162,4 +179,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

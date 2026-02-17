@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import locks
+
 from _common import PipelineError, add_default_args, resolve_repo_root, utc_now_iso, validate_or_die
 
 
@@ -84,19 +86,35 @@ def cmd_add(repo: Path, *, scope: str, workspace_root: str, text: str, workstrea
 
     from app.requirements_store import add_requirement_raw_first  # type: ignore
 
-    out = add_requirement_raw_first(
-        project_id=pid,
-        req_dir=req_dir,
-        requirement_text=str(text or "").rstrip(),
-        workstream_id=str(workstream_id or "").strip(),
-        source=str(source or "cli"),
-        channel="cli",
-        user=str(user or "unknown"),
-        priority=str(priority or "P2"),
-        constraints=None,
-        acceptance=None,
-        rationale="",
-    )
+    repo_lock = None
+    scope_lock = None
+    try:
+        if resolved_scope == "teamos":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+        scope_lock = locks.acquire_scope_lock(
+            resolved_scope,
+            repo_root=repo,
+            workspace_root=Path(workspace_root).expanduser().resolve(),
+            req_dir=req_dir,
+            task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+        )
+
+        out = add_requirement_raw_first(
+            project_id=pid,
+            req_dir=req_dir,
+            requirement_text=str(text or "").rstrip(),
+            workstream_id=str(workstream_id or "").strip(),
+            source=str(source or "cli"),
+            channel="cli",
+            user=str(user or "unknown"),
+            priority=str(priority or "P2"),
+            constraints=None,
+            acceptance=None,
+            rationale="",
+        )
+    finally:
+        locks.release_lock(scope_lock)
+        locks.release_lock(repo_lock)
 
     # Validate the last raw input and expanded requirements.
     raw_last = _load_last_raw_input(req_dir)
@@ -126,100 +144,116 @@ def cmd_migrate_v3(repo: Path, *, scope: str, workspace_root: str, dry_run: bool
     req_dir.mkdir(parents=True, exist_ok=True)
     raw_path = req_dir / "raw_inputs.jsonl"
 
-    # Ensure v3 scaffold files exist (do not touch Expanded artifacts here).
-    (req_dir / "feasibility").mkdir(parents=True, exist_ok=True)
-    if not (req_dir / "raw_assessments.jsonl").exists() and (not dry_run):
-        (req_dir / "raw_assessments.jsonl").write_text("", encoding="utf-8")
-
-    if not raw_path.exists():
-        if not dry_run:
-            raw_path.write_text("", encoding="utf-8")
-        return {"ok": True, "scope": resolved_scope, "project_id": pid, "requirements_dir": str(req_dir), "migrated": False, "reason": "raw_inputs.jsonl missing"}
-
-    original = raw_path.read_text(encoding="utf-8", errors="replace")
-    lines = [ln for ln in original.splitlines() if ln.strip()]
-    if not lines:
-        return {"ok": True, "scope": resolved_scope, "project_id": pid, "requirements_dir": str(req_dir), "migrated": False, "reason": "raw_inputs.jsonl empty"}
-
-    import hashlib
-
-    def sha256_text(s: str) -> str:
-        return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
-
-    allowed_channels = {"cli", "api", "chat", "import"}
-
-    def is_system_user(u: str) -> bool:
-        uu = (u or "").strip().lower()
-        return uu.startswith("system:") or uu in ("self-improve", "self-improve-daemon") or uu.startswith("self-improve")
-
-    migrated_items: list[dict[str, Any]] = []
-    skipped = 0
-    invalid_json = 0
-    for ln in lines:
-        try:
-            obj = json.loads(ln)
-        except Exception:
-            invalid_json += 1
-            continue
-        if not isinstance(obj, dict):
-            invalid_json += 1
-            continue
-        user = str(obj.get("user") or "").strip()
-        if is_system_user(user):
-            skipped += 1
-            continue
-        text = str(obj.get("text") or "")
-        if not text.strip():
-            skipped += 1
-            continue
-        ch = str(obj.get("channel") or "").strip()
-        if ch not in allowed_channels:
-            ch = "import"
-        ts = str(obj.get("timestamp") or "").strip() or utc_now_iso()
-        scope_s = str(obj.get("scope") or "").strip() or resolved_scope
-        raw_id = str(obj.get("raw_id") or "").strip()
-        if not raw_id:
-            raw_id = "RAW-" + sha256_text("|".join([ts, scope_s, user, ch, text]))[:16]
-        migrated_items.append(
-            {
-                "raw_id": raw_id,
-                "timestamp": ts,
-                "scope": scope_s,
-                "user": user,
-                "channel": ch,
-                "text": text,
-                "text_sha256": sha256_text(text),
-            }
+    repo_lock = None
+    scope_lock = None
+    try:
+        if resolved_scope == "teamos":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+        scope_lock = locks.acquire_scope_lock(
+            resolved_scope,
+            repo_root=repo,
+            workspace_root=Path(workspace_root).expanduser().resolve(),
+            req_dir=req_dir,
+            task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
         )
 
-    # Deterministic serialization.
-    new_lines: list[str] = []
-    for it in migrated_items:
-        validate_or_die(it, repo / ".team-os" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
-        new_lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-    new_content = ("\n".join(new_lines) + ("\n" if new_lines else ""))
+        # Ensure v3 scaffold files exist (do not touch Expanded artifacts here).
+        (req_dir / "feasibility").mkdir(parents=True, exist_ok=True)
+        if not (req_dir / "raw_assessments.jsonl").exists() and (not dry_run):
+            (req_dir / "raw_assessments.jsonl").write_text("", encoding="utf-8")
 
-    migrated = new_content != original
-    if migrated and (not dry_run):
-        # Preserve full legacy file (including system entries) for audit trail.
-        ts_compact = utc_now_iso().replace(":", "").replace("-", "")
-        legacy = req_dir / f"raw_inputs.v2_legacy_{ts_compact}.jsonl"
-        legacy.write_text(original, encoding="utf-8")
-        raw_path.write_text(new_content, encoding="utf-8")
+        if not raw_path.exists():
+            if not dry_run:
+                raw_path.write_text("", encoding="utf-8")
+            return {"ok": True, "scope": resolved_scope, "project_id": pid, "requirements_dir": str(req_dir), "migrated": False, "reason": "raw_inputs.jsonl missing"}
 
-    return {
-        "ok": True,
-        "scope": resolved_scope,
-        "project_id": pid,
-        "requirements_dir": str(req_dir),
-        "migrated": bool(migrated and (not dry_run)),
-        "dry_run": bool(dry_run),
-        "original_lines": len(lines),
-        "user_lines_kept": len(migrated_items),
-        "system_or_invalid_skipped": int(skipped + invalid_json),
-        "invalid_json": invalid_json,
-        "raw_inputs_path": str(raw_path),
-    }
+        original = raw_path.read_text(encoding="utf-8", errors="replace")
+        lines = [ln for ln in original.splitlines() if ln.strip()]
+        if not lines:
+            return {"ok": True, "scope": resolved_scope, "project_id": pid, "requirements_dir": str(req_dir), "migrated": False, "reason": "raw_inputs.jsonl empty"}
+
+        import hashlib
+
+        def sha256_text(s: str) -> str:
+            return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
+
+        allowed_channels = {"cli", "api", "chat", "import"}
+
+        def is_system_user(u: str) -> bool:
+            uu = (u or "").strip().lower()
+            return uu.startswith("system:") or uu in ("self-improve", "self-improve-daemon") or uu.startswith("self-improve")
+
+        migrated_items: list[dict[str, Any]] = []
+        skipped = 0
+        invalid_json = 0
+        for ln in lines:
+            try:
+                obj = json.loads(ln)
+            except Exception:
+                invalid_json += 1
+                continue
+            if not isinstance(obj, dict):
+                invalid_json += 1
+                continue
+            user = str(obj.get("user") or "").strip()
+            if is_system_user(user):
+                skipped += 1
+                continue
+            text = str(obj.get("text") or "")
+            if not text.strip():
+                skipped += 1
+                continue
+            ch = str(obj.get("channel") or "").strip()
+            if ch not in allowed_channels:
+                ch = "import"
+            ts = str(obj.get("timestamp") or "").strip() or utc_now_iso()
+            scope_s = str(obj.get("scope") or "").strip() or resolved_scope
+            raw_id = str(obj.get("raw_id") or "").strip()
+            if not raw_id:
+                raw_id = "RAW-" + sha256_text("|".join([ts, scope_s, user, ch, text]))[:16]
+            migrated_items.append(
+                {
+                    "raw_id": raw_id,
+                    "timestamp": ts,
+                    "scope": scope_s,
+                    "user": user,
+                    "channel": ch,
+                    "text": text,
+                    "text_sha256": sha256_text(text),
+                }
+            )
+
+        # Deterministic serialization.
+        new_lines: list[str] = []
+        for it in migrated_items:
+            validate_or_die(it, repo / ".team-os" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
+            new_lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        new_content = ("\n".join(new_lines) + ("\n" if new_lines else ""))
+
+        migrated = new_content != original
+        if migrated and (not dry_run):
+            # Preserve full legacy file (including system entries) for audit trail.
+            ts_compact = utc_now_iso().replace(":", "").replace("-", "")
+            legacy = req_dir / f"raw_inputs.v2_legacy_{ts_compact}.jsonl"
+            legacy.write_text(original, encoding="utf-8")
+            raw_path.write_text(new_content, encoding="utf-8")
+
+        return {
+            "ok": True,
+            "scope": resolved_scope,
+            "project_id": pid,
+            "requirements_dir": str(req_dir),
+            "migrated": bool(migrated and (not dry_run)),
+            "dry_run": bool(dry_run),
+            "original_lines": len(lines),
+            "user_lines_kept": len(migrated_items),
+            "system_or_invalid_skipped": int(skipped + invalid_json),
+            "invalid_json": invalid_json,
+            "raw_inputs_path": str(raw_path),
+        }
+    finally:
+        locks.release_lock(scope_lock)
+        locks.release_lock(repo_lock)
 
 
 def cmd_verify(repo: Path, *, scope: str, workspace_root: str) -> dict[str, Any]:

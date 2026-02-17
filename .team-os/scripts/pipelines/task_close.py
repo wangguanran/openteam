@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
+
+import locks
 
 from _common import (
     PipelineError,
@@ -128,6 +131,20 @@ def main(argv: list[str] | None = None) -> int:
     ws_root = resolve_workspace_root(args)
 
     scope, pid, ledger_path, logs_dir = _locate_task(repo, ws_root, scope=str(args.scope or ""), task_id=str(args.task_id))
+
+    # Concurrency: repo lock (teamos only) + scope lock.
+    repo_lock = None
+    scope_lock = None
+    if not args.dry_run:
+        if scope == "teamos":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(args.task_id))
+        scope_lock = locks.acquire_scope_lock(scope, repo_root=repo, workspace_root=ws_root, req_dir=None, task_id=str(args.task_id))
+
+    def _cleanup_locks() -> None:
+        locks.release_lock(scope_lock)
+        locks.release_lock(repo_lock)
+
+    atexit.register(_cleanup_locks)
 
     ledger = read_yaml(ledger_path)
     if not ledger:

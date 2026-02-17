@@ -1566,20 +1566,20 @@ def add_requirement_system_update(
             )
 
     return AddReqOutcome(
-        classification=out.classification,
-        req_id=out.req_id,
-        duplicate_of=out.duplicate_of,
-        conflicts_with=list(out.conflicts_with or []),
-        conflict_report_path=out.conflict_report_path,
-        pending_decisions=list(out.pending_decisions or []),
-        actions_taken=actions,
-        drift_report_path=out.drift_report_path,
-        raw_input_timestamp=None,
-        raw_id=None,
-        raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
-        raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
-        baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
-        baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
+            classification=out.classification,
+            req_id=out.req_id,
+            duplicate_of=out.duplicate_of,
+            conflicts_with=list(out.conflicts_with or []),
+            conflict_report_path=out.conflict_report_path,
+            pending_decisions=list(out.pending_decisions or []),
+            actions_taken=actions,
+            drift_report_path=out.drift_report_path,
+            raw_input_timestamp=None,
+            raw_id=None,
+            raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+            baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+            baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
     )
 
 
