@@ -1,5 +1,7 @@
 # 变更治理 (Governance)
 
+本文件是 **Team OS 的治理真相源**：定义“任务=更新单位”、风险闸门、决定性产物策略，以及 Repo/Workspace 边界。
+
 ## 1. 定义 (DoR/DoD)
 
 ### DoR (Definition of Ready)
@@ -19,8 +21,17 @@
 - 测试证据与验收结果已记录
 - 变更与回滚信息已记录（若涉及发布）
 - Retro 已产出，并生成 Self-Improve 条目（若存在改进点）
+- `./teamos task close <TASK_ID>` 通过（该命令会执行 policy/repo purity/tests 等闸门）
 
-## 2. 风险与审批策略
+## 2. 更新单位（Update Unit）与 Git 纪律
+
+- **一个 Update Unit = 一个任务**（`TASK_ID`）。
+- **每个任务一分支**：`teamos/<TASK_ID>-<slug>`
+- **先 close 再提交**：必须先 `./teamos task close <TASK_ID>` 通过，才允许 `git commit`/`git push`。
+- **提交信息**：`<TASK_ID>: <short summary>`
+- **推送失败即阻塞**：若无 remote/无权限/网络失败，必须在任务日志 `03_work.md` 记录原因与修复步骤，并将任务标记为 `BLOCKED`（由脚本完成）。
+
+## 3. 风险与审批策略
 
 - R0/R1：默认无需审批（仍需日志与证据）
 - R2：执行前审批（尤其是网络端口、docker socket、依赖升级）
@@ -28,7 +39,16 @@
 
 审批记录必须写入任务日志（建议写在 `01_plan.md` 与 `05_release.md`）。
 
-## 3. 评审策略
+## 4. 决定性产物策略（脚本优先）
+
+- 任何可重复/可程序化的产物必须由 Python pipelines 生成，并通过 schema 校验后写入真相源。
+- Agent/LLM 只能输出建议/草案；不得直接写入或手改真相源文件。
+- 典型真相源写入口（决定性、可重建）：
+  - Requirements（Raw-First）：`./teamos req add|verify|rebuild`
+  - Prompt：`./teamos prompt compile`
+  - Projects/Panel：`./teamos panel sync`
+
+## 5. 评审策略
 
 建议的评审清单：
 
@@ -37,12 +57,12 @@
 - QA 评审：测试覆盖、回归范围、验收标准
 - 运维评审：可观测性、可回滚性、备份恢复
 
-## 4. 双轨并行
+## 6. 双轨并行
 
 - 业务仓库与 Team OS 仓库可以并行演进。
 - Team OS 的改动通过 Self-Improve 工作流管理，避免干扰业务交付节奏。
 
-## 5. Repo Purity（硬隔离：Repo vs Workspace）
+## 7. Repo Purity（硬隔离：Repo vs Workspace）
 
 硬规则：
 
@@ -51,7 +71,7 @@
 
 强制执行：
 
-- `teamos doctor` / `./scripts/teamos.sh doctor` 必须检查并在违规时失败
+- `./teamos doctor` 必须检查并在违规时失败
 - 回归测试必须覆盖 repo_purity（见 `evals/test_repo_purity.py`）
 
 违规处理：
@@ -70,7 +90,7 @@ cd team-os
 ./teamos workspace migrate --from-repo --force
 ```
 
-## 6. 需求处理协议 v2（Raw‑First）
+## 8. 需求处理协议 v2（Raw‑First）
 
 核心原则：
 

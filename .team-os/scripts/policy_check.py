@@ -65,6 +65,16 @@ def _gitignore_contains(repo_root: Path, needle: str) -> bool:
         return False
 
 
+def _missing_phrases(path: Path, needles: list[str]) -> list[str]:
+    if not path.exists():
+        return [f"(missing file) {x}" for x in needles]
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return [f"(unreadable file) {x}" for x in needles]
+    return [x for x in needles if x not in text]
+
+
 @dataclass(frozen=True)
 class CheckResult:
     ok: bool
@@ -139,6 +149,18 @@ def run_checks(*, repo_root: Path) -> CheckResult:
             failures.append("runtime template missing /teamos-workspace mount (workspace support)")
     else:
         warnings.append("runtime template docker-compose.yml missing (cannot verify workspace mount policy)")
+
+    # 6) AGENTS/governance docs must codify the canonical task workflow.
+    # This prevents drift back to ad-hoc changes that bypass the task gate.
+    doc_checks: list[tuple[Path, list[str]]] = [
+        (repo_root / "AGENTS.md", ["./teamos task new --scope teamos", "./teamos task close"]),
+        (repo_root / "docs" / "GOVERNANCE.md", ["./teamos task close"]),
+        (repo_root / "docs" / "EXECUTION_RUNBOOK.md", ["./teamos task new", "./teamos task close"]),
+    ]
+    for p, needles in doc_checks:
+        missing_phrases = _missing_phrases(p, needles)
+        if missing_phrases:
+            failures.append(f"{p} missing required phrases: {missing_phrases}")
 
     ok = not failures
     return CheckResult(ok=ok, failures=failures, warnings=warnings, facts=facts)
