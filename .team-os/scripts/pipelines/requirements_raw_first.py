@@ -65,15 +65,17 @@ def cmd_add(repo: Path, *, scope: str, workspace_root: str, text: str, workstrea
 
     from app.requirements_store import add_requirement_raw_first  # type: ignore
 
+    # NOTE: requirements_store.add_requirement_raw_first signature is intentionally small.
+    # Workstreams are inferred from text keywords; keep the explicit workstream as a hint line.
+    hint = f"Workstream: {workstream_id}\n\n" if str(workstream_id or "").strip() else ""
     out = add_requirement_raw_first(
         project_id=pid,
         req_dir=req_dir,
-        requirement_text=str(text or "").rstrip(),
+        requirement_text=(hint + str(text or "").rstrip()).rstrip(),
         source=str(source or "cli"),
         channel="cli",
         user=str(user or "unknown"),
         priority=str(priority or "P2"),
-        workstreams=[workstream_id] if workstream_id else None,
         constraints=None,
         acceptance=None,
         rationale="",
@@ -164,4 +166,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

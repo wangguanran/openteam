@@ -1,0 +1,34 @@
+schema_version: 1
+
+# Always-on self-improve policy (deterministic; no LLM).
+# This policy controls the host-level daemon in:
+# - .team-os/scripts/pipelines/self_improve_daemon.py
+#
+# Notes:
+# - "leader_only" enforces cluster governance: only the Brain(leader) may write truth sources.
+# - "dry_run_remote" keeps GitHub Projects sync as view-layer safe by default.
+# - Runtime state is stored under `.team-os/state/` and is gitignored.
+
+self_improve:
+  enabled: true
+  leader_only: true
+
+  # Scheduler
+  interval_sec: 3600          # wake frequency (1h)
+  debounce_sec: 21600         # minimum time between write iterations (6h)
+  min_proposals_per_run: 3
+
+  # Writes
+  write_proposal_md: true     # .team-os/ledger/self_improve/<ts>-proposal.md
+  write_requirements: true    # append raw_inputs.jsonl + update requirements.yaml/REQUIREMENTS.md/CHANGELOG.md
+
+  # Roadmap sync (GitHub Projects v2 is view-layer). Off by default.
+  panel_sync:
+    enabled: true
+    mode: full                # incremental|full
+    dry_run: true
+
+  # Dedupe (avoid repeating the same proposals too frequently)
+  dedupe:
+    enabled: true
+    max_keys: 300
