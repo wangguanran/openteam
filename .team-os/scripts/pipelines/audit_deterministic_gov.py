@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,7 @@ def _task_rows(repo: Path) -> list[dict[str, str]]:
         {"task_id": "TEAMOS-0001", "title": "TEAMOS-AGENTS-MANUAL", "branch": "teamos/TEAMOS-0001-agents-manual"},
         {"task_id": "TEAMOS-0002", "title": "TEAMOS-ALWAYS-ON-SELF-IMPROVE", "branch": "teamos/TEAMOS-0002-always-on-self-improve"},
         {"task_id": "TEAMOS-0003", "title": "TEAMOS-GIT-PUSH-DISCIPLINE", "branch": "teamos/TEAMOS-0003-git-push-discipline"},
+        {"task_id": "TEAMOS-0005", "title": "TEAMOS-PROJECT-AGENTS-MANUAL", "branch": "teamos/TEAMOS-0005-project-agents-manual"},
     ]
     out: list[dict[str, str]] = []
     for t in tasks:
@@ -110,6 +112,8 @@ def _md_report(*, ts: str, repo: Path, ws_root: Path, checks: dict[str, dict[str
         ("unit tests", checks["unittest"]["returncode"], "python3 -m unittest -q"),
         ("requirements verify", checks["req_verify"]["returncode"], "Raw-First drift/conflict verify (scope=teamos)"),
         ("prompt compile (dry-run)", checks["prompt_compile"]["returncode"], "deterministic prompt compiler (scope=teamos)"),
+        ("project config (smoke)", checks["project_config"]["returncode"], "workspace-local project.yaml init/validate (temp workspace)"),
+        ("project AGENTS injection (smoke)", checks["project_agents_inject"]["returncode"], "idempotent AGENTS.md injection (temp workspace/repo)"),
         ("self-improve daemon status", checks["daemon_status"]["returncode"], "daemon status/state readable (leader-only writes)"),
     ]
     for name, rc, note in core:
@@ -168,6 +172,81 @@ def main(argv: list[str] | None = None) -> int:
         cwd=repo,
     )
     checks["prompt_compile"] = _run([sys.executable, str(repo / ".team-os" / "scripts" / "pipelines" / "prompt_compile.py"), "--repo-root", str(repo), "--workspace-root", str(ws_root), "--scope", "teamos", "--dry-run"], cwd=repo)
+
+    # Workspace-local project governance smoke tests (use temp workspace; do not mutate real truth sources).
+    with tempfile.TemporaryDirectory() as td:
+        tmp_ws = Path(td) / "ws"
+        tmp_ws.mkdir(parents=True, exist_ok=True)
+        pid = "demo"
+        proj_repo = tmp_ws / "projects" / pid / "repo"
+        checks["project_config"] = _run(
+            [
+                sys.executable,
+                str(repo / ".team-os" / "scripts" / "pipelines" / "project_config.py"),
+                "--repo-root",
+                str(repo),
+                "--workspace-root",
+                str(tmp_ws),
+                "--project",
+                pid,
+                "init",
+            ],
+            cwd=repo,
+        )
+        # Validate after init (separate rc so failures are visible).
+        checks["project_config_validate"] = _run(
+            [
+                sys.executable,
+                str(repo / ".team-os" / "scripts" / "pipelines" / "project_config.py"),
+                "--repo-root",
+                str(repo),
+                "--workspace-root",
+                str(tmp_ws),
+                "--project",
+                pid,
+                "validate",
+            ],
+            cwd=repo,
+        )
+        # Inject into project repo AGENTS.md (no leader check in temp; this is a deterministic unit smoke test).
+        checks["project_agents_inject"] = _run(
+            [
+                sys.executable,
+                str(repo / ".team-os" / "scripts" / "pipelines" / "project_agents_inject.py"),
+                "--repo-root",
+                str(repo),
+                "--workspace-root",
+                str(tmp_ws),
+                "--project",
+                pid,
+                "--repo-path",
+                str(proj_repo),
+                "--manual-version",
+                "v1",
+                "--no-leader-only",
+            ],
+            cwd=repo,
+        )
+        # Idempotency check (second run should be no-op; still rc=0).
+        checks["project_agents_inject_idempotent"] = _run(
+            [
+                sys.executable,
+                str(repo / ".team-os" / "scripts" / "pipelines" / "project_agents_inject.py"),
+                "--repo-root",
+                str(repo),
+                "--workspace-root",
+                str(tmp_ws),
+                "--project",
+                pid,
+                "--repo-path",
+                str(proj_repo),
+                "--manual-version",
+                "v1",
+                "--no-leader-only",
+            ],
+            cwd=repo,
+        )
+
     checks["daemon_status"] = _run([str(cli)] + prof_args + ["daemon", "status"], cwd=repo)
 
     tasks = _task_rows(repo)
@@ -176,10 +255,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print(json.dumps({"ok": True, "out_path": str(out_path), "ts": ts}, ensure_ascii=False, indent=2))
     # Return non-zero if any core check failed.
-    core_rc = [int(checks[k]["returncode"]) for k in ("doctor", "policy", "unittest", "req_verify", "prompt_compile", "daemon_status")]
+    core_rc = [int(checks[k]["returncode"]) for k in ("doctor", "policy", "unittest", "req_verify", "prompt_compile", "project_config", "project_config_validate", "project_agents_inject", "project_agents_inject_idempotent", "daemon_status")]
     return 0 if all(rc == 0 for rc in core_rc) else 2
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
