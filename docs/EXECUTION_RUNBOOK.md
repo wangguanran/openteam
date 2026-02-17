@@ -41,8 +41,7 @@ cd team-os
 ```bash
 cd team-os
 ./teamos task new --scope teamos --title "一句话需求标题" --workstreams "governance"
-# 建议每任务一分支：
-git checkout -b teamos/<TASK_ID>-<slug>
+# 分支可选：默认允许直接在 main 上完成任务并推送；如需评审/协作可创建工作分支并开 PR。
 ```
 
 关闭任务（提交前闸门）：

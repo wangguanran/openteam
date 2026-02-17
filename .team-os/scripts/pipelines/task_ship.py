@@ -214,8 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     metrics_path = logs_dir / "metrics.jsonl"
 
     branch = _current_branch(repo)
-    if not branch.startswith(f"teamos/{task_id}-"):
-        raise PipelineError(f"invalid branch={branch!r} (expected prefix: teamos/{task_id}-)")
+    # Branch policy: no longer enforce per-task temp branches.
+    # - Default workflow can ship directly from `main` after `task close` passes.
+    # - PR creation is skipped when head == base.
 
     # 1) Close gate (must pass)
     close_script = repo / ".team-os" / "scripts" / "pipelines" / "task_close.py"
@@ -334,9 +335,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ok": False, "reason": "PUSH_FAILED", "stderr": (push.stderr or "")[-800:]}, ensure_ascii=False, indent=2))
         return 2
 
-    # 5) Optional PR
+    # 5) Optional PR (skip when head == base)
     pr_url = ""
-    if not bool(args.no_pr):
+    if (not bool(args.no_pr)) and (str(branch).strip() != str(args.base or "main").strip()):
         gh = _run(["gh", "auth", "status", "-h", "github.com"], cwd=repo)
         if gh.returncode == 0:
             # If PR already exists, use it; otherwise create.

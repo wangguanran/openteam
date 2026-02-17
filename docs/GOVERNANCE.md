@@ -26,7 +26,7 @@
 ## 2. 更新单位（Update Unit）与 Git 纪律
 
 - **一个 Update Unit = 一个任务**（`TASK_ID`）。
-- **每个任务一分支**：`teamos/<TASK_ID>-<slug>`
+- **分支可选**：不再强制“每任务一分支”。默认允许直接在 `main` 上完成任务并推送；如需协作/评审，可使用工作分支并按需创建 PR。
 - **先 close 再提交**：必须先 `./teamos task close <TASK_ID>` 通过，才允许 `git commit`/`git push`。
 - **推荐 ship 命令**：`./teamos task ship <TASK_ID> --summary "<...>"`（close→闸门→commit→push；push 失败标记 BLOCKED）
 - **提交信息**：`<TASK_ID>: <short summary>`

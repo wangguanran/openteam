@@ -244,8 +244,15 @@ def _run_pipeline_capture(repo_root: Path, script_rel: str, argv: list[str]) -> 
 
 def _infer_task_id_from_branch(repo_root: Path) -> str:
     """
-    Best-effort: infer TEAMOS-xxxx from current git branch `teamos/<TASK>-...`.
+    Best-effort: infer task id for audit/approvals correlation.
+
+    Priority:
+    1) `TEAMOS_TASK_ID` env (supports branchless workflows)
+    2) git branch name patterns (legacy)
     """
+    env_tid = str(os.getenv("TEAMOS_TASK_ID") or "").strip()
+    if env_tid:
+        return env_tid
     try:
         p = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
@@ -257,7 +264,7 @@ def _infer_task_id_from_branch(repo_root: Path) -> str:
         if p.returncode != 0:
             return ""
         b = (p.stdout or "").strip()
-        m = re.match(r"^teamos/(TEAMOS-[0-9]{4})-", b)
+        m = re.match(r"^teamos/((?:TEAMOS-[0-9]{4})|(?:TASK-[0-9]{8}-[0-9]{6}))-", b)
         return m.group(1) if m else ""
     except Exception:
         return ""

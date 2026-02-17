@@ -38,7 +38,8 @@
 ```bash
 cd team-os
 ./teamos task new --scope teamos --title "TEAMOS-XXXX" --workstreams "governance"
-git checkout -b teamos/<TASK_ID>-<slug>
+# 分支可选：默认允许直接在 main 上完成任务并推送；如需评审/协作可创建工作分支并开 PR。
+# git checkout -b teamos/<TASK_ID>-<slug>
 ```
 
 创建后必须具备的产物（由脚本生成）：
@@ -78,7 +79,7 @@ Agent/LLM 的定位：
 - 允许：提出“建议/草案/候选文本”（例如放到任务日志 `00_intake.md` 或 `01_plan.md`）。
 - 禁止：直接写入或手改任何真相源文件（requirements/prompt/ledger/logs 结构等）。
 
-## 4. Git 纪律（每任务一分支、一提交、一推送）
+## 4. Git 纪律（每任务一提交、一推送；分支可选）
 
 当且仅当 `./teamos task close <TASK_ID>` 通过后，才允许：
 
@@ -86,7 +87,7 @@ Agent/LLM 的定位：
 cd team-os
 git add -A
 git commit -m "<TASK_ID>: <short summary>"
-git push -u origin teamos/<TASK_ID>-<slug>
+git push -u origin <current_branch>  # 默认建议直接在 main 上工作并推送
 ```
 
 推荐使用决定性 ship 命令（自动执行 close→闸门→commit→push，并在 push 失败时标记 BLOCKED）：
@@ -96,7 +97,7 @@ cd team-os
 ./teamos task ship <TASK_ID> --scope teamos --summary "<short summary>"
 ```
 
-可选（若 `gh` 可用且已登录）：创建 PR，标题同 commit message，正文引用 task_id 与验收命令。
+可选（若 `gh` 可用且已登录，且当前分支不是 base 分支）：创建 PR，标题同 commit message，正文引用 task_id 与验收命令。
 
 若无法 push（无 remote/无权限/网络失败），必须：
 
@@ -109,4 +110,4 @@ cd team-os
 - `./teamos policy check`：PASS
 - `python3 -m unittest -q`：PASS
 - `./teamos task close <TASK_ID>`：PASS
-- push 结果可在远程看到对应分支（或在日志中记录阻塞）
+- push 结果可在远程看到对应 commit（main 或工作分支；或在日志中记录阻塞）

@@ -67,6 +67,7 @@ def risk_classify(*, action_kind: str, action_summary: str, payload: dict[str, A
 
     HIGH: dict[str, str] = {
         "repo_create": "GITHUB_REPO_CREATE",
+        "git_branch_delete": "GIT_BRANCH_DELETE",
         "workspace_migrate_force": "DATA_MOVE_OVERWRITE",
         "node_add_execute": "REMOTE_SSH_EXEC",
         "git_push_force": "FORCE_PUSH",
