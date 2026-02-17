@@ -112,3 +112,27 @@ cd team-os
   - `teamos req baseline set-v2`：baseline v2 提案（默认进入 `NEED_PM_DECISION`）
 - Control Plane：
   - 写操作必须 leader-only（非 leader 返回 409 + leader 信息，CLI 自动转发到 leader）
+
+## 9. 项目仓库 AGENTS.md 注入（Team-OS 项目操作手册）
+
+目标：任何被 Team-OS 管理/接入的项目仓库根目录 `AGENTS.md` 必须包含 Team-OS 项目操作手册区块，便于在项目仓库内工作的成员（Codex/人类）遵守边界并正确操作 Workspace 真相源。
+
+强制规则：
+
+- 注入区块只允许脚本写入/更新（幂等，反复执行不重复插入，不破坏原有内容）。
+- 使用固定标记替换，保留项目原有内容：
+  - `<!-- TEAMOS_MANUAL_START -->`
+  - `<!-- TEAMOS_MANUAL_END -->`
+
+入口：
+
+```bash
+cd team-os
+./teamos project agents inject --project <project_id>
+```
+
+挂钩（自动触发，leader-only 写入）：
+
+- `./teamos project config init|validate --project <id>`
+- `./teamos req add|import|rebuild --scope project:<id>`
+- `./teamos task new --scope project:<id> --mode bootstrap|upgrade`

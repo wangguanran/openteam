@@ -163,6 +163,28 @@ cd team-os
 
 - `teamos workspace init` 幂等，可用于“修复”已存在项目目录的缺失结构（例如补齐 `repo/`、`state/prompts/MASTER_PROMPT.md`、`state/kb/`、`state/cluster/` 等）。
 
+项目配置（Workspace-local，不入库）：
+
+```bash
+cd team-os
+./teamos project config init --project demo
+./teamos project config show --project demo
+./teamos project config set --project demo --key panel.project_url --value "https://github.com/orgs/<org>/projects/<n>"
+./teamos project config validate --project demo
+```
+
+项目仓库根 `AGENTS.md` 注入（幂等，保留项目原有内容）：
+
+```bash
+cd team-os
+./teamos project agents inject --project demo
+```
+
+说明：
+
+- 注入区块使用标记替换：`<!-- TEAMOS_MANUAL_START -->` / `<!-- TEAMOS_MANUAL_END -->`（禁止手工编辑该区块）。
+- `./teamos project config init|validate` 与 `./teamos req add|import|rebuild --scope project:<id>` 会自动触发注入（leader-only 写入，非 leader 为 plan-only）。
+
 新增需求（两种方式等价，均遵守 Raw‑First）：
 
 ```bash
