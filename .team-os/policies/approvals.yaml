@@ -1,0 +1,19 @@
+schema_version: 1
+
+# Default: require DB when available, but allow local audit fallback when DB is not configured.
+record_db_required: true
+
+# Single-machine mode: require an explicit YES/--yes before executing HIGH risk actions.
+require_manual_when_single: true
+
+# Brain/Leader policy: categories here can be auto-approved without human input.
+# Keep this empty by default; make it explicit and reviewable.
+auto_approve_high_risk_categories: []
+
+# Hard blocks: never allow these to be approved automatically.
+always_deny_categories:
+  - PROD_DEPLOY
+  - SYSTEM_CONFIG
+  - PUBLIC_PORT
+  - REMOTE_ROOT_INSTALL
+
