@@ -7,7 +7,7 @@ Design goals:
 - Governance-safe: leader-only writes; non-leader is scan-only.
 - Outputs are reproducible and schema-validated via existing pipelines:
   - proposals: .team-os/ledger/self_improve/<ts>-proposal.md
-  - requirements: docs/teamos/requirements/raw_inputs.jsonl -> requirements.yaml -> REQUIREMENTS.md -> CHANGELOG.md
+  - requirements: system channel updates requirements.yaml -> REQUIREMENTS.md -> CHANGELOG.md (does NOT write raw_inputs.jsonl)
 - Daemon mode is host-level (git repo available). Remote writes are gated by policy.
 """
 
@@ -369,8 +369,13 @@ def _proposal_md(*, ts: str, actor: str, trigger: str, scan: dict[str, Any], app
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _requirements_add(repo: Path, ws_root: Path, *, scope: str, text: str, workstream: str, priority: str, source: str, user: str) -> dict[str, Any]:
-    script = repo / ".team-os" / "scripts" / "pipelines" / "requirements_raw_first.py"
+def _requirements_add(repo: Path, ws_root: Path, *, scope: str, text: str, workstream: str, priority: str, source: str) -> dict[str, Any]:
+    """
+    Self-improve writes must not pollute Raw inputs.
+
+    Use the system update channel (non-raw) to update Expanded requirements deterministically.
+    """
+    script = repo / ".team-os" / "scripts" / "pipelines" / "system_requirements_update.py"
     if not script.exists():
         raise PipelineError(f"missing pipeline: {script}")
     argv = [
@@ -380,7 +385,6 @@ def _requirements_add(repo: Path, ws_root: Path, *, scope: str, text: str, works
         str(repo),
         "--workspace-root",
         str(ws_root),
-        "add",
         "--scope",
         scope,
         "--text",
@@ -391,14 +395,14 @@ def _requirements_add(repo: Path, ws_root: Path, *, scope: str, text: str, works
         priority,
         "--source",
         source,
-        "--user",
-        user,
+        "--rationale",
+        "SYSTEM_SELF_IMPROVE",
     ]
     p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     out = (p.stdout or "").strip()
     err = (p.stderr or "").strip()
     if p.returncode != 0:
-        raise PipelineError(f"requirements_raw_first add failed: {err[:300] or out[:300]}")
+        raise PipelineError(f"system_requirements_update failed: {err[:300] or out[:300]}")
     try:
         obj = json.loads(out) if out else {}
         return obj if isinstance(obj, dict) else {"_raw": out}
@@ -507,8 +511,7 @@ def run_once(
                     text=text,
                     workstream=(pr.workstreams[0] if pr.workstreams else "governance"),
                     priority=pr.priority,
-                    source="self-improve",
-                    user="self-improve-daemon",
+                    source="SYSTEM_SELF_IMPROVE",
                 )
                 item["result"] = {k: res.get(k) for k in ("classification", "req_id", "duplicate_of", "conflicts_with", "conflict_report_path", "pending_decisions")}
                 dedupe_map[pr.key] = utc_now_iso()

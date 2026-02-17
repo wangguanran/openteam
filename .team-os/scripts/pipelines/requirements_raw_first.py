@@ -118,11 +118,13 @@ def cmd_add(repo: Path, *, scope: str, workspace_root: str, text: str, workstrea
 
     # Validate the last raw input and expanded requirements.
     raw_last = _load_last_raw_input(req_dir)
-    validate_or_die(raw_last, repo / ".team-os" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
-    raw_id = str(raw_last.get("raw_id") or "").strip()
-    if raw_id:
-        assess_last = _load_last_raw_assessment(req_dir, raw_id=raw_id)
-        validate_or_die(assess_last, repo / ".team-os" / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
+    # For system update paths, raw_inputs.jsonl may remain empty (user-only); skip raw validation in that case.
+    if raw_last:
+        validate_or_die(raw_last, repo / ".team-os" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
+        raw_id = str(raw_last.get("raw_id") or "").strip()
+        if raw_id:
+            assess_last = _load_last_raw_assessment(req_dir, raw_id=raw_id)
+            validate_or_die(assess_last, repo / ".team-os" / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
     y = req_dir / "requirements.yaml"
     if y.exists():
         import yaml

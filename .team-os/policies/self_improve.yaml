@@ -20,7 +20,7 @@ self_improve:
 
   # Writes
   write_proposal_md: true     # .team-os/ledger/self_improve/<ts>-proposal.md
-  write_requirements: true    # append raw_inputs.jsonl + update requirements.yaml/REQUIREMENTS.md/CHANGELOG.md
+  write_requirements: true    # system update channel: update requirements.yaml/REQUIREMENTS.md/CHANGELOG.md (no raw_inputs writes)
 
   # Roadmap sync (GitHub Projects v2 is view-layer). Off by default.
   panel_sync:

@@ -33,6 +33,14 @@ class LockBusy(RuntimeError):
         super().__init__(f"LOCK_BUSY lock_key={lock_key} backend={backend} waited_sec={waited_sec:.2f} holder={self.holder}")
 
 
+class DbUnavailable(RuntimeError):
+    """
+    Raised when TEAMOS_DB_URL is configured but the DB backend cannot be used
+    (missing driver / connection failure). This allows falling back to file
+    locks without conflating "lock contention" with "DB unavailable".
+    """
+
+
 def _utc_now_iso() -> str:
     import datetime as _dt
 
@@ -293,11 +301,14 @@ def _acquire_db_advisory_lock(
     start = time.time()
     deadline = start + float(wait_sec or 0)
     key = _advisory_key64(lock_key)
+    connected_once = False
+    last_err = ""
 
     while True:
         conn = None
         try:
             conn = _connect_db(dsn)
+            connected_once = True
             with conn.cursor() as cur:
                 cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (key,))
                 row = cur.fetchone()
@@ -320,7 +331,8 @@ def _acquire_db_advisory_lock(
                 conn.close()
             except Exception:
                 pass
-        except Exception:
+        except Exception as e:
+            last_err = str(e)[:200]
             try:
                 if conn is not None:
                     conn.close()
@@ -328,6 +340,8 @@ def _acquire_db_advisory_lock(
                 pass
 
         if time.time() >= deadline:
+            if not connected_once:
+                raise DbUnavailable(f"db_unavailable lock_key={lock_key} err={last_err}")
             raise LockBusy(lock_key=lock_key, backend="db_advisory", holder=None, waited_sec=time.time() - start)
         time.sleep(max(0.05, float(poll_sec or 0.2)))
 
@@ -352,6 +366,8 @@ def acquire_repo_lock(
     if prefer_db and _can_use_db(dsn):
         try:
             return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
+        except LockBusy:
+            raise
         except Exception:
             # Fall back to file lock if DB is unavailable.
             pass
@@ -391,6 +407,8 @@ def acquire_scope_lock(
     if prefer_db and _can_use_db(dsn):
         try:
             return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
+        except LockBusy:
+            raise
         except Exception:
             pass
 

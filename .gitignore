@@ -31,6 +31,7 @@ yarn-error.log*
 .team-os/state/*.db
 .team-os/state/*.db-*
 .team-os/state/*.jsonl
+.team-os/state/_trash/
 
 # Cluster runtime snapshots (not a source of truth; keep config tracked)
 .team-os/cluster/state/*

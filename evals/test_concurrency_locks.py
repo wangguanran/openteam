@@ -24,6 +24,8 @@ class ConcurrencyLocksTests(unittest.TestCase):
             env = os.environ.copy()
             env["TEAMOS_WORKSPACE_ROOT"] = str(ws)
             env["TEAMOS_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
+            # Force file-lock backend for deterministic local tests (avoid depending on an external DB).
+            env["TEAMOS_DB_URL"] = ""
 
             cmd1 = [
                 sys.executable,
@@ -92,6 +94,7 @@ class ConcurrencyLocksTests(unittest.TestCase):
             env = os.environ.copy()
             env["TEAMOS_WORKSPACE_ROOT"] = str(ws)
             env["TEAMOS_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
+            env["TEAMOS_DB_URL"] = ""
 
             req_dir = ws / "projects" / "demo" / "state" / "requirements"
             req_dir.mkdir(parents=True, exist_ok=True)
@@ -140,6 +143,9 @@ class ConcurrencyLocksTests(unittest.TestCase):
             ws = Path(td).resolve()
             env = os.environ.copy()
             env["TEAMOS_WORKSPACE_ROOT"] = str(ws)
+            # Force file-lock backend for deterministic local tests.
+            old_dsn = os.environ.get("TEAMOS_DB_URL")
+            os.environ["TEAMOS_DB_URL"] = ""
 
             locks_dir = ws / "projects" / "demo" / "state" / "locks"
             locks_dir.mkdir(parents=True, exist_ok=True)
@@ -158,36 +164,49 @@ class ConcurrencyLocksTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            sys.path.insert(0, str(PIPE))
-            import locks  # noqa: E402
-
-            h = locks.acquire_scope_lock("project:demo", repo_root=REPO_ROOT, workspace_root=ws, req_dir=ws / "projects" / "demo" / "state" / "requirements", ttl_sec=5, wait_sec=1, poll_sec=0.1)
             try:
-                self.assertTrue(lock_path.exists())
-                stale_files = list(locks_dir.glob("scope_project_demo.lock.stale*"))
-                self.assertTrue(stale_files)
+                sys.path.insert(0, str(PIPE))
+                import locks  # noqa: E402
+
+                h = locks.acquire_scope_lock("project:demo", repo_root=REPO_ROOT, workspace_root=ws, req_dir=ws / "projects" / "demo" / "state" / "requirements", ttl_sec=5, wait_sec=1, poll_sec=0.1)
+                try:
+                    self.assertTrue(lock_path.exists())
+                    stale_files = list(locks_dir.glob("scope_project_demo.lock.stale*"))
+                    self.assertTrue(stale_files)
+                finally:
+                    locks.release_lock(h)
             finally:
-                locks.release_lock(h)
+                if old_dsn is None:
+                    os.environ.pop("TEAMOS_DB_URL", None)
+                else:
+                    os.environ["TEAMOS_DB_URL"] = old_dsn
 
     def test_lock_busy_returns_holder_diagnostics(self):
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td).resolve()
             (ws / "projects" / "demo" / "state" / "requirements").mkdir(parents=True, exist_ok=True)
+            old_dsn = os.environ.get("TEAMOS_DB_URL")
+            os.environ["TEAMOS_DB_URL"] = ""
 
-            sys.path.insert(0, str(PIPE))
-            import locks  # noqa: E402
-
-            h1 = locks.acquire_scope_lock("project:demo", repo_root=REPO_ROOT, workspace_root=ws, req_dir=ws / "projects" / "demo" / "state" / "requirements", ttl_sec=10, wait_sec=1, poll_sec=0.1)
             try:
-                with self.assertRaises(locks.LockBusy) as ctx:
-                    _ = locks.acquire_scope_lock("project:demo", repo_root=REPO_ROOT, workspace_root=ws, req_dir=ws / "projects" / "demo" / "state" / "requirements", ttl_sec=10, wait_sec=0.2, poll_sec=0.05)
-                holder = ctx.exception.holder or {}
-                self.assertTrue(holder.get("pid"))
-                self.assertTrue(holder.get("hostname"))
+                sys.path.insert(0, str(PIPE))
+                import locks  # noqa: E402
+
+                h1 = locks.acquire_scope_lock("project:demo", repo_root=REPO_ROOT, workspace_root=ws, req_dir=ws / "projects" / "demo" / "state" / "requirements", ttl_sec=10, wait_sec=1, poll_sec=0.1)
+                try:
+                    with self.assertRaises(locks.LockBusy) as ctx:
+                        _ = locks.acquire_scope_lock("project:demo", repo_root=REPO_ROOT, workspace_root=ws, req_dir=ws / "projects" / "demo" / "state" / "requirements", ttl_sec=10, wait_sec=0.2, poll_sec=0.05)
+                    holder = ctx.exception.holder or {}
+                    self.assertTrue(holder.get("pid"))
+                    self.assertTrue(holder.get("hostname"))
+                finally:
+                    locks.release_lock(h1)
             finally:
-                locks.release_lock(h1)
+                if old_dsn is None:
+                    os.environ.pop("TEAMOS_DB_URL", None)
+                else:
+                    os.environ["TEAMOS_DB_URL"] = old_dsn
 
 
 if __name__ == "__main__":
     unittest.main()
-

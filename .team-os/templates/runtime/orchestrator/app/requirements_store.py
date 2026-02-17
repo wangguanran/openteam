@@ -770,9 +770,17 @@ def add_requirement(
     actions: list[str] = []
     pending: list[dict[str, Any]] = []
 
+    # Changelog "raw=" reference:
+    # - user inputs: raw_id is a real RAW-* id
+    # - system inputs: do not write raw_inputs.jsonl; use a stable marker for auditability
+    raw_ref = str(raw_id or "").strip()
+    if not raw_ref:
+        src = str(source or "").strip().upper()
+        if src.startswith("SYSTEM"):
+            raw_ref = "SYSTEM"
+
     dup = detect_duplicate(reqs, requirement_text)
     if dup:
-        raw_ref = raw_id or ""
         _append_changelog(req_dir, project_id, f"DUPLICATE: raw={raw_ref} matched existing {dup}")
         actions.append(f"classification=DUPLICATE duplicate_of={dup}")
         return AddReqOutcome(
@@ -967,18 +975,18 @@ def add_requirement(
             _append_changelog(
                 req_dir,
                 project_id,
-                f"CONFLICT: raw={(raw_id or '')} {new_id} conflicts_with={','.join(conflicts)} report={rel_report}",
+                f"CONFLICT: raw={raw_ref} {new_id} conflicts_with={','.join(conflicts)} report={rel_report}",
             )
         else:
             actions.append(f"classification=COMPATIBLE need_pm_decision=true reason=semantic_check_unavailable")
             _append_changelog(
                 req_dir,
                 project_id,
-                f"NEED_PM_DECISION: raw={(raw_id or '')} {new_id} (semantic check unavailable) report={rel_report}",
+                f"NEED_PM_DECISION: raw={raw_ref} {new_id} (semantic check unavailable) report={rel_report}",
             )
     else:
         actions.append(f"classification=COMPATIBLE created={new_id}")
-        _append_changelog(req_dir, project_id, f"COMPATIBLE: raw={(raw_id or '')} {new_id} created")
+        _append_changelog(req_dir, project_id, f"COMPATIBLE: raw={raw_ref} {new_id} created")
 
     reqs.append(new_req)
     data["requirements"] = reqs
