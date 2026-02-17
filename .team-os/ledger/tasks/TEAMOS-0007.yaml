@@ -1,0 +1,41 @@
+id: TEAMOS-0007
+title: TEAMOS-AUDIT-0001
+project_id: teamos
+workstream_id: governance
+workstreams:
+- governance
+- audit
+status: closed
+risk_level: R1
+need_pm_decision: false
+repo:
+  locator: ''
+  workdir: ''
+  branch: ''
+  mode: auto
+checkpoint:
+  stage: closed
+  last_event_ts: '2026-02-17T03:05:53Z'
+recovery:
+  last_scan_at: ''
+  last_resume_at: ''
+  notes: ''
+approvals_required:
+- R2/R3 actions
+owners:
+- PM-Intake
+roles_involved:
+- PM-Intake
+workflows:
+- Genesis
+created_at: '2026-02-17T03:00:42Z'
+updated_at: '2026-02-17T03:05:53Z'
+links:
+  pr: ''
+  issue: ''
+artifacts:
+  ledger: .team-os/ledger/tasks/TEAMOS-0007.yaml
+  logs_dir: .team-os/logs/tasks/TEAMOS-0007
+evidence:
+- type: log
+  path: .team-os/logs/tasks/TEAMOS-0007/00_intake.md
