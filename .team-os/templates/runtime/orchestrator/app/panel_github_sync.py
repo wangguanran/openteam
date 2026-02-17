@@ -47,6 +47,8 @@ class DesiredItem:
     start_date: str  # YYYY-MM-DD or ""
     target_date: str  # YYYY-MM-DD or ""
     links_text: str
+    repo_locator: str
+    repo_mode: str
 
 
 def _norm(s: str) -> str:
@@ -172,6 +174,11 @@ def _desired_items(
         risk = str(t.get("risk_level") or t.get("risk") or "").strip()
         need_pm = bool(t.get("need_pm_decision") or False)
         links_text = _join_links(t.get("links") or {})
+        repo_info = t.get("repo") or {}
+        if not isinstance(repo_info, dict):
+            repo_info = {}
+        repo_locator = str(repo_info.get("locator") or "").strip()
+        repo_mode = str(repo_info.get("mode") or "").strip()
 
         assigned = by_task.get(tid, [])
         last_hb = ""
@@ -204,6 +211,8 @@ def _desired_items(
                 start_date=_parse_date_from_iso(str(t.get("start_date") or "")),
                 target_date=_parse_date_from_iso(str(t.get("target_date") or "")),
                 links_text=links_text,
+                repo_locator=repo_locator,
+                repo_mode=repo_mode,
             )
         )
 
@@ -251,6 +260,8 @@ def _desired_items(
                 start_date="",
                 target_date="",
                 links_text="",
+                repo_locator="",
+                repo_mode="",
             )
         )
 
@@ -288,6 +299,8 @@ def _desired_items(
                 start_date="",
                 target_date="",
                 links_text=links_text,
+                repo_locator="",
+                repo_mode="",
             )
         )
 
@@ -326,6 +339,8 @@ def _desired_items(
                 start_date=_parse_date_from_iso(m.start_date),
                 target_date=_parse_date_from_iso(m.target_date),
                 links_text=links_text,
+                repo_locator="",
+                repo_mode="",
             )
         )
 
@@ -648,6 +663,10 @@ class GitHubProjectsPanelSync:
 
                 # Links
                 set_field(item_id, "links", _field_value_input("TEXT", text=it.links_text))
+
+                # Repo locator + mode (operational context)
+                set_field(item_id, "repo_locator", _field_value_input("TEXT", text=it.repo_locator))
+                set_field(item_id, "repo_mode", _field_value_input("TEXT", text=it.repo_mode))
 
                 stats["updated"] += 0 if is_new else 1
             except Exception as e:

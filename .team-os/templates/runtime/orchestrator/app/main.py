@@ -735,6 +735,8 @@ def v1_panel_github_sync(payload: PanelSyncIn):
     """
     Sync TeamOS truth -> GitHub Projects v2.
     """
+    if not bool(payload.dry_run):
+        _require_leader_write()
     if (not payload.dry_run) and (not _panel_github_writes_enabled()):
         DB.add_event(
             event_type="PANEL_SYNC_WRITE_BLOCKED",
