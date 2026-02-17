@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Team OS Task Ledger (YAML data model)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "title", "project_id", "workstream_id", "status", "risk_level", "created_at", "updated_at", "artifacts"],
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "project_id": { "type": "string" },
+    "workstream_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["intake", "plan", "todo", "doing", "test", "release", "observe", "retro", "closed"]
+    },
+    "risk_level": { "type": "string", "enum": ["R0", "R1", "R2", "R3"] },
+    "need_pm_decision": { "type": ["boolean", "null"] },
+    "workstreams": { "type": ["array", "null"], "items": { "type": "string" } },
+    "repo": { "type": ["object", "null"], "additionalProperties": true },
+    "checkpoint": { "type": ["object", "null"], "additionalProperties": true },
+    "recovery": { "type": ["object", "null"], "additionalProperties": true },
+    "owners": { "type": ["array", "null"], "items": { "type": "string" } },
+    "roles_involved": { "type": ["array", "null"], "items": { "type": "string" } },
+    "workflows": { "type": ["array", "null"], "items": { "type": "string" } },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "links": { "type": ["object", "null"], "additionalProperties": true },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ledger", "logs_dir"],
+      "properties": {
+        "ledger": { "type": "string" },
+        "logs_dir": { "type": "string" }
+      }
+    }
+  }
+}
+

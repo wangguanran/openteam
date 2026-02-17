@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Team OS Prompt Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "project_id", "generated_at", "inputs", "outputs", "content_sha256"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "project_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "inputs": { "type": "object", "additionalProperties": true },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["master_prompt_path"],
+      "properties": {
+        "master_prompt_path": { "type": "string" },
+        "history_path": { "type": ["string", "null"] },
+        "changelog_path": { "type": ["string", "null"] }
+      }
+    },
+    "content_sha256": { "type": "string" }
+  }
+}
+

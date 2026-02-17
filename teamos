@@ -201,6 +201,21 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
+def _run_pipeline(repo_root: Path, script_rel: str, argv: list[str]) -> None:
+    """
+    Run a deterministic pipeline script from this repo.
+
+    Pipelines are the only allowed writers for truth-source artifacts.
+    """
+    script = (repo_root / script_rel).resolve()
+    if not script.exists():
+        raise RuntimeError(f"missing pipeline: {script}")
+    cmd = [sys.executable, str(script)] + list(argv or [])
+    p = subprocess.run(cmd, check=False)
+    if p.returncode != 0:
+        raise SystemExit(p.returncode)
+
+
 def _workspace_root_from_cfg(cfg: dict[str, Any]) -> Path:
     v = str(cfg.get("workspace_root") or "").strip()
     if not v:
@@ -1026,141 +1041,24 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
-    ok = True
-    base, prof = _base_url(args)
-    print(f"profile={prof['name']} base_url={base}")
-    try:
-        hz = _http_json("GET", base + "/healthz", timeout_sec=5)
-        print(f"control_plane: OK healthz.status={hz.get('status','')}")
-        db = hz.get("db") or {}
-        if isinstance(db, dict) and db:
-            print(f"control_plane_db: backend={db.get('backend')} ok={db.get('ok')} err={str(db.get('error',''))[:120]}")
-        st = _http_json("GET", base + "/v1/status", timeout_sec=5)
-        print(f"control_plane: OK instance_id={st.get('instance_id','')}")
-    except Exception as e:
-        print(f"control_plane: FAIL {e}")
-        ok = False
-
-    # OAuth status (Codex CLI) - local check
-    if shutil_which("codex") is None:
-        print("codex: MISS (install codex CLI, then: codex login)")
-        ok = False
-    else:
-        p = subprocess.run(["codex", "login", "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out = (p.stdout or b"").decode("utf-8", errors="replace").strip()
-        err = (p.stderr or b"").decode("utf-8", errors="replace").strip()
-        msg = out or err
-        if p.returncode == 0:
-            print(f"codex: OK {msg}".rstrip())
-        else:
-            print("codex: FAIL (run: codex login --device-auth)")
-            ok = False
-            if msg:
-                print("  " + msg.splitlines()[0][:200])
-
-    # GitHub auth (prefer gh OAuth; allow env token fallback)
-    if shutil_which("gh") is None:
-        tok = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
-        if tok:
-            print("gh: OK (env token present; recommend: gh auth login)")
-        else:
-            print("gh: MISS (install gh CLI, then: gh auth login)")
-    else:
-        p = subprocess.run(["gh", "auth", "status", "-h", "github.com"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out = ((p.stdout or b"") + b"\n" + (p.stderr or b"")).decode("utf-8", errors="replace").strip()
-        if p.returncode == 0:
-            print("gh: OK logged_in=true")
-        else:
-            print("gh: FAIL (run: gh auth login)")
-            if out:
-                print("  " + out.splitlines()[0][:200])
-
-    # Server-side auth status (best-effort)
-    try:
-        auth = _http_json("GET", base + "/v1/auth/status", timeout_sec=5)
-        print(f"control_plane_auth: backend={auth.get('backend')} logged_in={auth.get('logged_in')} msg={str(auth.get('message',''))[:120]}")
-    except Exception as e:
-        print(f"control_plane_auth: WARN {e}")
-
-    # Repo structure checks (local truth)
     repo_root = _find_team_os_repo_root()
     if not repo_root:
-        print("repo: WARN (cannot find repo root; set env TEAM_OS_REPO_PATH)")
-        ok = False
-    else:
-        must = [
-            repo_root / ".team-os" / "ledger" / "tasks",
-            repo_root / ".team-os" / "logs" / "tasks",
-            # `docs/requirements` must NOT exist anymore (projects live in workspace; teamos lives under docs/teamos/).
-            repo_root / ".team-os" / "workflows",
-            repo_root / ".team-os" / "roles",
-            repo_root / "evals",
-        ]
-        miss = [str(p) for p in must if not p.exists()]
-        if miss:
-            print("repo: FAIL missing_paths=" + ",".join(miss[:5]))
-            ok = False
-        else:
-            print("repo: OK")
-
-        # Repo purity enforcement (no project truth-source artifacts inside repo).
-        purity = repo_root / ".team-os" / "scripts" / "governance" / "check_repo_purity.py"
-        if purity.exists():
-            p = subprocess.run([sys.executable, str(purity), "--repo-root", str(repo_root), "--quiet"], check=False)
-            if p.returncode == 0:
-                print("repo_purity: OK")
-            else:
-                print("repo_purity: FAIL (run: teamos workspace migrate --from-repo)")
-                ok = False
-        else:
-            print(f"repo_purity: WARN missing_checker={purity}")
-            ok = False
-
-    # Workspace checks (local)
-    try:
-        cmd_workspace_doctor(args)
-    except SystemExit:
-        ok = False
-    except Exception as e:
-        print(f"workspace: FAIL {e}")
-        ok = False
-
-    # Control-plane API coverage (safe: openapi.json only)
-    try:
-        spec = _http_json("GET", base + "/openapi.json", timeout_sec=5)
-        paths = spec.get("paths") or {}
-        required = [
-            "/v1/status",
-            "/v1/agents",
-            "/v1/tasks",
-            "/v1/focus",
-            "/v1/chat",
-            "/v1/requirements",
-            "/v1/panel/github/sync",
-            "/v1/panel/github/health",
-            "/v1/panel/github/config",
-            "/v1/cluster/status",
-            "/v1/cluster/elect/attempt",
-            "/v1/nodes",
-            "/v1/nodes/register",
-            "/v1/nodes/heartbeat",
-            "/v1/tasks/new",
-            "/v1/recovery/scan",
-            "/v1/recovery/resume",
-            "/v1/self_improve/run",
-        ]
-        missing = [p for p in required if p not in paths]
-        if missing:
-            print(f"control_plane_api: FAIL missing_paths={len(missing)} sample={missing[:3]}")
-            ok = False
-        else:
-            print("control_plane_api: OK")
-    except Exception as e:
-        print(f"control_plane_api: WARN {e}")
-        ok = False
-
-    if not ok:
-        raise SystemExit(2)
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    base, prof = _base_url(args)
+    _run_pipeline(
+        repo_root,
+        ".team-os/scripts/pipelines/doctor.py",
+        [
+            "--repo-root",
+            str(repo_root),
+            "--workspace-root",
+            str(_workspace_root(args)),
+            "--profile",
+            str(prof.get("name") or ""),
+            "--base-url",
+            base,
+        ],
+    )
 
 
 def cmd_policy_check(args: argparse.Namespace) -> None:
@@ -1545,21 +1443,70 @@ def cmd_repo_create(args: argparse.Namespace) -> None:
 
 
 def cmd_task_new(args: argparse.Namespace) -> None:
-    base, prof = _base_url(args)
-    payload = {
-        "title": args.title,
-        "project_id": args.project or _default_project_id(prof, args),
-        "repo_locator": args.repo,
-        "create_repo_if_missing": bool(args.create_repo),
-        "visibility": "public" if bool(getattr(args, "public", False)) else "private",
-        "org": args.org,
-        "workstreams": (args.workstreams.split(",") if args.workstreams else None),
-        "required_capabilities": (args.required_capabilities.split(",") if args.required_capabilities else None),
-        "mode": args.mode or "auto",
-        "dry_run": bool(args.dry_run),
-    }
-    out = _http_json("POST", base + "/v1/tasks/new", payload, timeout_sec=120)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    cfg = _load_config()
+    prof = _get_profile(cfg, args.profile)
+    scope = _default_scope(prof, args)
+    if getattr(args, "scope", ""):
+        scope = str(args.scope).strip()
+
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        "--scope",
+        scope,
+        "--title",
+        args.title,
+        "--workstreams",
+        args.workstreams or "general",
+        "--risk-level",
+        getattr(args, "risk_level", "") or "R1",
+        "--mode",
+        args.mode or "auto",
+    ]
+    if bool(args.dry_run):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_create.py", argv)
+
+
+def cmd_task_close(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        str(args.task_id),
+    ]
+    if getattr(args, "scope", ""):
+        argv += ["--scope", str(args.scope).strip()]
+    if bool(getattr(args, "skip_tests", False)):
+        argv.append("--skip-tests")
+    if bool(getattr(args, "dry_run", False)):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_close.py", argv)
+
+
+def cmd_prompt_compile(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    cfg = _load_config()
+    prof = _get_profile(cfg, args.profile)
+    scope = _default_scope(prof, args)
+    if getattr(args, "scope", ""):
+        scope = str(args.scope).strip()
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--scope", scope]
+    if bool(getattr(args, "dry_run", False)):
+        argv.append("--dry-run")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/prompt_compile.py", argv)
 
 
 def cmd_task_resume(args: argparse.Namespace) -> None:
@@ -1699,20 +1646,21 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     ts = sp.add_parser("task", help="Task lifecycle commands")
     ts_sp = ts.add_subparsers(dest="subcmd", required=True)
-    tn = ts_sp.add_parser("new", help="Create a new task (repo optional; default dry-run)")
+    tn = ts_sp.add_parser("new", help="Create a new task (deterministic; local truth-source scaffold)")
     tn.add_argument("--title", required=True)
+    tn.add_argument("--scope", help="teamos | project:<id> (default derived from --project/default_project_id)")
     tn.add_argument("--project")
-    tn.add_argument("--repo")
-    tn.add_argument("--create-repo", action="store_true")
-    tn.add_argument("--org")
-    tn_vis = tn.add_mutually_exclusive_group()
-    tn_vis.add_argument("--public", action="store_true", help="public visibility (default: private)")
-    tn_vis.add_argument("--private", action="store_true", help="private visibility (default)")
     tn.add_argument("--workstreams", help="comma-separated")
-    tn.add_argument("--required-capabilities", help="comma-separated")
+    tn.add_argument("--risk-level", default="R1", help="R0|R1|R2|R3")
     tn.add_argument("--mode", default="auto", help="auto|bootstrap|upgrade")
-    tn.add_argument("--dry-run", action="store_true", help="safety default: do not touch remotes")
+    tn.add_argument("--dry-run", action="store_true", help="plan only (no filesystem writes)")
     tn.set_defaults(fn=cmd_task_new)
+    tc = ts_sp.add_parser("close", help="Close a task (validate DoD + mark ledger closed)")
+    tc.add_argument("task_id")
+    tc.add_argument("--scope", help="optional: teamos | project:<id> (auto-detect if omitted)")
+    tc.add_argument("--skip-tests", action="store_true")
+    tc.add_argument("--dry-run", action="store_true")
+    tc.set_defaults(fn=cmd_task_close)
     tr = ts_sp.add_parser("resume", help="Resume tasks after interruption (placeholder)")
     tr.add_argument("--all", action="store_true")
     tr.add_argument("--task-id")
@@ -1773,6 +1721,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     rb2.add_argument("--scope")
     rb2.add_argument("--project")
     rb2.set_defaults(fn=cmd_req_baseline_set_v2)
+
+    pm = sp.add_parser("prompt", help="Prompt operations (deterministic pipelines)")
+    pm_sp = pm.add_subparsers(dest="subcmd", required=True)
+    pc2 = pm_sp.add_parser("compile", help="Compile MASTER_PROMPT.md deterministically")
+    pc2.add_argument("--scope")
+    pc2.add_argument("--project")
+    pc2.add_argument("--dry-run", action="store_true")
+    pc2.set_defaults(fn=cmd_prompt_compile)
 
     mt = sp.add_parser("metrics", help="Telemetry/metrics checks and analysis (local truth source)")
     mt_sp = mt.add_subparsers(dest="subcmd", required=True)
