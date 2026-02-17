@@ -68,8 +68,16 @@ def _task_rows(repo: Path) -> list[dict[str, str]]:
         {"task_id": "TEAMOS-0001", "title": "TEAMOS-AGENTS-MANUAL", "branch": "teamos/TEAMOS-0001-agents-manual"},
         {"task_id": "TEAMOS-0002", "title": "TEAMOS-ALWAYS-ON-SELF-IMPROVE", "branch": "teamos/TEAMOS-0002-always-on-self-improve"},
         {"task_id": "TEAMOS-0003", "title": "TEAMOS-GIT-PUSH-DISCIPLINE", "branch": "teamos/TEAMOS-0003-git-push-discipline"},
+        {"task_id": "TEAMOS-0004", "title": "DETERMINISTIC-GOV-AUDIT", "branch": "teamos/TEAMOS-0004-deterministic-gov-audit"},
         {"task_id": "TEAMOS-0005", "title": "TEAMOS-PROJECT-AGENTS-MANUAL", "branch": "teamos/TEAMOS-0005-project-agents-manual"},
         {"task_id": "TEAMOS-0006", "title": "DETERMINISTIC-GOV-AUDIT-v2", "branch": "teamos/TEAMOS-0006-deterministic-gov-audit-v2"},
+        {"task_id": "TEAMOS-0007", "title": "TEAMOS-AUDIT-0001", "branch": "teamos/TEAMOS-0007-execution-strategy-audit"},
+        {"task_id": "TEAMOS-0008", "title": "TEAMOS-APPROVALS-DB", "branch": "teamos/TEAMOS-0008-approvals-db"},
+        {"task_id": "TEAMOS-0009", "title": "TEAMOS-CENTRAL-MODEL-ALLOWLIST", "branch": "teamos/TEAMOS-0009-central-model-allowlist"},
+        {"task_id": "TEAMOS-0010", "title": "TEAMOS-RECOVERY", "branch": "teamos/TEAMOS-0010-recovery"},
+        {"task_id": "TEAMOS-0011", "title": "TEAMOS-ALWAYS-ON", "branch": "teamos/TEAMOS-0011-always-on"},
+        {"task_id": "TEAMOS-0012", "title": "TEAMOS-PROJECTS-SYNC", "branch": "teamos/TEAMOS-0012-projects-sync"},
+        {"task_id": "TEAMOS-0013", "title": "TEAMOS-VERIFY-0001", "branch": "teamos/TEAMOS-0013-verify"},
     ]
     out: list[dict[str, str]] = []
     for t in tasks:
@@ -166,6 +174,21 @@ def main(argv: list[str] | None = None) -> int:
 
     # Deterministic capability presence checks (no mutations).
     controls: list[dict[str, Any]] = []
+    daemon_running = False
+    try:
+        st = json.loads(str(checks.get("daemon_status", {}).get("stdout") or "") or "{}")
+        if isinstance(st, dict):
+            daemon_running = bool(st.get("running"))
+    except Exception:
+        daemon_running = False
+
+    cp_main_rel = ".team-os/templates/runtime/orchestrator/app/main.py"
+    cp_text = ""
+    if _exists(repo, cp_main_rel):
+        try:
+            cp_text = (repo / cp_main_rel).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            cp_text = ""
 
     # Hard constraints
     controls.append({"name": "No secrets in git (policy check)", "status": _status(checks["policy"]["returncode"] == 0), "note": "teamos policy check"})
@@ -217,18 +240,23 @@ def main(argv: list[str] | None = None) -> int:
             "note": "leader lease TTL/heartbeat + model_id allowlist",
         }
     )
+    recovery_ok = bool(cp_text) and ("def v1_recovery_scan" in cp_text) and ("def v1_recovery_resume" in cp_text) and ("_gates_for_task" in cp_text)
     controls.append(
         {
             "name": "Recovery (resume after restart) + restore sequence",
-            "status": _status(_exists(repo, ".team-os/scripts/pipelines/recovery.py")),
-            "note": "scan unfinished tasks; stop at approval/PM decision gates",
+            "status": _status(recovery_ok),
+            "note": "control-plane endpoints implement gate-aware scan/resume (pending approvals / PM decisions / blocked)",
+            "evidence": f"template={cp_main_rel} gates={'yes' if recovery_ok else 'no'}",
         }
     )
+    auto_start_ok = bool(cp_text) and ("_ensure_self_improve_daemon" in cp_text) and ("TEAMOS_SELF_IMPROVE_AUTO_START" in cp_text)
+    always_on_ok = _exists(repo, ".team-os/scripts/pipelines/self_improve_daemon.py") and (daemon_running or auto_start_ok)
     controls.append(
         {
             "name": "Always-on self-improve (auto enter on teamos run)",
-            "status": _status(False),
-            "note": "expected: teamos auto starts daemon or control-plane schedules it; current design is daemon-only manual start",
+            "status": _status(always_on_ok),
+            "note": "daemon exists + (running now OR control-plane auto-start hook present)",
+            "evidence": f"running={daemon_running} auto_start_hook={'yes' if auto_start_ok else 'no'}",
         }
     )
 
@@ -261,4 +289,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

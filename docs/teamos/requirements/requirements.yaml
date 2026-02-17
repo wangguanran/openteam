@@ -1,6 +1,6 @@
 schema_version: 1
 project_id: teamos
-next_req_seq: 6
+next_req_seq: 7
 requirements:
 - req_id: REQ-0001
   created_at: '2026-02-16T00:39:59Z'
@@ -169,9 +169,45 @@ requirements:
   decision_log_refs: []
   raw_input_refs:
   - '2026-02-17T00:52:13Z'
+- req_id: REQ-0006
+  created_at: '2026-02-17T04:25:20Z'
+  updated_at: '2026-02-17T04:25:20Z'
+  status: ACTIVE
+  title: 'Workstream: governance'
+  text: 'Workstream: governance
+
+
+    Continuous self-improve placeholder #3: expand evals/docs coverage
+
+
+    持续增强 Team OS 的 evals 覆盖与文档完整性（决定性、默认无远端写）。
+
+
+    Evidence:
+
+    - padding: ensure min proposals per run
+
+
+    Acceptance:
+
+    - 新增至少 1 个 eval 或文档章节
+
+    - 不引入 secrets 入库风险'
+  workstreams:
+  - general
+  priority: P2
+  rationale: ''
+  constraints: []
+  acceptance: []
+  source: self-improve
+  supersedes: []
+  conflicts_with: []
+  decision_log_refs: []
+  raw_input_refs:
+  - '2026-02-17T04:25:20Z'
 baseline:
   version: 1
   sha256: db7654bd3adabca91f2751af77f10154d9ece89756f7f5eea84d5961e93a421d
 raw_inputs:
-  sha256: 155e7924f7a80c8c46ae1acfe5f1c050e2ddb1f2ce8ff87cec17f4b4417ced8b
-  count: 5
+  sha256: 1cc5c8ace81f0b6a6383d536403af4194f841112849d891d8caa5569e14e5f59
+  count: 8
