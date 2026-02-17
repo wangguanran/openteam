@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
 import os
@@ -106,104 +107,102 @@ def main(argv: list[str] | None = None) -> int:
     ws_root = resolve_workspace_root(args)
     scope, pid = parse_scope(args.scope)
 
-    workstreams = [x.strip() for x in str(args.workstreams or "").split(",") if x.strip()]
-    workstream_id = workstreams[0] if workstreams else "general"
-
+    # Concurrency: repo lock (teamos only) + scope lock.
     repo_lock = None
     scope_lock = None
     if not args.dry_run:
         if scope == "teamos":
             repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
-        scope_lock = locks.acquire_scope_lock(
-            scope,
-            repo_root=repo,
-            workspace_root=ws_root,
-            req_dir=None,
-            task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
-        )
-    try:
-        tasks_dir, logs_root = _task_paths(repo=repo, ws_root=ws_root, scope=scope, project_id=pid)
-        ensure_dir(tasks_dir, dry_run=bool(args.dry_run))
-        ensure_dir(logs_root, dry_run=bool(args.dry_run))
+        scope_lock = locks.acquire_scope_lock(scope, repo_root=repo, workspace_root=ws_root, req_dir=None, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
 
-        task_id = _generate_task_id(scope=scope, project_id=pid, tasks_dir=tasks_dir)
-        ledger_path = tasks_dir / f"{task_id}.yaml"
-        if ledger_path.exists():
-            raise PipelineError(f"refusing to overwrite ledger: {ledger_path}")
-        logs_dir = logs_root / task_id
-        if logs_dir.exists() and any(logs_dir.iterdir()):
-            raise PipelineError(f"refusing to overwrite logs dir: {logs_dir}")
+    def _cleanup_locks() -> None:
+        locks.release_lock(scope_lock)
+        locks.release_lock(repo_lock)
 
-        now = utc_now_iso()
-        ledger: dict[str, Any] = {
-            "id": task_id,
-            "title": str(args.title),
-            "project_id": pid,
-            "workstream_id": workstream_id,
-            "workstreams": workstreams or None,
-            "status": "intake",
-            "risk_level": str(args.risk_level or "R1"),
-            "need_pm_decision": False,
-            "repo": {"locator": "", "workdir": "", "branch": "", "mode": str(args.mode or "auto")},
-            "checkpoint": {"stage": "intake", "last_event_ts": now},
-            "recovery": {"last_scan_at": "", "last_resume_at": "", "notes": ""},
-            "approvals_required": ["R2/R3 actions"],
-            "owners": ["PM-Intake"],
-            "roles_involved": ["PM-Intake"],
-            "workflows": ["Genesis"],
-            "created_at": now,
-            "updated_at": now,
-            "links": {"pr": "", "issue": ""},
-            "artifacts": {"ledger": str(ledger_path.relative_to(repo) if scope == "teamos" else ledger_path), "logs_dir": str(logs_dir.relative_to(repo) if scope == "teamos" else logs_dir)},
-            "evidence": [{"type": "log", "path": str((logs_dir / "00_intake.md").relative_to(repo) if scope == "teamos" else (logs_dir / "00_intake.md"))}],
-        }
+    atexit.register(_cleanup_locks)
+
+    workstreams = [x.strip() for x in str(args.workstreams or "").split(",") if x.strip()]
+    workstream_id = workstreams[0] if workstreams else "general"
+
+    tasks_dir, logs_root = _task_paths(repo=repo, ws_root=ws_root, scope=scope, project_id=pid)
+    ensure_dir(tasks_dir, dry_run=bool(args.dry_run))
+    ensure_dir(logs_root, dry_run=bool(args.dry_run))
+
+    task_id = _generate_task_id(scope=scope, project_id=pid, tasks_dir=tasks_dir)
+    ledger_path = tasks_dir / f"{task_id}.yaml"
+    if ledger_path.exists():
+        raise PipelineError(f"refusing to overwrite ledger: {ledger_path}")
+    logs_dir = logs_root / task_id
+    if logs_dir.exists() and any(logs_dir.iterdir()):
+        raise PipelineError(f"refusing to overwrite logs dir: {logs_dir}")
+
+    now = utc_now_iso()
+    ledger: dict[str, Any] = {
+        "id": task_id,
+        "title": str(args.title),
+        "project_id": pid,
+        "workstream_id": workstream_id,
+        "workstreams": workstreams or None,
+        "status": "intake",
+        "risk_level": str(args.risk_level or "R1"),
+        "need_pm_decision": False,
+        "repo": {"locator": "", "workdir": "", "branch": "", "mode": str(args.mode or "auto")},
+        "checkpoint": {"stage": "intake", "last_event_ts": now},
+        "recovery": {"last_scan_at": "", "last_resume_at": "", "notes": ""},
+        "approvals_required": ["R2/R3 actions"],
+        "owners": ["PM-Intake"],
+        "roles_involved": ["PM-Intake"],
+        "workflows": ["Genesis"],
+        "created_at": now,
+        "updated_at": now,
+        "links": {"pr": "", "issue": ""},
+        "artifacts": {"ledger": str(ledger_path.relative_to(repo) if scope == "teamos" else ledger_path), "logs_dir": str(logs_dir.relative_to(repo) if scope == "teamos" else logs_dir)},
+        "evidence": [{"type": "log", "path": str((logs_dir / "00_intake.md").relative_to(repo) if scope == "teamos" else (logs_dir / "00_intake.md"))}],
+    }
 
     # Schema validation (best-effort; task ledger lives in YAML but schema validates the loaded dict).
     validate_or_die(ledger, repo / ".team-os" / "schemas" / "task_ledger.schema.json", label="task_ledger")
 
-        if not args.dry_run:
-            ensure_dir(logs_dir, dry_run=False)
-            write_yaml(ledger_path, ledger, dry_run=False)
+    if not args.dry_run:
+        ensure_dir(logs_dir, dry_run=False)
+        write_yaml(ledger_path, ledger, dry_run=False)
 
-            for name in [
-                "00_intake.md",
-                "01_plan.md",
-                "02_todo.md",
-                "03_work.md",
-                "04_test.md",
-                "05_release.md",
-                "06_observe.md",
-                "07_retro.md",
-            ]:
-                out = logs_dir / name
-                if out.exists():
-                    continue
-                txt = _render_log_from_tpl(repo, name=name, task_id=task_id, title=str(args.title))
-                write_text(out, txt, dry_run=False)
+        for name in [
+            "00_intake.md",
+            "01_plan.md",
+            "02_todo.md",
+            "03_work.md",
+            "04_test.md",
+            "05_release.md",
+            "06_observe.md",
+            "07_retro.md",
+        ]:
+            out = logs_dir / name
+            if out.exists():
+                continue
+            txt = _render_log_from_tpl(repo, name=name, task_id=task_id, title=str(args.title))
+            write_text(out, txt, dry_run=False)
 
-            metrics = logs_dir / "metrics.jsonl"
-            append_jsonl(
-                metrics,
-                {
-                    "ts": now,
-                    "event_type": "TASK_CREATED",
-                    "actor": "pipeline.task_create",
-                    "task_id": task_id,
-                    "project_id": pid,
-                    "workstream_id": workstream_id,
-                    "severity": "INFO",
-                    "message": "task scaffold created",
-                    "payload": {"ledger": str(ledger_path), "logs_dir": str(logs_dir), "scope": scope},
-                },
-                dry_run=False,
-            )
+        metrics = logs_dir / "metrics.jsonl"
+        append_jsonl(
+            metrics,
+            {
+                "ts": now,
+                "event_type": "TASK_CREATED",
+                "actor": "pipeline.task_create",
+                "task_id": task_id,
+                "project_id": pid,
+                "workstream_id": workstream_id,
+                "severity": "INFO",
+                "message": "task scaffold created",
+                "payload": {"ledger": str(ledger_path), "logs_dir": str(logs_dir), "scope": scope},
+            },
+            dry_run=False,
+        )
 
-        out = {"ok": True, "scope": scope, "project_id": pid, "task_id": task_id, "ledger_path": str(ledger_path), "logs_dir": str(logs_dir), "dry_run": bool(args.dry_run)}
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-        return 0
-    finally:
-        locks.release_lock(scope_lock)
-        locks.release_lock(repo_lock)
+    out = {"ok": True, "scope": scope, "project_id": pid, "task_id": task_id, "ledger_path": str(ledger_path), "logs_dir": str(logs_dir), "dry_run": bool(args.dry_run)}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
