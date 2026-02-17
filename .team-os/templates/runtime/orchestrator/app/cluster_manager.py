@@ -48,6 +48,59 @@ def cluster_enabled(cfg: dict[str, Any]) -> bool:
     return bool(c.get("enabled", False))
 
 
+def _central_allowlist_path() -> Path:
+    return team_os_root() / ".team-os" / "policies" / "central_model_allowlist.yaml"
+
+
+def load_central_model_allowlist() -> list[str]:
+    """
+    Central Brain model allowlist (deterministic truth source).
+    If missing/empty: treat as DENY (fail-safe) in cluster mode.
+    """
+    p = _central_allowlist_path()
+    if not p.exists():
+        return []
+    try:
+        d = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    if not isinstance(d, dict):
+        return []
+    ids = d.get("allowed_model_ids") or []
+    if not isinstance(ids, list):
+        return []
+    out: list[str] = []
+    for x in ids:
+        s = str(x or "").strip()
+        if s:
+            out.append(s)
+    return sorted(set(out))
+
+
+def local_llm_profile() -> dict[str, str]:
+    """
+    Resolve local llm_profile deterministically from env vars.
+
+    Required for leader qualification in cluster mode:
+    - TEAMOS_LLM_MODEL_ID
+    """
+    provider = str(os.getenv("TEAMOS_LLM_PROVIDER") or "codex").strip() or "codex"
+    model_id = str(os.getenv("TEAMOS_LLM_MODEL_ID") or "").strip()
+    auth_mode = str(os.getenv("TEAMOS_LLM_AUTH_MODE") or "oauth").strip() or "oauth"
+    return {"provider": provider, "model_id": model_id, "auth_mode": auth_mode}
+
+
+def qualify_leader(*, allowlist: list[str], profile: dict[str, str]) -> dict[str, Any]:
+    model_id = str(profile.get("model_id") or "").strip()
+    if not allowlist:
+        return {"qualified": False, "reason": "allowlist_missing_or_empty", "model_id": model_id, "allowed_model_ids": []}
+    if not model_id:
+        return {"qualified": False, "reason": "missing_model_id", "model_id": "", "allowed_model_ids": allowlist}
+    if model_id not in set(allowlist):
+        return {"qualified": False, "reason": "model_not_allowed", "model_id": model_id, "allowed_model_ids": allowlist}
+    return {"qualified": True, "reason": "allowed", "model_id": model_id, "allowed_model_ids": allowlist}
+
+
 def cluster_repo(cfg: dict[str, Any]) -> str:
     c = _cluster_section(cfg)
     return str(c.get("cluster_repo") or "").strip()
@@ -148,6 +201,19 @@ def attempt_elect(cfg: dict[str, Any], *, instance_id: str, base_url: str) -> di
     repo = cluster_repo(cfg)
     if not repo:
         return {"success": True, "reason": "cluster_repo missing -> local leader", "leader": {"leader_instance_id": instance_id, "backend": "local"}}
+
+    # Central Brain model allowlist gate (fail-safe).
+    allow = load_central_model_allowlist()
+    prof = local_llm_profile()
+    qual = qualify_leader(allowlist=allow, profile=prof)
+    if not bool(qual.get("qualified")):
+        cur = read_leader(cfg)
+        return {
+            "success": False,
+            "reason": "leader_qualification_failed",
+            "detail": {"qualification": qual, "llm_profile": prof, "policy_path": str(_central_allowlist_path())},
+            "leader": (cur.__dict__ if cur else {"leader_instance_id": instance_id, "backend": "local"}),
+        }
 
     allow_write = _write_enabled(cfg, section_key="leader_lease", default_env="TEAMOS_GH_CLUSTER_WRITE_ENABLED")
     if not allow_write:

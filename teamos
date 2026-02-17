@@ -1639,9 +1639,22 @@ def cmd_cluster_status(args: argparse.Namespace) -> None:
     leader = out.get("leader") or {}
     nodes = out.get("nodes") or []
     pending = out.get("pending_decisions") or []
+    llm = out.get("llm_profile") or {}
+    qual = out.get("leader_qualification") or {}
     print(f"profile={prof['name']} base_url={base}")
     print(f"leader.instance_id={leader.get('leader_instance_id','')}")
     print(f"leader.backend={leader.get('backend','')}")
+    if llm:
+        if llm.get("provider"):
+            print(f"llm.provider={llm.get('provider')}")
+        if llm.get("model_id"):
+            print(f"llm.model_id={llm.get('model_id')}")
+        if llm.get("auth_mode"):
+            print(f"llm.auth_mode={llm.get('auth_mode')}")
+    if qual:
+        print(f"leader_qualification.qualified={qual.get('qualified')}")
+        if qual.get("reason"):
+            print(f"leader_qualification.reason={qual.get('reason')}")
     if leader.get("leader_base_url"):
         print(f"leader.base_url={leader.get('leader_base_url')}")
     if pending:
@@ -1660,6 +1673,17 @@ def cmd_cluster_status(args: argparse.Namespace) -> None:
                 ]
             )
         print(_fmt_table(["node", "role_pref", "heartbeat", "capabilities", "tags"], rows))
+
+
+def cmd_cluster_qualify(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _run_pipeline(
+        repo_root,
+        ".team-os/scripts/pipelines/cluster_election.py",
+        ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "qualify"],
+    )
 
 
 def cmd_node_join_script(args: argparse.Namespace) -> None:
@@ -2009,6 +2033,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     cl = sp.add_parser("cluster", help="Multi-node cluster status (Brain/Assistant)")
     cl_sp = cl.add_subparsers(dest="subcmd", required=True)
     cl_sp.add_parser("status").set_defaults(fn=cmd_cluster_status)
+    cl_sp.add_parser("qualify", help="Check central Brain model allowlist qualification (local)").set_defaults(fn=cmd_cluster_qualify)
 
     nd = sp.add_parser("node", help="Cluster node operations")
     nd_sp = nd.add_subparsers(dest="subcmd", required=True)
