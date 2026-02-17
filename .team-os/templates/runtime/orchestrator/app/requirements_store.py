@@ -1397,6 +1397,192 @@ def add_requirement_raw_first(
     )
 
 
+def add_requirement_system_update(
+    *,
+    project_id: str,
+    req_dir: Path,
+    requirement_text: str,
+    workstream_id: str = "",
+    priority: str = "P2",
+    rationale: str = "",
+    constraints: Optional[list[str]] = None,
+    acceptance: Optional[list[str]] = None,
+    source: str = "SYSTEM",
+) -> AddReqOutcome:
+    """
+    System update channel (non-raw):
+    - Does NOT write raw_inputs.jsonl (user-only).
+    - Does NOT write feasibility reports or raw_assessments.
+    - Still performs drift checks and Expanded updates deterministically.
+    """
+    scope = _scope_from_project_id(project_id)
+    req_dir.mkdir(parents=True, exist_ok=True)
+    ensure_scaffold(req_dir, project_id=project_id)
+
+    actions: list[str] = []
+
+    # Drift check (fix mode) before expanding.
+    drift = drift_check(req_dir, project_id=project_id, scope=scope, fix=True)
+    actions += drift.actions_taken
+    if drift.fixed:
+        _append_changelog(req_dir, project_id, f"DRIFT_FIXED: raw=SYSTEM source={source} points={'; '.join(drift.drift_points)[:300]}")
+
+    if drift.need_pm_decision:
+        report = drift.report_path or ""
+        rel_report = ""
+        if report:
+            try:
+                rel_report = os.path.relpath(report, start=str(req_dir))
+            except Exception:
+                rel_report = report
+        decision_req_id = _append_need_pm_decision_item(
+            req_dir,
+            project_id=project_id,
+            title="DRIFT: System update blocked (Expanded drifted or baseline missing)",
+            text="\n".join(
+                [
+                    "System requirements update blocked due to drift/baseline issues.",
+                    f"- source={source}",
+                    f"- report={rel_report}",
+                    "",
+                    "Drift points:",
+                    *[f"- {p}" for p in (drift.drift_points or [])],
+                ]
+            ).strip(),
+            raw_id="",
+            raw_timestamp="",
+            report_rel_path=rel_report,
+            source="drift_check",
+            priority="P0",
+            workstreams=["general"],
+        )
+        _append_changelog(req_dir, project_id, f"DRIFT_NEED_PM_DECISION: raw=SYSTEM source={source} report={rel_report} decision={decision_req_id or ''}")
+        pending = [
+            {
+                "type": "REQUIREMENT_DRIFT",
+                "project_id": project_id,
+                "scope": scope,
+                "raw_id": "",
+                "report_path": rel_report,
+                "decision_req_id": decision_req_id or "",
+            }
+        ]
+        return AddReqOutcome(
+            classification="DRIFT",
+            req_id=None,
+            duplicate_of=None,
+            conflicts_with=[],
+            conflict_report_path=None,
+            pending_decisions=pending,
+            actions_taken=actions,
+            drift_report_path=rel_report or None,
+            raw_input_timestamp=None,
+            raw_id=None,
+            raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+            baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+            baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
+        )
+
+    out = add_requirement(
+        project_id=project_id,
+        req_dir=req_dir,
+        requirement_text=requirement_text,
+        workstream_hint=str(workstream_id or "").strip(),
+        priority=priority,
+        rationale=rationale,
+        constraints=constraints,
+        acceptance=acceptance,
+        source=str(source or "SYSTEM"),
+        scope=scope,
+        raw_id=None,
+        raw_timestamp=None,
+        feasibility_outcome="",
+        feasibility_report_ref="",
+    )
+    actions += list(out.actions_taken or [])
+
+    # Post-check (check-only first).
+    post = drift_check(req_dir, project_id=project_id, scope=scope, fix=False)
+    if not post.ok:
+        post2 = drift_check(req_dir, project_id=project_id, scope=scope, fix=True)
+        actions += post2.actions_taken
+        if post2.need_pm_decision:
+            report = post2.report_path or ""
+            rel_report = ""
+            if report:
+                try:
+                    rel_report = os.path.relpath(report, start=str(req_dir))
+                except Exception:
+                    rel_report = report
+            decision_req_id = _append_need_pm_decision_item(
+                req_dir,
+                project_id=project_id,
+                title="DRIFT: Post-check detected Expanded drift after system update",
+                text="\n".join(
+                    [
+                        "Drift detected in post-check after system requirements update.",
+                        f"- source={source}",
+                        f"- report={rel_report}",
+                        "",
+                        "Drift points:",
+                        *[f"- {p}" for p in (post2.drift_points or [])],
+                    ]
+                ).strip(),
+                raw_id="",
+                raw_timestamp="",
+                report_rel_path=rel_report,
+                source="drift_check",
+                priority="P0",
+                workstreams=["general"],
+            )
+            _append_changelog(req_dir, project_id, f"POSTCHECK_DRIFT_NEED_PM_DECISION: raw=SYSTEM source={source} report={rel_report} decision={decision_req_id or ''}")
+            pending = list(out.pending_decisions or [])
+            pending.append(
+                {
+                    "type": "REQUIREMENT_DRIFT",
+                    "project_id": project_id,
+                    "scope": scope,
+                    "raw_id": "",
+                    "report_path": rel_report,
+                    "decision_req_id": decision_req_id or "",
+                }
+            )
+            return AddReqOutcome(
+                classification="DRIFT",
+                req_id=out.req_id,
+                duplicate_of=out.duplicate_of,
+                conflicts_with=list(out.conflicts_with or []),
+                conflict_report_path=out.conflict_report_path,
+                pending_decisions=pending,
+                actions_taken=actions,
+                drift_report_path=rel_report or None,
+                raw_input_timestamp=None,
+                raw_id=None,
+                raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+                raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+                baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+                baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
+            )
+
+    return AddReqOutcome(
+        classification=out.classification,
+        req_id=out.req_id,
+        duplicate_of=out.duplicate_of,
+        conflicts_with=list(out.conflicts_with or []),
+        conflict_report_path=out.conflict_report_path,
+        pending_decisions=list(out.pending_decisions or []),
+        actions_taken=actions,
+        drift_report_path=out.drift_report_path,
+        raw_input_timestamp=None,
+        raw_id=None,
+        raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+        raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+        baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+        baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
+    )
+
+
 def verify_requirements_raw_first(
     req_dir: Path,
     *,
