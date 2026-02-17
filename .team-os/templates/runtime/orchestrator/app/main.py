@@ -385,6 +385,21 @@ def _startup_background_threads() -> None:
     t = threading.Thread(target=_panel_auto_sync_loop, name="panel-auto-sync", daemon=True)
     t.start()
 
+    # Recovery auto-run: on startup, scan unfinished tasks and attempt resume.
+    def _recovery_auto_once() -> None:
+        # Never crash the server because of recovery.
+        if str(os.getenv("TEAMOS_RECOVERY_AUTO", "1") or "").strip().lower() in ("0", "false", "no", "off"):
+            return
+        try:
+            time.sleep(2)
+            _ = v1_recovery_scan()
+            _ = v1_recovery_resume(RecoveryResumeIn(all=True))
+        except Exception:
+            pass
+
+    rt = threading.Thread(target=_recovery_auto_once, name="recovery-auto-once", daemon=True)
+    rt.start()
+
 
 def _seed_if_enabled() -> None:
     if os.getenv("TEAMOS_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
@@ -1265,16 +1280,79 @@ def v1_tasks_new(payload: TaskNewIn):
 
 @app.post("/v1/recovery/scan")
 def v1_recovery_scan():
-    # Minimal recovery scan: list non-closed tasks and write a local snapshot.
+    _require_leader_write()
+
+    def _pending_approvals(task_id: str) -> list[dict[str, Any]]:
+        dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+        if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
+            return []
+        try:
+            import psycopg  # type: ignore
+            from psycopg.rows import dict_row  # type: ignore
+        except Exception:
+            return []
+        try:
+            conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3)
+        except Exception:
+            return []
+        try:
+            with conn.cursor() as cur:
+                rows = cur.execute(
+                    """
+                    SELECT approval_id, status, category, risk_level, action_kind, requested_at
+                    FROM approvals
+                    WHERE task_id=%s AND status='REQUESTED'
+                    ORDER BY requested_at DESC
+                    LIMIT 50
+                    """,
+                    (str(task_id),),
+                ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows or []:
+                d = dict(r)
+                # psycopg may return datetime objects for requested_at
+                if d.get("requested_at") is not None:
+                    d["requested_at"] = str(d["requested_at"])
+                out.append(d)
+            return out
+        except Exception:
+            return []
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _gates_for_task(t: dict[str, Any]) -> list[dict[str, Any]]:
+        gates: list[dict[str, Any]] = []
+        state = str(t.get("state") or "").strip().lower()
+        if state == "blocked":
+            gates.append({"type": "BLOCKED", "reason": "task status=blocked"})
+        if bool(t.get("need_pm_decision")):
+            gates.append({"type": "NEED_PM_DECISION", "reason": "need_pm_decision=true"})
+        approvals = _pending_approvals(str(t.get("task_id") or ""))
+        if approvals:
+            gates.append({"type": "WAITING_APPROVAL", "reason": "pending approvals", "count": len(approvals), "sample": approvals[:3]})
+        return gates
+
+    # Deterministic scan: list non-closed tasks and write a local snapshot.
     tasks = _load_tasks_summary()
-    active = [t for t in tasks if str(t.get("state") or "").lower() not in ("closed", "done")]
+    active0 = [t for t in tasks if str(t.get("state") or "").lower() not in ("closed", "done")]
+    active = []
+    for t in active0:
+        t2 = dict(t)
+        t2["gates"] = _gates_for_task(t2)
+        active.append(t2)
+    active.sort(key=lambda x: (str(x.get("project_id") or ""), str(x.get("workstream_id") or ""), str(x.get("task_id") or "")))
     snap_dir = team_os_root() / ".team-os" / "cluster" / "state"
     snap_dir.mkdir(parents=True, exist_ok=True)
     ts = _ts_compact_utc()
     path = snap_dir / f"recovery_{ts}.md"
     lines = ["# Recovery Scan", "", f"- ts: {_utc_now_iso()}", f"- active_tasks: {len(active)}", ""]
     for t in active[:200]:
-        lines.append(f"- {t.get('task_id')} {t.get('state')} {t.get('project_id')} {t.get('workstream_id')}")
+        gates = t.get("gates") or []
+        g = ",".join([str(x.get("type") or "") for x in (gates if isinstance(gates, list) else []) if str(x.get("type") or "").strip()])
+        lines.append(f"- {t.get('task_id')} state={t.get('state')} project={t.get('project_id')} workstream={t.get('workstream_id')} gates={g}")
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     DB.add_event(event_type="RECOVERY_SCAN", actor="control-plane", project_id=_default_project_id(), workstream_id=_default_workstream_id(), payload={"active_tasks": len(active), "snapshot": str(path)})
     return {"active_tasks": active, "snapshot_path": str(path)}
@@ -1282,22 +1360,92 @@ def v1_recovery_scan():
 
 @app.post("/v1/recovery/resume")
 def v1_recovery_resume(payload: RecoveryResumeIn):
+    _require_leader_write()
+
+    def _pending_approvals(task_id: str) -> list[dict[str, Any]]:
+        dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+        if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
+            return []
+        try:
+            import psycopg  # type: ignore
+            from psycopg.rows import dict_row  # type: ignore
+        except Exception:
+            return []
+        try:
+            conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3)
+        except Exception:
+            return []
+        try:
+            with conn.cursor() as cur:
+                rows = cur.execute(
+                    "SELECT approval_id, status, category, action_kind, requested_at FROM approvals WHERE task_id=%s AND status='REQUESTED' ORDER BY requested_at DESC LIMIT 50",
+                    (str(task_id),),
+                ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows or []:
+                d = dict(r)
+                if d.get("requested_at") is not None:
+                    d["requested_at"] = str(d["requested_at"])
+                out.append(d)
+            return out
+        except Exception:
+            return []
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _gates_for_task(t: dict[str, Any]) -> list[dict[str, Any]]:
+        gates: list[dict[str, Any]] = []
+        state = str(t.get("state") or "").strip().lower()
+        if state in ("closed", "done"):
+            gates.append({"type": "CLOSED", "reason": "already closed"})
+            return gates
+        if state == "blocked":
+            gates.append({"type": "BLOCKED", "reason": "task status=blocked"})
+        if bool(t.get("need_pm_decision")):
+            gates.append({"type": "NEED_PM_DECISION", "reason": "need_pm_decision=true"})
+        approvals = _pending_approvals(str(t.get("task_id") or ""))
+        if approvals:
+            gates.append({"type": "WAITING_APPROVAL", "reason": "pending approvals", "count": len(approvals)})
+        return gates
+
     tasks = _load_tasks_summary()
+    active = [t for t in tasks if str(t.get("state") or "").lower() not in ("closed", "done")]
     target: list[dict[str, Any]] = []
     if payload.all:
-        target = tasks
+        target = active
     elif payload.task_id:
-        target = [t for t in tasks if str(t.get("task_id") or "") == str(payload.task_id)]
+        target = [t for t in active if str(t.get("task_id") or "") == str(payload.task_id)]
+
     resumed: list[str] = []
+    skipped: list[dict[str, Any]] = []
     for t in target:
-        # MVP: register a placeholder run and agent (executor integration comes later).
+        gates = _gates_for_task(t)
+        if gates:
+            skipped.append({"task_id": t.get("task_id"), "gates": gates})
+            continue
+
         run_id = f"run-{t.get('task_id')}"
         DB.upsert_run(run_id=run_id, project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), objective=str(t.get("title") or ""), state="RUNNING")
-        agent_id = DB.register_agent(role_id="Process-Guardian", project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), task_id=str(t.get("task_id") or ""), state="RUNNING", current_action="recovery placeholder (no executor wired)")
+
+        # Ensure a single Process-Guardian placeholder agent per task (best-effort; avoid duplicates).
+        existing = DB.list_agents(project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), role_id="Process-Guardian")
+        if not any(str(a.task_id) == str(t.get("task_id") or "") and str(a.state).upper() == "RUNNING" for a in existing):
+            _ = DB.register_agent(
+                role_id="Process-Guardian",
+                project_id=str(t.get("project_id") or ""),
+                workstream_id=str(t.get("workstream_id") or ""),
+                task_id=str(t.get("task_id") or ""),
+                state="RUNNING",
+                current_action="recovery placeholder (no executor wired)",
+            )
         resumed.append(str(t.get("task_id") or ""))
-    DB.add_event(event_type="RECOVERY_RESUME", actor="control-plane", project_id=_default_project_id(), workstream_id=_default_workstream_id(), payload={"resumed": resumed})
+
+    DB.add_event(event_type="RECOVERY_RESUME", actor="control-plane", project_id=_default_project_id(), workstream_id=_default_workstream_id(), payload={"resumed": resumed, "skipped": skipped})
     _mark_panel_dirty()
-    return {"ok": True, "resumed": resumed}
+    return {"ok": True, "resumed": resumed, "skipped": skipped}
 
 
 @app.post("/v1/self_improve/run")
