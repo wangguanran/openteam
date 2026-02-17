@@ -1,0 +1,42 @@
+id: TEAMOS-0013
+title: TEAMOS-VERIFY-0001
+project_id: teamos
+workstream_id: governance
+workstreams:
+- governance
+- security
+- cluster
+status: closed
+risk_level: R2
+need_pm_decision: false
+repo:
+  locator: ''
+  workdir: ''
+  branch: ''
+  mode: auto
+checkpoint:
+  stage: closed
+  last_event_ts: '2026-02-17T05:38:13Z'
+recovery:
+  last_scan_at: ''
+  last_resume_at: ''
+  notes: ''
+approvals_required:
+- R2/R3 actions
+owners:
+- PM-Intake
+roles_involved:
+- PM-Intake
+workflows:
+- Genesis
+created_at: '2026-02-17T04:14:01Z'
+updated_at: '2026-02-17T05:38:13Z'
+links:
+  pr: ''
+  issue: ''
+artifacts:
+  ledger: .team-os/ledger/tasks/TEAMOS-0013.yaml
+  logs_dir: .team-os/logs/tasks/TEAMOS-0013
+evidence:
+- type: log
+  path: .team-os/logs/tasks/TEAMOS-0013/00_intake.md
