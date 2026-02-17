@@ -473,8 +473,21 @@ make ps
 ## 10. 自我升级怎么做
 
 1. 在 `07_retro.md` 写清“Team OS 的缺陷/改进点”
-2. 运行 `./teamos self-improve` 生成自我升级条目（建议在后台以 daemon 常驻，见后续治理）
-3. 若 `gh` 可用且已登录：优先创建 issue/PR；否则生成 pending 草稿到：
+2. 启动 self-improve daemon（leader-only；默认只做 panel sync dry-run，不做 GitHub 写入）：
+
+```bash
+cd team-os
+./teamos daemon start
+./teamos daemon status
+```
+
+3. 需要立刻跑一轮（跳过 debounce）：
+
+```bash
+cd team-os
+./teamos self-improve --force
+```
+4. 若 `gh` 可用且已登录：优先创建 issue/PR；否则生成 pending 草稿到：
    - `.team-os/ledger/team_os_issues_pending/`
 
 ## 11. 安全闸门

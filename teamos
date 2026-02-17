@@ -505,60 +505,10 @@ def cmd_project_list(args: argparse.Namespace) -> None:
     print(_fmt_table(["project_id", "repo", "state", "requirements", "tasks"], rows))
 
 
-def _read_last_self_improve_run(repo_root: Path) -> Optional[dict[str, Any]]:
-    p = repo_root / ".team-os" / "state" / "self_improve_last_run.json"
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def _should_auto_wake_self_improve(repo_root: Path, *, debounce_hours: int = 6) -> bool:
-    d = _read_last_self_improve_run(repo_root) or {}
-    last = str(d.get("last_run_at") or "").strip()
-    if not last:
-        return True
-    try:
-        dt = _dt.datetime.fromisoformat(last.replace("Z", "+00:00"))
-        now = _dt.datetime.now(_dt.timezone.utc)
-        hours = (now - dt).total_seconds() / 3600.0
-        return hours >= float(debounce_hours)
-    except Exception:
-        return True
-
-
-def _auto_wake_self_improve(args: argparse.Namespace) -> None:
-    """
-    Always-on self-improve scheduler wake.
-
-    Policy:
-    - Non-blocking: spawn a detached child process.
-    - Debounced: default 6h, stored in `.team-os/state/self_improve_last_run.json` (gitignored).
-    - Safe-by-default: dry-run (no remote writes).
-    """
-    if os.getenv("TEAMOS_SELF_IMPROVE_DISABLE", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
-        return
-    if os.getenv("TEAMOS_SELF_IMPROVE_CHILD", "").strip() == "1":
-        return
-    if getattr(args, "cmd", "") in ("self-improve",):
-        return
-
-    repo_root = _find_team_os_repo_root()
-    if not repo_root:
-        return
-
-    env = os.environ.copy()
-    env["TEAMOS_SELF_IMPROVE_CHILD"] = "1"
-    env.setdefault("TEAM_OS_REPO_PATH", str(repo_root))
-
-    argv = [sys.executable, str(Path(__file__).resolve())]
-    if args.profile:
-        argv += ["--profile", args.profile]
-    argv += ["self-improve", "--dry-run", "--auto", "--quiet"]
-
-    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+#
+# NOTE: Self-improve is daemon-based (leader-only).
+# The CLI must NOT auto-wake self-improve on every command, to avoid untasked writes.
+#
 
 
 def cmd_config_init(_args: argparse.Namespace) -> None:
@@ -1182,56 +1132,86 @@ def cmd_panel_open(args: argparse.Namespace) -> None:
         print(url)
 
 
-def _import_self_improve_runner(repo_root: Path):
-    # Import from the runtime template (source of truth for control-plane logic).
-    # Keep optional so the CLI can still run as a pure HTTP client.
-    app_dir = repo_root / ".team-os" / "templates" / "runtime" / "orchestrator"
-    sys.path.insert(0, str(app_dir))
-    from app import self_improve_runner  # type: ignore
-
-    return self_improve_runner
-
-
 def cmd_self_improve(args: argparse.Namespace) -> None:
     """
     Run one self-improve iteration.
 
-    Default:
-    - Try control-plane `/v1/self_improve/run` first.
-    - Fall back to local runner if control-plane is unreachable or not configured.
+    Deterministic + governance-safe:
+    - Runs the host-level deterministic pipeline (no LLM).
+    - Enforces leader-only writes (non-leader is scan-only).
+    - Remote writes (GitHub) are gated by policy; defaults to panel sync dry-run only.
     """
-    if not args.local:
-        try:
-            base, prof = _base_url(args)
-            payload = {
-                "dry_run": bool(args.dry_run),
-                "force": bool(args.force),
-                "trigger": "cli_auto" if args.auto else "manual",
-            }
-            out = _http_json("POST", base + "/v1/self_improve/run", payload, timeout_sec=300)
-            if not args.quiet:
-                print(json.dumps(out, ensure_ascii=False, indent=2))
-            return
-        except Exception as e:
-            if not args.quiet:
-                eprint(f"self_improve: control_plane_failed -> local_fallback: {e}")
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["run-once", "--scope", "teamos"]
+    if bool(args.force):
+        argv.append("--force")
+    # NOTE:
+    # - `--dry-run` / `--local` are kept for backwards compatibility; remote writes are governed by policy.
+    # - To compute proposals only (no local writes), run: teamos daemon status / or pipeline --dry-run-local
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
 
+
+def cmd_daemon_start(args: argparse.Namespace) -> None:
+    """
+    Start Team OS background daemons (currently: self-improve).
+    """
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
 
-    os.environ["TEAM_OS_REPO_PATH"] = str(repo_root)
-    runner = _import_self_improve_runner(repo_root)
-    out = runner.run(
-        dry_run=bool(args.dry_run),
-        force=bool(args.force),
-        actor="cli",
-        trigger="cli_auto" if args.auto else "manual",
-        api_routes=None,
-        project_id="teamos",
-    )
-    if not args.quiet:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    # Foreground is useful for debugging.
+    argv += ["daemon" if bool(getattr(args, "foreground", False)) else "start"]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+
+
+def cmd_daemon_stop(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["stop"]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+
+
+def cmd_daemon_status(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if args.profile:
+        argv += ["--profile", args.profile]
+    argv += ["status"]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
 
 
 def _parse_metrics_jsonl(path: Path) -> list[str]:
@@ -1751,6 +1731,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     doc = sp.add_parser("doctor")
     doc.set_defaults(fn=cmd_doctor)
 
+    dm = sp.add_parser("daemon", help="Background daemons (self-improve, etc.)")
+    dm_sp = dm.add_subparsers(dest="subcmd", required=True)
+    ds = dm_sp.add_parser("start", help="Start daemons (default: self-improve)")
+    ds.add_argument("--foreground", action="store_true", help="run in foreground (do not detach)")
+    ds.set_defaults(fn=cmd_daemon_start)
+    dx = dm_sp.add_parser("stop", help="Stop daemons (best-effort)")
+    dx.set_defaults(fn=cmd_daemon_stop)
+    dy = dm_sp.add_parser("status", help="Show daemon status/state")
+    dy.set_defaults(fn=cmd_daemon_status)
+
     si = sp.add_parser("self-improve", help="Always-on self improvement (scan -> proposals -> pending issues)")
     si.add_argument("--dry-run", action="store_true", help="no remote writes; still writes local proposal artifacts")
     si.add_argument("--force", action="store_true", help="ignore debounce and run now")
@@ -1761,8 +1751,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = p.parse_args(argv)
     try:
-        # Always-on self-improve wake (non-blocking, debounced).
-        _auto_wake_self_improve(args)
         args.fn(args)
         return 0
     except Exception as e:
