@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TeamOS Raw Feasibility Assessment Index (v3)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["raw_id", "assessed_at", "outcome", "report_path"],
+  "properties": {
+    "raw_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "assessed_at": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["FEASIBLE", "PARTIALLY_FEASIBLE", "NOT_FEASIBLE", "NEEDS_INFO"]
+    },
+    "report_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to feasibility report (prefer relative to requirements dir)."
+    },
+    "assessor": {
+      "type": "string",
+      "description": "Assessor identifier/version (deterministic ruleset)."
+    },
+    "report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}
+

@@ -111,7 +111,7 @@ class RequirementsRawFirstTests(unittest.TestCase):
             # Both sides should be NEED_PM_DECISION after conflict.
             self.assertTrue(any(st == "NEED_PM_DECISION" for st in statuses.values()))
 
-    def test_compatible_appends_and_updates_md_and_changelog_with_raw_ts(self):
+    def test_compatible_appends_and_updates_md_and_changelog_with_raw_id(self):
         with tempfile.TemporaryDirectory() as td:
             req_dir = Path(td)
             _ = add_requirement_raw_first(
@@ -132,19 +132,19 @@ class RequirementsRawFirstTests(unittest.TestCase):
             )
             self.assertEqual(out2.classification, "COMPATIBLE")
             self.assertTrue(out2.req_id)
-            self.assertTrue(out2.raw_input_timestamp)
+            self.assertTrue(out2.raw_id)
 
             y = yaml.safe_load((req_dir / "requirements.yaml").read_text(encoding="utf-8")) or {}
             reqs = y.get("requirements") or []
             self.assertTrue(any(str(r.get("req_id")) == out2.req_id for r in reqs))
             r2 = next(r for r in reqs if str(r.get("req_id")) == out2.req_id)
-            self.assertIn(out2.raw_input_timestamp, r2.get("raw_input_refs") or [])
+            self.assertIn(out2.raw_id, r2.get("raw_input_refs") or [])
 
             md = (req_dir / "REQUIREMENTS.md").read_text(encoding="utf-8")
             self.assertIn(out2.req_id, md)
 
             ch = (req_dir / "CHANGELOG.md").read_text(encoding="utf-8")
-            self.assertIn(f"raw={out2.raw_input_timestamp}", ch)
+            self.assertIn(f"raw={out2.raw_id}", ch)
 
     def test_verify_detects_md_drift(self):
         with tempfile.TemporaryDirectory() as td:
@@ -165,6 +165,71 @@ class RequirementsRawFirstTests(unittest.TestCase):
             self.assertFalse(drift.get("ok"))
             pts = drift.get("points") or []
             self.assertTrue(any("REQUIREMENTS.md drift" in str(p) for p in pts))
+
+    def test_feasibility_report_and_assessment_index_written(self):
+        with tempfile.TemporaryDirectory() as td:
+            req_dir = Path(td)
+            out = add_requirement_raw_first(
+                project_id="demo",
+                req_dir=req_dir,
+                requirement_text="实现一个简单的离线缓存功能。",
+                source="cli",
+                channel="cli",
+                user="tester",
+            )
+            self.assertTrue(out.raw_id)
+            self.assertTrue(out.feasibility_outcome)
+            self.assertTrue((req_dir / "raw_assessments.jsonl").exists())
+            assess_lines = [ln for ln in (req_dir / "raw_assessments.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
+            self.assertTrue(assess_lines)
+            found = None
+            for ln in assess_lines:
+                obj = json.loads(ln)
+                if obj.get("raw_id") == out.raw_id:
+                    found = obj
+            self.assertIsNotNone(found)
+            self.assertEqual(str(found.get("outcome") or "").upper(), str(out.feasibility_outcome or "").upper())
+            rel = str(found.get("report_path") or "")
+            self.assertTrue(rel)
+            self.assertTrue((req_dir / rel).exists())
+            content = (req_dir / rel).read_text(encoding="utf-8")
+            self.assertIn(out.raw_id, content)
+
+    def test_needs_info_stops_expansion_and_creates_need_pm_decision(self):
+        with tempfile.TemporaryDirectory() as td:
+            req_dir = Path(td)
+            out = add_requirement_raw_first(
+                project_id="demo",
+                req_dir=req_dir,
+                requirement_text="TODO: 需要补充更多细节。",
+                source="cli",
+                channel="cli",
+                user="tester",
+            )
+            self.assertEqual(out.classification, "NEED_PM_DECISION")
+            self.assertTrue(out.raw_id)
+            y = yaml.safe_load((req_dir / "requirements.yaml").read_text(encoding="utf-8")) or {}
+            reqs = y.get("requirements") or []
+            self.assertEqual(len(reqs), 1)
+            self.assertEqual(str(reqs[0].get("status") or "").upper(), "NEED_PM_DECISION")
+            self.assertTrue(out.pending_decisions)
+            self.assertTrue(any(str(d.get("type") or "") == "REQUIREMENT_FEASIBILITY" for d in (out.pending_decisions or [])))
+
+    def test_system_source_does_not_write_raw_inputs(self):
+        with tempfile.TemporaryDirectory() as td:
+            req_dir = Path(td)
+            _ = add_requirement_raw_first(
+                project_id="demo",
+                req_dir=req_dir,
+                requirement_text="self-improve proposal should not enter raw_inputs.jsonl",
+                source="self-improve",
+                channel="api",
+                user="self-improve",
+            )
+            raw = req_dir / "raw_inputs.jsonl"
+            self.assertTrue(raw.exists())
+            lines = [ln for ln in raw.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            self.assertEqual(len(lines), 0)
 
 
 if __name__ == "__main__":
