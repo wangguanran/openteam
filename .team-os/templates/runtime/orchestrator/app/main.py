@@ -1087,8 +1087,18 @@ def v1_cluster_status():
     except Exception:
         pass
     nodes = [n.__dict__ for n in DB.list_nodes()]
+    llm_profile: dict[str, Any] = {}
+    leader_qualification: dict[str, Any] = {}
+    try:
+        llm_profile = cluster_manager.local_llm_profile()
+        allow = cluster_manager.load_central_model_allowlist()
+        leader_qualification = cluster_manager.qualify_leader(allowlist=allow, profile=llm_profile)
+    except Exception:
+        pass
     return {
         "leader": leader,
+        "llm_profile": llm_profile,
+        "leader_qualification": leader_qualification,
         "nodes": nodes,
         "active_agents": [a.__dict__ for a in DB.list_agents()],
         "active_tasks": _load_tasks_summary(),

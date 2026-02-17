@@ -1,0 +1,12 @@
+schema_version: 1
+
+# Central Brain model allowlist (deterministic truth source).
+#
+# Rationale:
+# - Prevent low-grade / misconfigured nodes from becoming the Brain and affecting global policy.
+# - Cluster election must enforce this allowlist before acquiring the leader lease.
+allowed_model_ids:
+  - gpt-5
+  - o3
+  - gpt-4.1
+
