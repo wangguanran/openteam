@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Team OS Project Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin_url": {
+          "type": "string"
+        },
+        "default_branch": {
+          "type": "string"
+        }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "panel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "project_url": {
+          "type": "string"
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}
+
