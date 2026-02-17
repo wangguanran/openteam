@@ -1,0 +1,41 @@
+id: TEAMOS-0018
+title: 'Docs: Raw v3 + Self-Improve separation + Locks'
+project_id: teamos
+workstream_id: docs
+workstreams:
+- docs
+- governance
+status: closed
+risk_level: R1
+need_pm_decision: false
+repo:
+  locator: ''
+  workdir: ''
+  branch: ''
+  mode: auto
+checkpoint:
+  stage: closed
+  last_event_ts: '2026-02-17T08:09:42Z'
+recovery:
+  last_scan_at: ''
+  last_resume_at: ''
+  notes: ''
+approvals_required:
+- R2/R3 actions
+owners:
+- PM-Intake
+roles_involved:
+- PM-Intake
+workflows:
+- Genesis
+created_at: '2026-02-17T07:59:25Z'
+updated_at: '2026-02-17T08:09:42Z'
+links:
+  pr: ''
+  issue: ''
+artifacts:
+  ledger: .team-os/ledger/tasks/TEAMOS-0018.yaml
+  logs_dir: .team-os/logs/tasks/TEAMOS-0018
+evidence:
+- type: log
+  path: .team-os/logs/tasks/TEAMOS-0018/00_intake.md

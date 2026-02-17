@@ -1590,6 +1590,7 @@ def _handle_new_requirement(
             project_id=project_id,
             req_dir=req_dir,
             requirement_text=requirement_text,
+            workstream_id=workstream_id,
             priority=priority,
             rationale=rationale,
             constraints=constraints,
@@ -1620,7 +1621,10 @@ def _handle_new_requirement(
             "conflicts_with": outcome.conflicts_with,
             "conflict_report_path": outcome.conflict_report_path or "",
             "drift_report_path": outcome.drift_report_path or "",
+            "raw_id": outcome.raw_id or "",
             "raw_input_timestamp": outcome.raw_input_timestamp or "",
+            "feasibility_outcome": outcome.feasibility_outcome or "",
+            "feasibility_report_path": outcome.feasibility_report_path or "",
         },
     )
     _mark_panel_dirty(project_id)
@@ -1666,10 +1670,23 @@ def _handle_new_requirement(
         summary = "\n".join(
             [
                 "NEW_REQUIREMENT blocked: DRIFT detected -> NEED_PM_DECISION",
+                f"- raw_id={outcome.raw_id}",
                 f"- raw_input_ts={outcome.raw_input_timestamp}",
                 f"- drift_report={outcome.drift_report_path}",
                 f"- requirements_yaml={req_dir / 'requirements.yaml'}",
                 "Next: fix drift first (see DRIFT report options A/B/C).",
+            ]
+        )
+    elif outcome.classification == "NEED_PM_DECISION":
+        summary = "\n".join(
+            [
+                "NEW_REQUIREMENT blocked: FEASIBILITY -> NEED_PM_DECISION",
+                f"- raw_id={outcome.raw_id}",
+                f"- raw_input_ts={outcome.raw_input_timestamp}",
+                f"- feasibility_outcome={outcome.feasibility_outcome}",
+                f"- feasibility_report={outcome.feasibility_report_path}",
+                f"- requirements_yaml={req_dir / 'requirements.yaml'}",
+                "Next: provide missing info / resolve feasibility blockers, then re-submit.",
             ]
         )
     else:
@@ -1689,6 +1706,9 @@ def _handle_new_requirement(
         "duplicate_of": outcome.duplicate_of,
         "conflicts_with": outcome.conflicts_with,
         "conflict_report_path": outcome.conflict_report_path,
+        "raw_id": outcome.raw_id,
+        "feasibility_outcome": outcome.feasibility_outcome,
+        "feasibility_report_path": outcome.feasibility_report_path,
         "actions_taken": outcome.actions_taken,
         "pending_decisions": outcome.pending_decisions,
     }

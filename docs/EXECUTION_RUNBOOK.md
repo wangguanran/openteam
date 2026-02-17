@@ -134,7 +134,7 @@ project_id 约束（跨平台文件系统安全）：
 - 必须为小写：`[a-z0-9][a-z0-9_-]{0,63}`
 - 原因：macOS 默认文件系统大小写不敏感，`DEMO`/`demo` 会发生目录冲突
 
-目录约定（需求处理协议 v2：Raw‑First）：
+目录约定（需求处理协议 v3：Raw‑First + Feasibility + Sidecar Assessments）：
 
 - Team OS 自身（scope=`teamos`，允许在 repo 内）：`team-os/docs/teamos/requirements/**`
 - 项目（scope=`project:<id>`，必须在 Workspace）：`<WORKSPACE>/projects/<id>/state/requirements/**`
@@ -144,7 +144,9 @@ project_id 约束（跨平台文件系统安全）：
 - `baseline/`
   - `original_description_v1.md`（Baseline v1：不可覆盖，只能新增版本）
   - `original_description_v2.md`（如需重述 baseline：只能新增 v2/v3...，且进入 `NEED_PM_DECISION`）
-- `raw_inputs.jsonl`（Raw Inputs：逐字落盘、append-only）
+- `raw_inputs.jsonl`（Raw Inputs：逐字落盘、append-only；**只允许用户原文**，禁止写入评估结论/扩展内容/self-improve）
+- `raw_assessments.jsonl`（Raw Assessments：append-only 旁路索引：`raw_id -> outcome + report_path`）
+- `feasibility/`（可行性评估报告：`<raw_id>.md`，决定性生成）
 - `requirements.yaml`（Expanded：机读事实源）
 - `REQUIREMENTS.md`（Expanded：人读汇总，由 YAML 决定性渲染）
 - `CHANGELOG.md`（变更日志）
@@ -185,7 +187,7 @@ cd team-os
 - 注入区块使用标记替换：`<!-- TEAMOS_MANUAL_START -->` / `<!-- TEAMOS_MANUAL_END -->`（禁止手工编辑该区块）。
 - `./teamos project config init|validate` 与 `./teamos req add|import|rebuild --scope project:<id>` 会自动触发注入（leader-only 写入，非 leader 为 plan-only）。
 
-新增需求（两种方式等价，均遵守 Raw‑First）：
+新增需求（两种方式等价，均遵守 Raw‑First；并会自动做可行性评估）：
 
 ```bash
 cd team-os
@@ -193,6 +195,13 @@ cd team-os
 # Team OS 自身需求：
 ./teamos req add "改进 Team OS 的需求文本" --scope teamos --priority P2
 ```
+
+说明（v3）：
+
+- 每次 `req add` 都会先把用户原文写入 `raw_inputs.jsonl`，然后生成/更新：
+  - `feasibility/<raw_id>.md`
+  - `raw_assessments.jsonl`
+- 若可行性评估结果为 `NEEDS_INFO` 或 `NOT_FEASIBLE`：会生成 `NEED_PM_DECISION` 条目并停止扩展（不会把不可执行内容写入可执行 Expanded 条目）。
 
 或：
 
@@ -212,10 +221,12 @@ cd team-os
 ./teamos req rebuild --scope project:demo
 ```
 
-当出现 `NEED_PM_DECISION`：
+当出现 `NEED_PM_DECISION`（可能来自冲突/漂移，也可能来自可行性评估）：
 
-1. 打开冲突报告（路径会在 CLI 输出或 `/v1/status.pending_decisions` 中给出；文件位于 `<WORKSPACE>/projects/<id>/state/requirements/conflicts/*.md`）。
-2. PM 拍板并落盘决策：更新该项目的 `requirements.yaml`（将被否决的需求标记为 `DEPRECATED`，并补齐 `supersedes/conflicts_with/decision_log_refs`）。
+1. 打开对应报告（路径会在 CLI 输出或 `/v1/status.pending_decisions` 中给出）：
+   - 冲突/漂移：`<...>/requirements/conflicts/*.md`
+   - 可行性评估：`<...>/requirements/feasibility/<raw_id>.md`
+2. PM 拍板并落盘决策：更新该项目的 `requirements.yaml`（将被否决的需求标记为 `DEPRECATED` 或维持 `NEED_PM_DECISION`，并补齐 `decision_log_refs`/`conflicts_with` 等引用）。
 
 Baseline 管理：
 
@@ -229,6 +240,7 @@ cd team-os
 注意：
 
 - Expanded 文档（`requirements.yaml` / `REQUIREMENTS.md`）禁止手改；手改会在 `verify` 中被判定为 drift（并可通过 `rebuild` 恢复决定性渲染）。
+- 并发安全：关键写入口（`./teamos req add|import|rebuild`、`./teamos prompt compile`、`./teamos task new|close`、以及 self-improve 的 requirements 更新）会先获取锁（repo lock + scope lock）。若命令返回 `LOCK_BUSY`，说明同 scope 正在被其他进程修改，按提示等待或重试。
 
 ### 5.3 Profiles（多实例）与 Workstream（多平台协作域）
 
@@ -510,6 +522,12 @@ cd team-os
 ./teamos daemon status
 ```
 
+说明：
+
+- Self-Improve 产物与 Raw Input 分离：
+  - 提案：`.team-os/ledger/self_improve/<ts>-proposal.md`
+  - Expanded 更新：通过系统通道更新 `docs/teamos/requirements/requirements.yaml`（不写入 `raw_inputs.jsonl`）
+
 3. 需要立刻跑一轮（跳过 debounce）：
 
 ```bash
@@ -524,6 +542,7 @@ cd team-os
 详见 `docs/SECURITY.md`。重点：
 
 - 生产发布/打开公网端口/数据删除与覆盖/密钥处理：必须审批
+- 审批由确定性 approvals 引擎落盘（优先写入 Postgres；无 DB 时写入 Workspace 审计文件），并可用 `./teamos approvals list` 查看
 - 禁止 secrets 入库：只允许 `.env.example` 入库
 - 外部文档不可信：只抽取事实并落盘来源摘要
 

@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+import locks
 
 from _common import (
     PipelineError,
@@ -103,6 +107,20 @@ def main(argv: list[str] | None = None) -> int:
     ws_root = resolve_workspace_root(args)
     scope, pid = parse_scope(args.scope)
 
+    # Concurrency: repo lock (teamos only) + scope lock.
+    repo_lock = None
+    scope_lock = None
+    if not args.dry_run:
+        if scope == "teamos":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+        scope_lock = locks.acquire_scope_lock(scope, repo_root=repo, workspace_root=ws_root, req_dir=None, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+
+    def _cleanup_locks() -> None:
+        locks.release_lock(scope_lock)
+        locks.release_lock(repo_lock)
+
+    atexit.register(_cleanup_locks)
+
     workstreams = [x.strip() for x in str(args.workstreams or "").split(",") if x.strip()]
     workstream_id = workstreams[0] if workstreams else "general"
 
@@ -189,4 +207,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+import locks
 
 from _common import (
     PipelineError,
@@ -126,6 +130,26 @@ def main(argv: list[str] | None = None) -> int:
 
     req_dir = _requirements_dir(repo=repo, ws_root=ws, scope=scope, project_id=pid)
     prompt_dir = _prompt_base_dir(repo=repo, ws_root=ws, scope=scope, project_id=pid)
+
+    # Concurrency: repo lock (teamos only) + scope lock.
+    repo_lock = None
+    scope_lock = None
+    if scope == "teamos":
+        repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+    scope_lock = locks.acquire_scope_lock(
+        scope,
+        repo_root=repo,
+        workspace_root=ws,
+        req_dir=req_dir,
+        task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+    )
+
+    def _cleanup_locks() -> None:
+        locks.release_lock(scope_lock)
+        locks.release_lock(repo_lock)
+
+    atexit.register(_cleanup_locks)
+
     (prompt_dir / "history").mkdir(parents=True, exist_ok=True)
 
     tpl_path = repo / ".team-os" / "templates" / "prompt_master.md.j2"

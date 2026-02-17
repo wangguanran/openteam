@@ -1527,6 +1527,27 @@ def cmd_audit_execution_strategy(args: argparse.Namespace) -> None:
     _run_pipeline(repo_root, ".team-os/scripts/pipelines/audit_execution_strategy.py", argv)
 
 
+def cmd_audit_reqv3_locks(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+    ]
+    if getattr(args, "out", ""):
+        argv += ["--out", str(args.out).strip()]
+    if getattr(args, "project_id", ""):
+        argv += ["--project-id", str(args.project_id).strip()]
+    if bool(getattr(args, "skip_self_improve", False)):
+        argv.append("--skip-self-improve")
+    if bool(getattr(args, "skip_db", False)):
+        argv.append("--skip-db")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/audit_reqv3_locks.py", argv)
+
+
 def _parse_metrics_jsonl(path: Path) -> list[str]:
     issues: list[str] = []
     if not path.exists():
@@ -2212,6 +2233,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     es = au_sp.add_parser("execution-strategy", help="Generate execution strategy audit report (PASS/FAIL/WAIVED)")
     es.add_argument("--out", help="override output path")
     es.set_defaults(fn=cmd_audit_execution_strategy)
+    rl = au_sp.add_parser("reqv3-locks", help="Generate REQv3+Locks end-to-end audit report (writes docs/audits/REQV3_LOCKS_AUDIT_<ts>.md)")
+    rl.add_argument("--out", help="override output path")
+    rl.add_argument("--project-id", dest="project_id", default="audit-e2e")
+    rl.add_argument("--skip-self-improve", action="store_true")
+    rl.add_argument("--skip-db", action="store_true")
+    rl.set_defaults(fn=cmd_audit_reqv3_locks)
 
     doc = sp.add_parser("doctor")
     doc.set_defaults(fn=cmd_doctor)

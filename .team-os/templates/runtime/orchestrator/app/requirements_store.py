@@ -28,8 +28,12 @@ class AddReqOutcome:
     pending_decisions: list[dict[str, Any]]
     actions_taken: list[str]
     drift_report_path: Optional[str] = None
-    raw_input_timestamp: Optional[str] = None
+    raw_input_timestamp: Optional[str] = None  # legacy: may be empty in v3
+    raw_id: Optional[str] = None
     raw_inputs_path: Optional[str] = None
+    raw_assessments_path: Optional[str] = None
+    feasibility_outcome: Optional[str] = None
+    feasibility_report_path: Optional[str] = None
     baseline_version: Optional[int] = None
     baseline_path: Optional[str] = None
 
@@ -70,7 +74,7 @@ def _req_id(seq: int) -> str:
     return f"REQ-{seq:04d}"
 
 
-_RAW_INPUT_CHANNELS = {"cli", "api", "chat", "import", "migration", "baseline"}
+_RAW_INPUT_CHANNELS = {"cli", "api", "chat", "import"}
 _BASELINE_RE = re.compile(r"^original_description_v(\d+)\.md$")
 _TPL_RE = re.compile(r"{{\s*([A-Z0-9_]+)\s*}}")
 
@@ -116,15 +120,25 @@ def _snapshot_if_workspace(req_dir: Path, *, names: list[str], reason: str) -> N
 
 
 def _validate_raw_input(item: dict[str, Any]) -> None:
-    missing = [k for k in ("timestamp", "scope", "channel", "text") if not str(item.get(k) or "").strip()]
+    missing = [k for k in ("raw_id", "timestamp", "scope", "user", "channel", "text", "text_sha256") if not str(item.get(k) or "").strip()]
     if missing:
         raise RequirementsError(f"raw_input schema violation: missing={missing}")
+    rid = str(item.get("raw_id") or "").strip()
+    if len(rid) < 8:
+        raise RequirementsError("raw_input schema violation: raw_id too short")
     ch = str(item.get("channel") or "").strip()
     if ch not in _RAW_INPUT_CHANNELS:
         raise RequirementsError(f"raw_input schema violation: invalid channel={ch!r}")
+    user = str(item.get("user") or "").strip()
+    # Raw inputs must be user-originated verbatim text only; system/self-improve must never write here.
+    if user.startswith("system:") or user in ("self-improve-daemon", "self-improve") or user.lower().startswith("self-improve"):
+        raise RequirementsError("raw_input schema violation: reserved/system user not allowed in raw inputs")
     txt = str(item.get("text") or "")
     if not txt.strip():
         raise RequirementsError("raw_input schema violation: empty text")
+    sha = str(item.get("text_sha256") or "").strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", sha or ""):
+        raise RequirementsError("raw_input schema violation: invalid text_sha256")
 
 
 def capture_raw_input(
@@ -134,27 +148,122 @@ def capture_raw_input(
     text: str,
     channel: str,
     user: str = "",
-    meta: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
     Raw-First capture (append-only).
     Writes: <req_dir>/raw_inputs.jsonl
     """
+    ts = _utc_now_iso()
+    scope_s = str(scope or "").strip()
+    user_s = str(user or "").strip()
+    channel_s = str(channel or "").strip()
+    text_s = str(text or "")
+    raw_id = "RAW-" + _sha256_text("|".join([ts, scope_s, user_s, channel_s, text_s]))[:16]
     item = {
-        "timestamp": _utc_now_iso(),
-        "scope": str(scope or "").strip(),
-        "user": str(user or "").strip(),
-        "channel": str(channel or "").strip(),
-        "text": str(text or ""),
-        "meta": dict(meta or {}),
+        "raw_id": raw_id,
+        "timestamp": ts,
+        "scope": scope_s,
+        "user": user_s,
+        "channel": channel_s,
+        "text": text_s,
+        "text_sha256": _sha256_text(text_s),
     }
     _validate_raw_input(item)
 
     path = req_dir / "raw_inputs.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        f.write(json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
     return {"raw_input": item, "path": str(path)}
+
+
+_RAW_ASSESSMENT_OUTCOMES = {"FEASIBLE", "PARTIALLY_FEASIBLE", "NOT_FEASIBLE", "NEEDS_INFO"}
+
+
+def _validate_raw_assessment(item: dict[str, Any]) -> None:
+    missing = [k for k in ("raw_id", "assessed_at", "outcome", "report_path") if not str(item.get(k) or "").strip()]
+    if missing:
+        raise RequirementsError(f"raw_assessment schema violation: missing={missing}")
+    out = str(item.get("outcome") or "").strip().upper()
+    if out not in _RAW_ASSESSMENT_OUTCOMES:
+        raise RequirementsError(f"raw_assessment schema violation: invalid outcome={out!r}")
+
+
+def _read_last_assessment(req_dir: Path, *, raw_id: str) -> Optional[dict[str, Any]]:
+    p = req_dir / "raw_assessments.jsonl"
+    if not p.exists():
+        return None
+    found = None
+    for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        try:
+            obj = json.loads(s)
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if str(obj.get("raw_id") or "").strip() == str(raw_id or "").strip():
+            found = dict(obj)
+    return found
+
+
+def write_feasibility_report_and_index(
+    req_dir: Path,
+    *,
+    project_id: str,
+    raw: dict[str, Any],
+    assessment: Any,
+    assessor: str,
+) -> dict[str, Any]:
+    """
+    Writes feasibility report + raw_assessments.jsonl index (append-only).
+    Idempotent for the same report sha/outcome.
+    """
+    # Do NOT touch Expanded artifacts here; this helper must be safe to call right after raw capture.
+    # Only create feasibility/ + raw_assessments.jsonl if missing.
+    (req_dir / "feasibility").mkdir(parents=True, exist_ok=True)
+    if not (req_dir / "raw_assessments.jsonl").exists():
+        _write_text(req_dir / "raw_assessments.jsonl", "")
+    raw_id = str(raw.get("raw_id") or "").strip()
+    if not raw_id:
+        raise RequirementsError("missing raw_id for feasibility report")
+
+    # Render report content deterministically.
+    from . import feasibility as _feas  # local import to keep startup small
+
+    report_md = _feas.render_report(raw=raw, assessment=assessment)
+    report_sha = _sha256_text(report_md)
+
+    feas_dir = req_dir / "feasibility"
+    feas_dir.mkdir(parents=True, exist_ok=True)
+    report_path = feas_dir / f"{raw_id}.md"
+    _write_text(report_path, report_md)
+
+    # Portable reference.
+    try:
+        rel_report = os.path.relpath(str(report_path), start=str(req_dir))
+    except Exception:
+        rel_report = str(report_path)
+
+    record = {
+        "raw_id": raw_id,
+        "assessed_at": _utc_now_iso(),
+        "outcome": str(getattr(assessment, "outcome", "") or "").strip().upper(),
+        "report_path": rel_report,
+        "assessor": str(assessor or "").strip(),
+        "report_sha256": report_sha,
+    }
+    _validate_raw_assessment(record)
+
+    # Idempotency: avoid repeated append for the same raw_id+sha.
+    last = _read_last_assessment(req_dir, raw_id=raw_id)
+    if last and str(last.get("report_sha256") or "") == report_sha and str(last.get("outcome") or "").strip().upper() == record["outcome"]:
+        return {"wrote": False, "outcome": record["outcome"], "report_path": str(report_path), "report_rel_path": rel_report, "record": record}
+
+    _append_text(req_dir / "raw_assessments.jsonl", json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+    return {"wrote": True, "outcome": record["outcome"], "report_path": str(report_path), "report_rel_path": rel_report, "record": record}
 
 
 def _baseline_dir(req_dir: Path) -> Path:
@@ -185,7 +294,8 @@ def ensure_baseline_v1(
     *,
     scope: str,
     seed_text: str,
-    raw_input_timestamp: str,
+    raw_id: str,
+    raw_timestamp: str,
     channel: str,
 ) -> dict[str, Any]:
     """
@@ -203,7 +313,8 @@ def ensure_baseline_v1(
             "",
             f"- created_at: {_utc_now_iso()}",
             f"- scope: {scope}",
-            f"- source_raw_input: {raw_input_timestamp}",
+            f"- source_raw_input: {raw_id}",
+            f"- source_raw_timestamp: {raw_timestamp}",
             f"- channel: {channel}",
             "",
             "## Verbatim",
@@ -219,9 +330,13 @@ def ensure_baseline_v1(
 def ensure_scaffold(req_dir: Path, *, project_id: str) -> None:
     (req_dir / "baseline").mkdir(parents=True, exist_ok=True)
     (req_dir / "conflicts").mkdir(parents=True, exist_ok=True)
+    (req_dir / "feasibility").mkdir(parents=True, exist_ok=True)
     raw = req_dir / "raw_inputs.jsonl"
     if not raw.exists():
         _write_text(raw, "")
+    raw_assess = req_dir / "raw_assessments.jsonl"
+    if not raw_assess.exists():
+        _write_text(raw_assess, "")
     y = req_dir / "requirements.yaml"
     md = req_dir / "REQUIREMENTS.md"
     ch = req_dir / "CHANGELOG.md"
@@ -636,13 +751,17 @@ def add_requirement(
     project_id: str,
     req_dir: Path,
     requirement_text: str,
+    workstream_hint: str = "",
     priority: str = "P2",
     rationale: str = "",
     constraints: Optional[list[str]] = None,
     acceptance: Optional[list[str]] = None,
     source: str = "chat",
     scope: str = "",
-    raw_input_timestamp: Optional[str] = None,
+    raw_id: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    feasibility_outcome: str = "",
+    feasibility_report_ref: str = "",
 ) -> AddReqOutcome:
     ensure_scaffold(req_dir, project_id=project_id)
     data = load_requirements(req_dir)
@@ -651,10 +770,18 @@ def add_requirement(
     actions: list[str] = []
     pending: list[dict[str, Any]] = []
 
+    # Changelog "raw=" reference:
+    # - user inputs: raw_id is a real RAW-* id
+    # - system inputs: do not write raw_inputs.jsonl; use a stable marker for auditability
+    raw_ref = str(raw_id or "").strip()
+    if not raw_ref:
+        src = str(source or "").strip().upper()
+        if src.startswith("SYSTEM"):
+            raw_ref = "SYSTEM"
+
     dup = detect_duplicate(reqs, requirement_text)
     if dup:
-        raw_ts = raw_input_timestamp or ""
-        _append_changelog(req_dir, project_id, f"DUPLICATE: raw={raw_ts} matched existing {dup}")
+        _append_changelog(req_dir, project_id, f"DUPLICATE: raw={raw_ref} matched existing {dup}")
         actions.append(f"classification=DUPLICATE duplicate_of={dup}")
         return AddReqOutcome(
             classification="DUPLICATE",
@@ -664,8 +791,10 @@ def add_requirement(
             conflict_report_path=None,
             pending_decisions=[],
             actions_taken=actions,
-            raw_input_timestamp=raw_input_timestamp,
+            raw_id=raw_id,
+            raw_input_timestamp=raw_timestamp,
             raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
             baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
             baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
         )
@@ -722,6 +851,9 @@ def add_requirement(
     now = _utc_now_iso()
 
     ws = infer_workstreams(requirement_text)
+    hint = str(workstream_hint or "").strip()
+    if hint and hint not in ws:
+        ws = sorted(set(ws + [hint]))
     new_req: dict[str, Any] = {
         "req_id": new_id,
         "created_at": now,
@@ -738,8 +870,13 @@ def add_requirement(
         "supersedes": [],
         "conflicts_with": [],
         "decision_log_refs": [],
-        "raw_input_refs": [raw_input_timestamp] if raw_input_timestamp else [],
+        "raw_input_refs": [raw_id] if raw_id else [],
+        "raw_input_ts": raw_timestamp if raw_timestamp else "",
     }
+    if str(feasibility_outcome or "").strip():
+        new_req["feasibility_outcome"] = str(feasibility_outcome).strip().upper()
+    if str(feasibility_report_ref or "").strip():
+        new_req["feasibility_report_ref"] = str(feasibility_report_ref).strip()
 
     # Apply LLM-distilled fields (best-effort, never required).
     if llm_data:
@@ -838,18 +975,18 @@ def add_requirement(
             _append_changelog(
                 req_dir,
                 project_id,
-                f"CONFLICT: raw={(raw_input_timestamp or '')} {new_id} conflicts_with={','.join(conflicts)} report={rel_report}",
+                f"CONFLICT: raw={raw_ref} {new_id} conflicts_with={','.join(conflicts)} report={rel_report}",
             )
         else:
             actions.append(f"classification=COMPATIBLE need_pm_decision=true reason=semantic_check_unavailable")
             _append_changelog(
                 req_dir,
                 project_id,
-                f"NEED_PM_DECISION: raw={(raw_input_timestamp or '')} {new_id} (semantic check unavailable) report={rel_report}",
+                f"NEED_PM_DECISION: raw={raw_ref} {new_id} (semantic check unavailable) report={rel_report}",
             )
     else:
         actions.append(f"classification=COMPATIBLE created={new_id}")
-        _append_changelog(req_dir, project_id, f"COMPATIBLE: raw={(raw_input_timestamp or '')} {new_id} created")
+        _append_changelog(req_dir, project_id, f"COMPATIBLE: raw={raw_ref} {new_id} created")
 
     reqs.append(new_req)
     data["requirements"] = reqs
@@ -868,8 +1005,10 @@ def add_requirement(
         conflict_report_path=conflict_report,
         pending_decisions=pending,
         actions_taken=actions,
-        raw_input_timestamp=raw_input_timestamp,
+        raw_id=raw_id,
+        raw_input_timestamp=raw_timestamp,
         raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+        raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
         baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
         baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
     )
@@ -886,7 +1025,8 @@ def _append_need_pm_decision_item(
     project_id: str,
     title: str,
     text: str,
-    raw_input_timestamp: str,
+    raw_id: str,
+    raw_timestamp: str,
     report_rel_path: str,
     source: str,
     priority: str = "P1",
@@ -920,7 +1060,8 @@ def _append_need_pm_decision_item(
                 "supersedes": [],
                 "conflicts_with": [],
                 "decision_log_refs": [str(report_rel_path or "").strip()] if str(report_rel_path or "").strip() else [],
-                "raw_input_refs": [raw_input_timestamp] if raw_input_timestamp else [],
+                "raw_input_refs": [raw_id] if raw_id else [],
+                "raw_input_ts": raw_timestamp if raw_timestamp else "",
             }
         )
         data["requirements"] = reqs
@@ -928,7 +1069,7 @@ def _append_need_pm_decision_item(
         save_requirements(req_dir, data)
         _snapshot_if_workspace(req_dir, names=["REQUIREMENTS.md"], reason="write REQUIREMENTS.md (decision item)")
         _write_text(req_dir / "REQUIREMENTS.md", render_requirements_md(project_id, reqs))
-        _append_changelog(req_dir, project_id, f"NEED_PM_DECISION: raw={raw_input_timestamp} {rid} report={report_rel_path}")
+        _append_changelog(req_dir, project_id, f"NEED_PM_DECISION: raw={raw_id} {rid} report={report_rel_path}")
         return rid
     except Exception:
         return None
@@ -939,6 +1080,7 @@ def add_requirement_raw_first(
     project_id: str,
     req_dir: Path,
     requirement_text: str,
+    workstream_id: str = "",
     priority: str = "P2",
     rationale: str = "",
     constraints: Optional[list[str]] = None,
@@ -948,50 +1090,155 @@ def add_requirement_raw_first(
     user: str = "",
 ) -> AddReqOutcome:
     """
-    Requirements Protocol v2 (Raw-First).
+    Requirements Protocol v3 (Raw-First + Feasibility).
 
     Order is enforced:
     1) capture raw input (append-only)
-    2) ensure baseline v1 (create-once)
-    3) drift check (fix) on existing Expanded
-    4) conflict/duplicate check + expand requirements.yaml
-    5) post-check (drift check again)
+    2) feasibility assessment + report (deterministic)
+    3) ensure baseline v1 (create-once; only from user raw)
+    4) drift check (fix) on existing Expanded
+    5) conflict/duplicate check + expand requirements.yaml
+    6) post-check (drift check again)
+
+    NOTE: System/self-improve inputs must not write to raw_inputs.jsonl.
     """
     scope = _scope_from_project_id(project_id)
     # Raw-first: do NOT create/modify Expanded artifacts before capturing the raw input.
     req_dir.mkdir(parents=True, exist_ok=True)
 
+    def _is_system_input(*, source: str, user: str) -> bool:
+        u = str(user or "").strip().lower()
+        s = str(source or "").strip().lower()
+        if u.startswith("system:"):
+            return True
+        if u in ("self-improve", "self-improve-daemon") or u.startswith("self-improve"):
+            return True
+        if s.startswith("self-improve") or s.startswith("system"):
+            return True
+        return False
+
+    is_system = _is_system_input(source=source, user=user)
+
+    raw_item: dict[str, Any] = {}
+    raw_id = ""
+    raw_ts = ""
+    actions: list[str] = []
+    feas_outcome = ""
+    feas_report_rel = ""
+
     # Step 1) Raw-First capture (must happen before any Expanded mutations).
-    raw = capture_raw_input(
-        req_dir,
-        scope=scope,
-        text=requirement_text,
-        channel=channel,
-        user=user,
-        meta={
-            "priority": priority,
-            "source": source,
-        },
-    )
-    raw_ts = str((raw.get("raw_input") or {}).get("timestamp") or "")
-    actions: list[str] = [f"raw_first.capture ts={raw_ts} path={raw.get('path')}"]
+    if not is_system:
+        raw = capture_raw_input(
+            req_dir,
+            scope=scope,
+            text=requirement_text,
+            channel=channel,
+            user=user,
+        )
+        raw_item = dict(raw.get("raw_input") or {})
+        raw_id = str(raw_item.get("raw_id") or "").strip()
+        raw_ts = str(raw_item.get("timestamp") or "").strip()
+        actions.append(f"raw_first.capture raw_id={raw_id} path={raw.get('path')}")
+
+        # Step 2) Feasibility assessment + report.
+        from . import feasibility as _feas  # local import
+
+        assessment = _feas.assess(scope=scope, text=requirement_text)
+        feas = write_feasibility_report_and_index(req_dir, project_id=project_id, raw=raw_item, assessment=assessment, assessor="deterministic.rules.v1")
+        feas_outcome = str(feas.get("outcome") or "").strip().upper()
+        feas_report_rel = str(feas.get("report_rel_path") or "").strip()
+        actions.append(f"feasibility.assess outcome={feas_outcome} report={feas_report_rel}")
+    else:
+        actions.append("raw_first.capture skipped (system input)")
 
     # Step 2) Baseline v1 ensure.
-    b = ensure_baseline_v1(req_dir, scope=scope, seed_text=requirement_text, raw_input_timestamp=raw_ts, channel=channel)
-    if b.get("created"):
-        _append_changelog(req_dir, project_id, f"BASELINE_INIT: raw={raw_ts} baseline_v1=baseline/original_description_v1.md")
-        actions.append("baseline.v1=created")
+    b = {}
+    if not is_system:
+        b = ensure_baseline_v1(req_dir, scope=scope, seed_text=requirement_text, raw_id=raw_id, raw_timestamp=raw_ts, channel=channel)
+        if b.get("created"):
+            _append_changelog(req_dir, project_id, f"BASELINE_INIT: raw={raw_id} baseline_v1=baseline/original_description_v1.md")
+            actions.append("baseline.v1=created")
+        else:
+            actions.append("baseline.v1=exists")
     else:
-        actions.append("baseline.v1=exists")
+        if (_baseline_path(req_dir, 1)).exists():
+            actions.append("baseline.v1=exists")
 
     # Now it is safe to create Expanded scaffolds.
     ensure_scaffold(req_dir, project_id=project_id)
+
+    # Feasibility gating (user inputs only).
+    if (not is_system) and feas_outcome in ("NEEDS_INFO", "NOT_FEASIBLE"):
+        title = "FEASIBILITY: Missing Information" if feas_outcome == "NEEDS_INFO" else "FEASIBILITY: Not Feasible (policy/risk/constraints)"
+        from . import feasibility as _feas  # local import
+
+        # Recompute to render deterministic bullet lists in the decision item (no reliance on report parsing).
+        assessment = _feas.assess(scope=scope, text=requirement_text)
+        text = "\n".join(
+            [
+                "Feasibility assessment requires PM/user decision before expansion.",
+                f"- raw_id={raw_id}",
+                f"- outcome={feas_outcome}",
+                f"- report={feas_report_rel}",
+                "",
+                "Blockers:",
+                *([f"- {x}" for x in (assessment.blockers or [])] or ["- (none)"]),
+                "",
+                "Needs Decision / More Info:",
+                *([f"- {x}" for x in (assessment.needs_decision or [])] or ["- (none)"]),
+                "",
+                "Alternatives:",
+                *([f"- {x}" for x in (assessment.alternatives or [])] or ["- (none)"]),
+            ]
+        ).strip()
+        decision_req_id = _append_need_pm_decision_item(
+            req_dir,
+            project_id=project_id,
+            title=title,
+            text=text,
+            raw_id=raw_id,
+            raw_timestamp=raw_ts,
+            report_rel_path=feas_report_rel,
+            source="feasibility_assess",
+            priority="P0" if feas_outcome == "NOT_FEASIBLE" else "P1",
+            workstreams=["general"],
+        )
+        _append_changelog(req_dir, project_id, f"FEASIBILITY_NEED_PM_DECISION: raw={raw_id} outcome={feas_outcome} report={feas_report_rel}")
+        pending = [
+            {
+                "type": "REQUIREMENT_FEASIBILITY",
+                "project_id": project_id,
+                "scope": scope,
+                "raw_id": raw_id,
+                "outcome": feas_outcome,
+                "report_path": feas_report_rel,
+                "decision_req_id": decision_req_id or "",
+            }
+        ]
+        return AddReqOutcome(
+            classification="NEED_PM_DECISION",
+            req_id=None,
+            duplicate_of=None,
+            conflicts_with=[],
+            conflict_report_path=None,
+            pending_decisions=pending,
+            actions_taken=actions,
+            drift_report_path=None,
+            raw_input_timestamp=raw_ts,
+            raw_id=raw_id,
+            raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+            feasibility_outcome=feas_outcome,
+            feasibility_report_path=feas_report_rel or None,
+            baseline_version=int(b.get("version") or 1) if b else (1 if (_baseline_path(req_dir, 1).exists()) else None),
+            baseline_path=str(b.get("path") or "") if b else (str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None),
+        )
 
     # Step 3) Drift check (fix mode) before expanding on a potentially invalid baseline.
     drift = drift_check(req_dir, project_id=project_id, scope=scope, fix=True)
     actions += drift.actions_taken
     if drift.fixed:
-        _append_changelog(req_dir, project_id, f"DRIFT_FIXED: raw={raw_ts} points={'; '.join(drift.drift_points)[:300]}")
+        _append_changelog(req_dir, project_id, f"DRIFT_FIXED: raw={raw_id or raw_ts} points={'; '.join(drift.drift_points)[:300]}")
 
     if drift.need_pm_decision:
         report = drift.report_path or ""
@@ -1008,26 +1255,27 @@ def add_requirement_raw_first(
             text="\n".join(
                 [
                     "Drift detected before expanding new requirements.",
-                    f"- raw_input_ts={raw_ts}",
+                    f"- raw_id={raw_id}",
                     f"- report={rel_report}",
                     "",
                     "Drift points:",
                     *[f"- {p}" for p in (drift.drift_points or [])],
                 ]
             ).strip(),
-            raw_input_timestamp=raw_ts,
+            raw_id=raw_id,
+            raw_timestamp=raw_ts,
             report_rel_path=rel_report,
             source="drift_check",
             priority="P0",
             workstreams=["general"],
         )
-        _append_changelog(req_dir, project_id, f"DRIFT_NEED_PM_DECISION: raw={raw_ts} report={rel_report}")
+        _append_changelog(req_dir, project_id, f"DRIFT_NEED_PM_DECISION: raw={raw_id or raw_ts} report={rel_report}")
         pending = [
             {
                 "type": "REQUIREMENT_DRIFT",
                 "project_id": project_id,
                 "scope": scope,
-                "raw_input_ts": raw_ts,
+                "raw_id": raw_id,
                 "report_path": rel_report,
                 "decision_req_id": decision_req_id or "",
             }
@@ -1042,7 +1290,11 @@ def add_requirement_raw_first(
             actions_taken=actions,
             drift_report_path=rel_report or None,
             raw_input_timestamp=raw_ts,
+            raw_id=raw_id,
             raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+            feasibility_outcome=feas_outcome or None,
+            feasibility_report_path=feas_report_rel or None,
             baseline_version=int(b.get("version") or 1),
             baseline_path=str(b.get("path") or ""),
         )
@@ -1052,13 +1304,17 @@ def add_requirement_raw_first(
         project_id=project_id,
         req_dir=req_dir,
         requirement_text=requirement_text,
+        workstream_hint=str(workstream_id or "").strip(),
         priority=priority,
         rationale=rationale,
         constraints=constraints,
         acceptance=acceptance,
         source=source,
         scope=scope,
-        raw_input_timestamp=raw_ts,
+        raw_id=raw_id or None,
+        raw_timestamp=raw_ts or None,
+        feasibility_outcome=feas_outcome,
+        feasibility_report_ref=feas_report_rel,
     )
     actions += list(out.actions_taken or [])
 
@@ -1083,27 +1339,28 @@ def add_requirement_raw_first(
                 text="\n".join(
                     [
                         "Drift detected in post-check after expanding requirements.",
-                        f"- raw_input_ts={raw_ts}",
+                        f"- raw_id={raw_id}",
                         f"- report={rel_report}",
                         "",
                         "Drift points:",
                         *[f"- {p}" for p in (post2.drift_points or [])],
                     ]
                 ).strip(),
-                raw_input_timestamp=raw_ts,
+                raw_id=raw_id,
+                raw_timestamp=raw_ts,
                 report_rel_path=rel_report,
                 source="drift_check",
                 priority="P0",
                 workstreams=["general"],
             )
-            _append_changelog(req_dir, project_id, f"POSTCHECK_DRIFT_NEED_PM_DECISION: raw={raw_ts} report={rel_report}")
+            _append_changelog(req_dir, project_id, f"POSTCHECK_DRIFT_NEED_PM_DECISION: raw={raw_id or raw_ts} report={rel_report}")
             pending = list(out.pending_decisions or [])
             pending.append(
                 {
                     "type": "REQUIREMENT_DRIFT",
                     "project_id": project_id,
                     "scope": scope,
-                    "raw_input_ts": raw_ts,
+                    "raw_id": raw_id,
                     "report_path": rel_report,
                     "decision_req_id": decision_req_id or "",
                 }
@@ -1118,7 +1375,11 @@ def add_requirement_raw_first(
                 actions_taken=actions,
                 drift_report_path=rel_report or None,
                 raw_input_timestamp=raw_ts,
+                raw_id=raw_id,
                 raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+                raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+                feasibility_outcome=feas_outcome or None,
+                feasibility_report_path=feas_report_rel or None,
                 baseline_version=1,
                 baseline_path=str(_baseline_path(req_dir, 1)),
             )
@@ -1134,9 +1395,199 @@ def add_requirement_raw_first(
         actions_taken=actions,
         drift_report_path=out.drift_report_path,
         raw_input_timestamp=raw_ts,
+        raw_id=raw_id,
         raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+        raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+        feasibility_outcome=feas_outcome or None,
+        feasibility_report_path=feas_report_rel or None,
         baseline_version=1,
         baseline_path=str(_baseline_path(req_dir, 1)),
+    )
+
+
+def add_requirement_system_update(
+    *,
+    project_id: str,
+    req_dir: Path,
+    requirement_text: str,
+    workstream_id: str = "",
+    priority: str = "P2",
+    rationale: str = "",
+    constraints: Optional[list[str]] = None,
+    acceptance: Optional[list[str]] = None,
+    source: str = "SYSTEM",
+) -> AddReqOutcome:
+    """
+    System update channel (non-raw):
+    - Does NOT write raw_inputs.jsonl (user-only).
+    - Does NOT write feasibility reports or raw_assessments.
+    - Still performs drift checks and Expanded updates deterministically.
+    """
+    scope = _scope_from_project_id(project_id)
+    req_dir.mkdir(parents=True, exist_ok=True)
+    ensure_scaffold(req_dir, project_id=project_id)
+
+    actions: list[str] = []
+
+    # Drift check (fix mode) before expanding.
+    drift = drift_check(req_dir, project_id=project_id, scope=scope, fix=True)
+    actions += drift.actions_taken
+    if drift.fixed:
+        _append_changelog(req_dir, project_id, f"DRIFT_FIXED: raw=SYSTEM source={source} points={'; '.join(drift.drift_points)[:300]}")
+
+    if drift.need_pm_decision:
+        report = drift.report_path or ""
+        rel_report = ""
+        if report:
+            try:
+                rel_report = os.path.relpath(report, start=str(req_dir))
+            except Exception:
+                rel_report = report
+        decision_req_id = _append_need_pm_decision_item(
+            req_dir,
+            project_id=project_id,
+            title="DRIFT: System update blocked (Expanded drifted or baseline missing)",
+            text="\n".join(
+                [
+                    "System requirements update blocked due to drift/baseline issues.",
+                    f"- source={source}",
+                    f"- report={rel_report}",
+                    "",
+                    "Drift points:",
+                    *[f"- {p}" for p in (drift.drift_points or [])],
+                ]
+            ).strip(),
+            raw_id="",
+            raw_timestamp="",
+            report_rel_path=rel_report,
+            source="drift_check",
+            priority="P0",
+            workstreams=["general"],
+        )
+        _append_changelog(req_dir, project_id, f"DRIFT_NEED_PM_DECISION: raw=SYSTEM source={source} report={rel_report} decision={decision_req_id or ''}")
+        pending = [
+            {
+                "type": "REQUIREMENT_DRIFT",
+                "project_id": project_id,
+                "scope": scope,
+                "raw_id": "",
+                "report_path": rel_report,
+                "decision_req_id": decision_req_id or "",
+            }
+        ]
+        return AddReqOutcome(
+            classification="DRIFT",
+            req_id=None,
+            duplicate_of=None,
+            conflicts_with=[],
+            conflict_report_path=None,
+            pending_decisions=pending,
+            actions_taken=actions,
+            drift_report_path=rel_report or None,
+            raw_input_timestamp=None,
+            raw_id=None,
+            raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+            baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+            baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
+        )
+
+    out = add_requirement(
+        project_id=project_id,
+        req_dir=req_dir,
+        requirement_text=requirement_text,
+        workstream_hint=str(workstream_id or "").strip(),
+        priority=priority,
+        rationale=rationale,
+        constraints=constraints,
+        acceptance=acceptance,
+        source=str(source or "SYSTEM"),
+        scope=scope,
+        raw_id=None,
+        raw_timestamp=None,
+        feasibility_outcome="",
+        feasibility_report_ref="",
+    )
+    actions += list(out.actions_taken or [])
+
+    # Post-check (check-only first).
+    post = drift_check(req_dir, project_id=project_id, scope=scope, fix=False)
+    if not post.ok:
+        post2 = drift_check(req_dir, project_id=project_id, scope=scope, fix=True)
+        actions += post2.actions_taken
+        if post2.need_pm_decision:
+            report = post2.report_path or ""
+            rel_report = ""
+            if report:
+                try:
+                    rel_report = os.path.relpath(report, start=str(req_dir))
+                except Exception:
+                    rel_report = report
+            decision_req_id = _append_need_pm_decision_item(
+                req_dir,
+                project_id=project_id,
+                title="DRIFT: Post-check detected Expanded drift after system update",
+                text="\n".join(
+                    [
+                        "Drift detected in post-check after system requirements update.",
+                        f"- source={source}",
+                        f"- report={rel_report}",
+                        "",
+                        "Drift points:",
+                        *[f"- {p}" for p in (post2.drift_points or [])],
+                    ]
+                ).strip(),
+                raw_id="",
+                raw_timestamp="",
+                report_rel_path=rel_report,
+                source="drift_check",
+                priority="P0",
+                workstreams=["general"],
+            )
+            _append_changelog(req_dir, project_id, f"POSTCHECK_DRIFT_NEED_PM_DECISION: raw=SYSTEM source={source} report={rel_report} decision={decision_req_id or ''}")
+            pending = list(out.pending_decisions or [])
+            pending.append(
+                {
+                    "type": "REQUIREMENT_DRIFT",
+                    "project_id": project_id,
+                    "scope": scope,
+                    "raw_id": "",
+                    "report_path": rel_report,
+                    "decision_req_id": decision_req_id or "",
+                }
+            )
+            return AddReqOutcome(
+                classification="DRIFT",
+                req_id=out.req_id,
+                duplicate_of=out.duplicate_of,
+                conflicts_with=list(out.conflicts_with or []),
+                conflict_report_path=out.conflict_report_path,
+                pending_decisions=pending,
+                actions_taken=actions,
+                drift_report_path=rel_report or None,
+                raw_input_timestamp=None,
+                raw_id=None,
+                raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+                raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+                baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+                baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
+            )
+
+    return AddReqOutcome(
+            classification=out.classification,
+            req_id=out.req_id,
+            duplicate_of=out.duplicate_of,
+            conflicts_with=list(out.conflicts_with or []),
+            conflict_report_path=out.conflict_report_path,
+            pending_decisions=list(out.pending_decisions or []),
+            actions_taken=actions,
+            drift_report_path=out.drift_report_path,
+            raw_input_timestamp=None,
+            raw_id=None,
+            raw_inputs_path=str(req_dir / "raw_inputs.jsonl"),
+            raw_assessments_path=str(req_dir / "raw_assessments.jsonl"),
+            baseline_version=1 if (_baseline_path(req_dir, 1).exists()) else None,
+            baseline_path=str(_baseline_path(req_dir, 1)) if (_baseline_path(req_dir, 1).exists()) else None,
     )
 
 
@@ -1222,11 +1673,18 @@ def propose_baseline_v2(
         req_dir,
         scope=scope,
         text=new_baseline_text,
-        channel="baseline",
+        channel=channel,
         user=user,
-        meta={"reason": reason, "channel": channel},
     )
-    raw_ts = str((raw.get("raw_input") or {}).get("timestamp") or "")
+    raw_item = dict(raw.get("raw_input") or {})
+    raw_id = str(raw_item.get("raw_id") or "").strip()
+    raw_ts = str(raw_item.get("timestamp") or "").strip()
+
+    from . import feasibility as _feas  # local import
+
+    assessment = _feas.assess(scope=scope, text=str(new_baseline_text or ""))
+    feas = write_feasibility_report_and_index(req_dir, project_id=project_id, raw=raw_item, assessment=assessment, assessor="deterministic.rules.v1")
+    feas_report_rel = str(feas.get("report_rel_path") or "").strip()
 
     # Now it is safe to create Expanded scaffolds (if missing).
     ensure_scaffold(req_dir, project_id=project_id)
@@ -1244,7 +1702,9 @@ def propose_baseline_v2(
             f"- created_at: {_utc_now_iso()}",
             f"- scope: {scope}",
             f"- reason: {reason}",
-            f"- source_raw_input: {raw_ts}",
+            f"- source_raw_input: {raw_id}",
+            f"- source_raw_timestamp: {raw_ts}",
+            f"- feasibility_report: {feas_report_rel}",
             "",
             "## Verbatim",
             "",
@@ -1266,6 +1726,8 @@ def propose_baseline_v2(
             f"- scope: {scope}",
             f"- baseline_v1: baseline/original_description_v1.md",
             f"- proposed_v2: baseline/original_description_v2.md",
+            f"- raw_id: {raw_id}",
+            f"- feasibility_report: {feas_report_rel}",
             f"- reason: {reason}",
             "",
             "## Needs PM Decision",
@@ -1291,7 +1753,7 @@ def propose_baseline_v2(
     )
     _write_text(report, report_body)
 
-    _append_changelog(req_dir, project_id, f"BASELINE_V2_PROPOSED: raw={raw_ts} report={rel}")
+    _append_changelog(req_dir, project_id, f"BASELINE_V2_PROPOSED: raw={raw_id} report={rel}")
 
     decision_req_id = _append_need_pm_decision_item(
         req_dir,
@@ -1300,14 +1762,16 @@ def propose_baseline_v2(
         text="\n".join(
             [
                 "Baseline v2 proposal created.",
-                f"- raw_input_ts={raw_ts}",
+                f"- raw_id={raw_id}",
                 f"- report={rel}",
                 f"- reason={reason}",
+                f"- feasibility_report={feas_report_rel}",
                 "",
                 "Next: PM must choose Option A/B/C in the report.",
             ]
         ).strip(),
-        raw_input_timestamp=raw_ts,
+        raw_id=raw_id,
+        raw_timestamp=raw_ts,
         report_rel_path=rel,
         source="baseline",
         priority="P0",
@@ -1317,7 +1781,9 @@ def propose_baseline_v2(
     return {
         "ok": True,
         "scope": scope,
+        "raw_id": raw_id,
         "raw_input_ts": raw_ts,
+        "feasibility_report": feas_report_rel,
         "baseline_v2_path": str(p),
         "report_path": rel,
         "need_pm_decision": True,
