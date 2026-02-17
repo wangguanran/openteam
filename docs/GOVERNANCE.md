@@ -40,6 +40,13 @@
 
 审批记录必须写入任务日志（建议写在 `01_plan.md` 与 `05_release.md`）。
 
+实现约束（确定性）：
+
+- 高风险动作必须先走 approvals 引擎（risk classifier + policy）再执行。
+- 集群模式：由 Brain(leader) 按策略自动 approve/deny，并优先写入 Postgres（`TEAMOS_DB_URL`）。
+- 单机模式：需要人工确认（交互式 YES）后才可执行；无 DB 时写入 Workspace 审计文件作为待同步证据。
+- 查看审批记录：`./teamos approvals list`（DB 优先；否则输出 fallback 审计路径）。
+
 ## 4. 决定性产物策略（脚本优先）
 
 - 任何可重复/可程序化的产物必须由 Python pipelines 生成，并通过 schema 校验后写入真相源。
@@ -91,22 +98,30 @@ cd team-os
 ./teamos workspace migrate --from-repo --force
 ```
 
-## 8. 需求处理协议 v2（Raw‑First）
+## 8. 需求处理协议 v3（Raw‑First + Feasibility + Sidecar Assessments）
 
 核心原则：
 
 - **Baseline 不可覆盖**：`baseline/original_description_v1.md` 创建后不得覆盖，只能新增版本（v2/v3...）。
-- **Raw‑First**：任何“新增需求输入”（CLI/API/chat 的 `NEW_REQUIREMENT`）必须先逐字写入 `raw_inputs.jsonl`（append-only），再生成/更新 Expanded。
+- **Raw Input 只允许用户原文**：`raw_inputs.jsonl` 仅包含“用户输入原文 + 必要元数据”（append-only），严禁写入评估结论/扩展内容/self-improve 内容。
+- **Raw 的评估不污染 Raw**：可行性评估结果通过旁路索引 `raw_assessments.jsonl`（append-only）关联 `raw_id -> outcome + report_path`。
+- **Feasibility 必做**：每条 Raw 都必须生成决定性可行性报告 `feasibility/<raw_id>.md`，并落盘 outcome（`FEASIBLE|PARTIALLY_FEASIBLE|NOT_FEASIBLE|NEEDS_INFO`）。
+- **Raw‑First**：任何“新增用户需求输入”（CLI/API/chat 的 `NEW_REQUIREMENT`）必须先落盘 Raw，再允许生成/更新 Expanded。
 - **Expanded 禁止手改**：`requirements.yaml` / `REQUIREMENTS.md` 由生成器维护；手工修改会被判定为 drift，并应通过 `rebuild` 恢复决定性渲染。
 - **冲突与漂移必须显式决策**：
   - 新输入与既有 Expanded 冲突：生成 `conflicts/*.md` 并进入 `NEED_PM_DECISION`
   - Expanded 与 Baseline 漂移（drift）：生成 `conflicts/*-DRIFT.md` 并进入 `NEED_PM_DECISION`
-- **幂等与可追溯**：每次更新必须写入 `CHANGELOG.md`，并引用 `raw_inputs.jsonl` 的时间戳作为证据（`raw=<timestamp>`）。
+- **可行性闸门**：
+  - `NEEDS_INFO` / `NOT_FEASIBLE`：必须进入 `NEED_PM_DECISION`，不得把不可执行内容写入可执行 Expanded 条目。
+  - `PARTIALLY_FEASIBLE`：允许写入可行部分，同时把不可行部分作为风险/限制/待决策进入冲突/决策项。
+- **Self‑Improve 与 Raw 分离**：Self‑Improve 的提案写入 `.team-os/ledger/self_improve/*.md`，并通过系统通道更新 Expanded；禁止写入 `raw_inputs.jsonl`。
+- **并发安全**：关键写入口必须先获取锁（repo lock + scope lock）。返回 `LOCK_BUSY` 时不得并发写入同 scope，按诊断信息等待或重试。
+- **幂等与可追溯**：每次 Expanded 更新必须写入 `CHANGELOG.md`，并引用 `raw_id`/报告路径作为证据。
 
 强制执行（工具链）：
 
 - CLI：
-  - `teamos req add`：写入 Raw + 更新 Expanded（自动 drift/conflict 检测）
+  - `teamos req add`：写入 Raw（用户原文）+ 生成可行性报告 + 更新 Expanded（自动 drift/conflict 检测）
   - `teamos req verify`：仅校验（drift/conflict）
   - `teamos req rebuild`：决定性重渲染（禁止手改时用于恢复）
   - `teamos req baseline set-v2`：baseline v2 提案（默认进入 `NEED_PM_DECISION`）

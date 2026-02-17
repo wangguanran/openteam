@@ -13,7 +13,7 @@
 3. 禁止 secrets 入库：任何 token/key/password/证书/认证缓存不得写入 git；只允许 `.env.example`。`.gitignore` 必须覆盖 `.env*`、`.codex/`、`auth.json`、`*token*`、`*credentials*` 等。
 4. 决定性优先（脚本优先）：任何“流程化/可重复”的能力必须由 Python 脚本实现，并被 `./teamos`（CLI/Control Plane）调用；Agent/LLM 只能输出建议/草案，且必须经过脚本归一化/校验才能进入真相源。
 5. 真相源禁止手改：以下目录/文件只能由 pipelines 写入或更新（手改会被视为 drift，并应通过重建恢复）：
-   - Requirements（scope=teamos）：`docs/teamos/requirements/{raw_inputs.jsonl,requirements.yaml,REQUIREMENTS.md,CHANGELOG.md}`
+   - Requirements（scope=teamos）：`docs/teamos/requirements/{raw_inputs.jsonl,raw_assessments.jsonl,feasibility/,requirements.yaml,REQUIREMENTS.md,CHANGELOG.md}`
    - Prompt（scope=teamos）：`prompt-library/teamos/*`
    - Task 真相源：`.team-os/ledger/**`、`.team-os/logs/**`（只能用 `./teamos task new/close` 等脚本入口维护结构与状态）
 6. Repo vs Workspace 硬隔离：`team-os/` git 仓库只包含 Team OS 自身文件（scope=`teamos`）。任何 scope=`project:<id>` 的真相源（requirements/ledger/logs/prompts/plan/项目 workdir 等）必须在 Workspace（默认 `~/.teamos/workspace`），不得出现在 repo 目录树内。
@@ -22,6 +22,7 @@
 9. OAuth 默认：LLM 调用默认使用 Codex OAuth（`codex login`/`codex login --device-auth`）；API Key 仅可选 fallback 且不得落盘。
 10. 集群 leader-only 写入：只有 Brain(leader) 能写入“真相源”（需求主文档/Prompt/Projects 同步/创建任务/更新 focus）。非 leader 只能只读扫描并上报。
 11. 项目仓库 AGENTS.md 注入区块：任何 Team-OS 管理的项目仓库根目录 `AGENTS.md` 必须包含 Team-OS 项目操作手册区块（标记：`<!-- TEAMOS_MANUAL_START -->` / `<!-- TEAMOS_MANUAL_END -->`）。该区块只能由脚本幂等注入/更新（禁止手工编辑）。
+12. 并发安全（锁）：关键写入口会先获取锁（repo lock + scope lock）；当返回 `LOCK_BUSY` 时不得并发写入同 scope，需等待或重试（避免并发破坏真相源）。
 
 ## 1. 目录边界与入口
 
@@ -65,7 +66,7 @@ cd team-os
 
 常用入口（均为决定性输出，可全量重建）：
 
-- Requirements（Raw-First）：`./teamos req add|verify|rebuild --scope teamos`
+- Requirements（协议 v3：Raw-only + Feasibility）：`./teamos req add|verify|rebuild --scope teamos`
 - Prompt 编译：`./teamos prompt compile --scope teamos`
 - 项目配置（Workspace-local）：`./teamos project config init|show|set|validate --project <id>`
 - 项目仓库 AGENTS 手册注入：`./teamos project agents inject --project <id>`（幂等；仅替换标记区块；保留项目原有内容）
