@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from _common import PipelineError, add_default_args, resolve_repo_root, resolve_workspace_root
+from _db import connect, get_db_url
 from repo_purity_check import main as _repo_purity_main
 from workspace_doctor import check_workspace
 
@@ -71,6 +72,42 @@ def _gh_status() -> tuple[bool, str]:
     return (False, "FAIL (run: gh auth login) " + (head[0][:200] if head else ""))
 
 
+def _db_check(repo_root: Path) -> dict[str, Any]:
+    """
+    Postgres connectivity + migrations check.
+    - When TEAMOS_DB_URL is unset: SKIP (ok=true)
+    - When set: require psycopg + connection + schema_migrations present.
+    """
+    dsn = get_db_url()
+    if not dsn:
+        return {"ok": True, "status": "SKIP", "reason": "TEAMOS_DB_URL not set"}
+
+    try:
+        conn = connect(dsn)
+    except Exception as e:
+        return {"ok": False, "status": "FAIL", "reason": "db_driver_or_connect_failed", "error": str(e)[:300], "hint": 'Install: python3 -m pip install --user "psycopg[binary]"'}
+
+    try:
+        with conn.cursor() as cur:
+            try:
+                rows = cur.execute("SELECT version, applied_at FROM schema_migrations ORDER BY version ASC").fetchall()
+            except Exception as e:
+                return {"ok": False, "status": "FAIL", "reason": "migrations_missing", "error": str(e)[:200], "hint": "Run: teamos db migrate"}
+        vers = []
+        for r in rows or []:
+            try:
+                vers.append(str(r.get("version") or "").strip())
+            except Exception:
+                continue
+        vers = [v for v in vers if v]
+        return {"ok": True, "status": "OK", "dsn": "set", "migrations": vers[-20:]}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Team OS doctor (deterministic local checks)")
     add_default_args(ap)
@@ -117,6 +154,12 @@ def main(argv: list[str] | None = None) -> int:
         ok = False
     report["codex"] = {"ok": codex_ok, "message": codex_msg}
     report["gh"] = {"ok": gh_ok, "message": gh_msg}
+
+    # Postgres DB (shared hub). Optional unless TEAMOS_DB_URL is set.
+    db = _db_check(repo)
+    report["postgres_db"] = db
+    if not bool(db.get("ok")):
+        ok = False
 
     # Control plane health + API coverage (best-effort; should pass when runtime matches repo template).
     base = str(args.base_url or "").strip().rstrip("/") or _load_base_url(profile=str(args.profile or ""))
@@ -173,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"control_plane: FAIL {cp.get('error','')}")
         print(f"codex: {'OK' if codex_ok else 'FAIL'} {codex_msg}")
         print(f"gh: {'OK' if gh_ok else 'FAIL'} {gh_msg}")
+        dbs = report.get("postgres_db") or {}
+        print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
         print(f"workspace_root={ws}")
         print(f"workspace: {'OK' if w.get('ok') else 'FAIL'}")
         print(f"repo: {'OK' if purity.get('ok') else 'FAIL'}")
@@ -182,4 +227,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
