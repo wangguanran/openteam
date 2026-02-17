@@ -85,6 +85,13 @@ git commit -m "<TASK_ID>: <short summary>"
 git push -u origin teamos/<TASK_ID>-<slug>
 ```
 
+推荐使用决定性 ship 命令（自动执行 close→闸门→commit→push，并在 push 失败时标记 BLOCKED）：
+
+```bash
+cd team-os
+./teamos task ship <TASK_ID> --scope teamos --summary "<short summary>"
+```
+
 可选（若 `gh` 可用且已登录）：创建 PR，标题同 commit message，正文引用 task_id 与验收命令。
 
 若无法 push（无 remote/无权限/网络失败），必须：

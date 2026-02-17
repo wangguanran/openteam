@@ -28,6 +28,7 @@
 - **一个 Update Unit = 一个任务**（`TASK_ID`）。
 - **每个任务一分支**：`teamos/<TASK_ID>-<slug>`
 - **先 close 再提交**：必须先 `./teamos task close <TASK_ID>` 通过，才允许 `git commit`/`git push`。
+- **推荐 ship 命令**：`./teamos task ship <TASK_ID> --summary "<...>"`（close→闸门→commit→push；push 失败标记 BLOCKED）
 - **提交信息**：`<TASK_ID>: <short summary>`
 - **推送失败即阻塞**：若无 remote/无权限/网络失败，必须在任务日志 `03_work.md` 记录原因与修复步骤，并将任务标记为 `BLOCKED`（由脚本完成）。
 
