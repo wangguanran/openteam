@@ -11,7 +11,7 @@
     "workstream_id": { "type": "string" },
     "status": {
       "type": "string",
-      "enum": ["intake", "plan", "todo", "doing", "test", "release", "observe", "retro", "closed"]
+      "enum": ["intake", "plan", "todo", "doing", "test", "release", "observe", "retro", "blocked", "closed"]
     },
     "risk_level": { "type": "string", "enum": ["R0", "R1", "R2", "R3"] },
     "need_pm_decision": { "type": ["boolean", "null"] },
@@ -36,4 +36,3 @@
     }
   }
 }
-
