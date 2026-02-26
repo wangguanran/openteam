@@ -211,7 +211,7 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
-def _run_pipeline(repo_root: Path, script_rel: str, argv: list[str]) -> None:
+def _run_pipeline(repo_root: Path, script_rel: str, argv: list[str], *, env: Optional[dict[str, str]] = None) -> None:
     """
     Run a deterministic pipeline script from this repo.
 
@@ -221,7 +221,7 @@ def _run_pipeline(repo_root: Path, script_rel: str, argv: list[str]) -> None:
     if not script.exists():
         raise RuntimeError(f"missing pipeline: {script}")
     cmd = [sys.executable, str(script)] + list(argv or [])
-    p = subprocess.run(cmd, check=False)
+    p = subprocess.run(cmd, check=False, env=env or None)
     if p.returncode != 0:
         raise SystemExit(p.returncode)
 
@@ -610,6 +610,52 @@ def _require_project_id(pid: str) -> str:
 
 def _project_repo_dir(workspace_root: Path, project_id: str) -> Path:
     return workspace_root / "projects" / project_id / "repo"
+
+
+def _detect_workspace_project_from_cwd(workspace_root: Path, cwd: Optional[Path] = None) -> str:
+    cur = (cwd or Path.cwd()).resolve()
+    base = (workspace_root / "projects").resolve()
+    try:
+        rel = cur.relative_to(base)
+    except Exception:
+        return ""
+    parts = rel.parts
+    if len(parts) < 2:
+        return ""
+    pid = str(parts[0] or "").strip()
+    seg = str(parts[1] or "").strip()
+    if seg != "repo":
+        return ""
+    return _require_project_id(pid)
+
+
+def _project_repl(args: argparse.Namespace, *, project_id: str) -> int:
+    base, _prof = _base_url(args)
+    print(f"project_repl: project_id={project_id} scope=project:{project_id}")
+    print("Enter requirement text. Commands: /exit /help")
+    while True:
+        try:
+            line = sys.stdin.readline()
+        except KeyboardInterrupt:
+            break
+        if not line:
+            break
+        text = line.rstrip("\n")
+        if not text.strip():
+            continue
+        if text.strip() in ("/exit", "/quit"):
+            break
+        if text.strip() == "/help":
+            print("commands: /exit /help ; any other text is captured as RAW requirement")
+            continue
+        out = _http_json(
+            "POST",
+            base + "/v1/requirements/add",
+            {"scope": f"project:{project_id}", "text": text, "source": "cli", "workstream_id": "general"},
+            timeout_sec=120,
+        )
+        print(str(out.get("summary") or "").rstrip())
+    return 0
 
 
 def _inject_project_agents_manual(args: argparse.Namespace, *, project_id: str, repo_path: Optional[str] = None, reason: str = "") -> None:
@@ -1315,6 +1361,159 @@ def cmd_approvals_list(args: argparse.Namespace) -> None:
     _run_pipeline(repo_root, ".team-os/scripts/pipelines/approvals.py", argv)
 
 
+def cmd_hub_init(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))]
+    if bool(getattr(args, "with_redis", False)):
+        argv.append("--with-redis")
+    if bool(getattr(args, "without_redis", False)):
+        argv.append("--without-redis")
+    argv += ["--pg-port", str(int(getattr(args, "pg_port", 5432) or 5432))]
+    argv += ["--redis-port", str(int(getattr(args, "redis_port", 6379) or 6379))]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_init.py", argv)
+
+
+def cmd_hub_up(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_up.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+
+
+def cmd_hub_down(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_down.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+
+
+def cmd_hub_status(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_status.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+
+
+def cmd_hub_logs(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--tail", str(int(getattr(args, "tail", 200) or 200))]
+    if str(getattr(args, "service", "") or "").strip():
+        argv += ["--service", str(args.service).strip()]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_logs.py", argv)
+
+
+def cmd_hub_migrate(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_migrate.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+
+
+def cmd_hub_expose(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _approval_gate(
+        args,
+        repo_root=repo_root,
+        action_kind="hub_expose_remote_access",
+        summary=f"hub expose bind_ip={args.bind_ip} allow_cidrs={args.allow_cidrs} open_redis={bool(args.open_redis)}",
+        payload={
+            "bind_ip": str(args.bind_ip),
+            "allow_cidrs": str(args.allow_cidrs),
+            "open_redis": bool(args.open_redis),
+        },
+    )
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        "--bind-ip",
+        str(args.bind_ip),
+        "--allow-cidrs",
+        str(args.allow_cidrs),
+    ]
+    if bool(args.open_redis):
+        argv.append("--open-redis")
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_expose.py", argv)
+
+
+def cmd_hub_backup(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))]
+    if str(getattr(args, "output", "") or "").strip():
+        argv += ["--output", str(args.output).strip()]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_backup.py", argv)
+
+
+def cmd_hub_restore(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _approval_gate(
+        args,
+        repo_root=repo_root,
+        action_kind="hub_restore",
+        summary=f"hub restore file={args.file}",
+        payload={"file": str(args.file)},
+    )
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--file", str(args.file)]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_restore.py", argv)
+
+
+def cmd_hub_export_config(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--format", str(args.format)]
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_export_config.py", argv)
+
+
+def cmd_hub_push_config(args: argparse.Namespace) -> None:
+    repo_root = _find_team_os_repo_root()
+    if not repo_root:
+        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
+    _approval_gate(
+        args,
+        repo_root=repo_root,
+        action_kind="hub_push_config_with_secrets",
+        summary=f"hub push-config host={args.host} user={args.user}",
+        payload={"host": str(args.host), "user": str(args.user), "password_stdin": bool(args.password_stdin), "ssh_key": str(args.ssh_key or "")},
+    )
+    argv = [
+        "--repo-root",
+        str(repo_root),
+        "--workspace-root",
+        str(_workspace_root(args)),
+        "--host",
+        str(args.host),
+        "--user",
+        str(args.user),
+        "--remote-env-path",
+        str(args.remote_env_path),
+    ]
+    if str(getattr(args, "ssh_key", "") or "").strip():
+        argv += ["--ssh-key", str(args.ssh_key).strip()]
+    if str(getattr(args, "hub_host", "") or "").strip():
+        argv += ["--hub-host", str(args.hub_host).strip()]
+    env = None
+    if bool(getattr(args, "password_stdin", False)):
+        pw = sys.stdin.read().strip()
+        if not pw:
+            raise RuntimeError("--password-stdin was provided but stdin was empty")
+        argv.append("--password-stdin")
+        env = dict(os.environ)
+        env["TEAMOS_SSH_PASSWORD"] = pw
+    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_push_config.py", argv, env=env)
+
+
 def cmd_panel_show(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
     project_id = _default_project_id(prof, args)
@@ -1757,6 +1956,15 @@ def cmd_node_add(args: argparse.Namespace) -> None:
     ]
     if args.ssh_key:
         argv += ["--ssh-key", args.ssh_key]
+    child_env: Optional[dict[str, str]] = None
+    stdin_password = ""
+    if bool(getattr(args, "password_stdin", False)):
+        stdin_password = sys.stdin.read().strip()
+        if not stdin_password:
+            raise RuntimeError("--password-stdin was provided but stdin was empty")
+        argv += ["--password-stdin"]
+        child_env = dict(os.environ)
+        child_env["TEAMOS_SSH_PASSWORD"] = stdin_password
     if args.execute:
         _approval_gate(
             args,
@@ -1772,12 +1980,47 @@ def cmd_node_add(args: argparse.Namespace) -> None:
                 "capabilities": args.capabilities or "",
                 "tags": args.tags or "",
                 "ssh_key": args.ssh_key or "",
+                "password_stdin": bool(getattr(args, "password_stdin", False)),
+                "push_hub_config": bool(getattr(args, "push_hub_config", False)),
+                "hub_host": str(getattr(args, "hub_host", "") or ""),
+                "remote_env_path": str(getattr(args, "remote_env_path", "") or "~/.teamos/node.env"),
             },
         )
         argv += ["--execute"]
-    p = subprocess.run(argv, check=False)
+    p = subprocess.run(argv, check=False, env=child_env or None)
     if p.returncode != 0:
         raise SystemExit(p.returncode)
+    # Optional: push Brain hub config to the new node.
+    if bool(getattr(args, "execute", False)) and bool(getattr(args, "push_hub_config", False)):
+        argv2 = [
+            "--repo-root",
+            str(repo_root),
+            "--workspace-root",
+            str(_workspace_root(args)),
+            "--host",
+            str(args.host),
+            "--user",
+            str(args.user),
+            "--remote-env-path",
+            str(getattr(args, "remote_env_path", "") or "~/.teamos/node.env"),
+        ]
+        if str(getattr(args, "hub_host", "") or "").strip():
+            argv2 += ["--hub-host", str(args.hub_host).strip()]
+        if str(getattr(args, "ssh_key", "") or "").strip():
+            argv2 += ["--ssh-key", str(args.ssh_key).strip()]
+        env2 = None
+        if bool(getattr(args, "password_stdin", False)):
+            argv2.append("--password-stdin")
+            env2 = dict(os.environ)
+            env2["TEAMOS_SSH_PASSWORD"] = stdin_password
+        _approval_gate(
+            args,
+            repo_root=repo_root,
+            action_kind="hub_push_config_with_secrets",
+            summary=f"node add push hub config host={args.host} user={args.user}",
+            payload={"host": args.host, "user": args.user, "remote_env_path": str(getattr(args, 'remote_env_path', '') or '~/.teamos/node.env')},
+        )
+        _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_push_config.py", argv2, env=env2)
 
 
 def cmd_repo_create(args: argparse.Namespace) -> None:
@@ -1945,6 +2188,23 @@ def shutil_which(cmd: str) -> Optional[str]:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    argv = list(argv) if argv is not None else sys.argv[1:]
+
+    # Project directory convenience mode:
+    # when invoked as `teamos` (no subcommand) inside <workspace>/projects/<id>/repo,
+    # enter a raw-requirement REPL.
+    if not argv:
+        try:
+            cfg = _load_config()
+            ws = _workspace_root_from_cfg(cfg)
+            pid = _detect_workspace_project_from_cwd(ws)
+            if pid:
+                tmp = argparse.Namespace(profile=None, workspace_root=str(ws))
+                return int(_project_repl(tmp, project_id=pid))
+        except Exception:
+            # Fall through to argparse help.
+            pass
+
     p = argparse.ArgumentParser(prog="teamos", description="Team OS CLI (Control Plane client)")
     p.add_argument("--profile", help="profile name (from ~/.teamos/config.toml)")
     p.add_argument("--workspace-root", help="override workspace root (default: ~/.teamos/workspace or config)")
@@ -2069,11 +2329,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     na.add_argument("--host", required=True)
     na.add_argument("--user", required=True)
     na.add_argument("--ssh-key")
+    na.add_argument("--password-stdin", action="store_true", help="read SSH password from stdin (requires sshpass on local host)")
     na.add_argument("--cluster-repo", required=True, help="owner/name for cluster bus repo")
     na.add_argument("--brain-base-url", help="override brain control-plane base url")
     na.add_argument("--role", default="auto")
     na.add_argument("--capabilities", default="")
     na.add_argument("--tags", default="")
+    na.add_argument("--push-hub-config", action="store_true", help="after bootstrap, push Brain hub DB/Redis config to node")
+    na.add_argument("--hub-host", default="", help="override advertised hub host/ip when pushing config")
+    na.add_argument("--remote-env-path", default="~/.teamos/node.env", help="remote env path for hub config")
     na.add_argument("--execute", action="store_true", help="execute ssh/scp (high risk; requires your approval)")
     na.set_defaults(fn=cmd_node_add)
     nj = nd_sp.add_parser("join-script", help="Print a join command to run on the new server")
@@ -2083,6 +2347,45 @@ def main(argv: Optional[list[str]] = None) -> int:
     nj.add_argument("--capabilities", default="")
     nj.add_argument("--tags", default="")
     nj.set_defaults(fn=cmd_node_join_script)
+
+    hb = sp.add_parser("hub", help="Local/central Hub operations (Postgres + Redis)")
+    hb_sp = hb.add_subparsers(dest="subcmd", required=True)
+    hinit = hb_sp.add_parser("init", help="Initialize hub structure and compose files")
+    hinit.add_argument("--with-redis", action="store_true", help="enable redis (default already enabled)")
+    hinit.add_argument("--without-redis", action="store_true", help="disable redis")
+    hinit.add_argument("--pg-port", type=int, default=5432)
+    hinit.add_argument("--redis-port", type=int, default=6379)
+    hinit.set_defaults(fn=cmd_hub_init)
+    hb_sp.add_parser("up", help="Start hub containers").set_defaults(fn=cmd_hub_up)
+    hb_sp.add_parser("down", help="Stop hub containers").set_defaults(fn=cmd_hub_down)
+    hb_sp.add_parser("status", help="Show hub status").set_defaults(fn=cmd_hub_status)
+    hlogs = hb_sp.add_parser("logs", help="Show hub logs")
+    hlogs.add_argument("--service", choices=["postgres", "redis"], default="")
+    hlogs.add_argument("--tail", type=int, default=200)
+    hlogs.set_defaults(fn=cmd_hub_logs)
+    hb_sp.add_parser("migrate", help="Apply DB migrations to hub Postgres").set_defaults(fn=cmd_hub_migrate)
+    hexp = hb_sp.add_parser("expose", help="Expose hub to selected CIDRs (HIGH risk)")
+    hexp.add_argument("--bind-ip", required=True)
+    hexp.add_argument("--allow-cidrs", required=True, help="comma separated CIDRs")
+    hexp.add_argument("--open-redis", action="store_true")
+    hexp.set_defaults(fn=cmd_hub_expose)
+    hbak = hb_sp.add_parser("backup", help="Backup hub Postgres")
+    hbak.add_argument("--output", default="")
+    hbak.set_defaults(fn=cmd_hub_backup)
+    hres = hb_sp.add_parser("restore", help="Restore hub Postgres backup (HIGH risk)")
+    hres.add_argument("--file", required=True)
+    hres.set_defaults(fn=cmd_hub_restore)
+    hec = hb_sp.add_parser("export-config", help="Export non-secret hub config")
+    hec.add_argument("--format", choices=["env", "yaml"], default="env")
+    hec.set_defaults(fn=cmd_hub_export_config)
+    hpc = hb_sp.add_parser("push-config", help="Push hub connection config to remote node (HIGH risk)")
+    hpc.add_argument("--host", required=True)
+    hpc.add_argument("--user", required=True)
+    hpc.add_argument("--ssh-key", default="")
+    hpc.add_argument("--password-stdin", action="store_true")
+    hpc.add_argument("--hub-host", default="", help="override advertised hub host/ip")
+    hpc.add_argument("--remote-env-path", default="~/.teamos/node.env")
+    hpc.set_defaults(fn=cmd_hub_push_config)
 
     rp = sp.add_parser("repo", help="Repo operations (GitHub)")
     rp_sp = rp.add_subparsers(dest="subcmd", required=True)

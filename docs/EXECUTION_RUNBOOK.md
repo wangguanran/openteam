@@ -573,3 +573,28 @@ cd team-os
 - OpenTelemetry 接入（trace/metrics/log correlation）
 - K8s 部署与最小权限方案
 - Postgres 索引与检索加速（任务台账/知识库索引）
+
+## 14. Hub (Postgres + Redis)
+
+Initialize and start local hub:
+
+```bash
+teamos hub init
+teamos hub up
+teamos hub migrate
+teamos hub status
+```
+
+Expose to internal network (approval required):
+
+```bash
+teamos hub expose --bind-ip <private-ip> --allow-cidrs "10.0.0.0/24" --open-redis
+```
+
+Push hub config to node (contains secrets; approval required):
+
+```bash
+teamos hub push-config --host <node-ip> --user <user> --ssh-key ~/.ssh/id_ed25519
+# or
+printf '%s' "$SSH_PASSWORD" | teamos hub push-config --host <node-ip> --user <user> --password-stdin
+```

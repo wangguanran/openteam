@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: teamos-hub-postgres
+    restart: unless-stopped
+    env_file:
+      - ../env/.env
+    ports:
+      - "{{PG_BIND_IP}}:{{PG_PORT}}:5432"
+    volumes:
+      - ../data/pgdata:/var/lib/postgresql/data
+      - ../config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "hba_file=/etc/postgresql/pg_hba.conf"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+{{REDIS_BLOCK}}

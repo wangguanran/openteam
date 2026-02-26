@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -31,6 +32,7 @@ from .runtime_db import RuntimeDB
 from .self_improve_runner import SelfImproveError
 from . import self_improve_runner
 from . import cluster_manager
+from . import crewai_orchestrator
 from .state_store import (
     StateError,
     ensure_instance_id,
@@ -86,6 +88,66 @@ def _utc_now_iso() -> str:
     import datetime as _dt
 
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _hub_root() -> Path:
+    return (Path.home() / ".teamos" / "hub").resolve()
+
+
+def _hub_env() -> dict[str, str]:
+    p = _hub_root() / "env" / ".env"
+    out: dict[str, str] = {}
+    if not p.exists():
+        return out
+    for raw in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = raw.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        out[str(k).strip()] = str(v).strip()
+    return out
+
+
+def _db_rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+    if not dsn:
+        return []
+    try:
+        import psycopg  # type: ignore
+        from psycopg.rows import dict_row  # type: ignore
+
+        conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3)
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            rows = cur.execute(sql, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows or []:
+            d = dict(r)
+            for k, v in list(d.items()):
+                if hasattr(v, "isoformat"):
+                    try:
+                        d[k] = v.isoformat()
+                    except Exception:
+                        d[k] = str(v)
+            out.append(d)
+        return out
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
 
 
 def _team_os_checks(team_os_path: str) -> dict[str, Any]:
@@ -510,6 +572,13 @@ class SelfImproveIn(BaseModel):
     trigger: str = "api"  # api|cli_auto|manual
 
 
+class RunStartIn(BaseModel):
+    project_id: str = "teamos"
+    workstream_id: str = "general"
+    objective: str = Field(..., min_length=1)
+    pipeline: str = "doctor"
+
+
 class NodeRegisterIn(BaseModel):
     instance_id: str
     role_preference: str = "auto"  # brain|assistant|auto
@@ -617,6 +686,32 @@ def v1_tasks(
     total = len(tasks)
     items = tasks[offset : offset + limit]
     return {"total": total, "offset": offset, "limit": limit, "tasks": items}
+
+
+@app.get("/v1/runs")
+def v1_runs(project_id: Optional[str] = None, workstream_id: Optional[str] = None):
+    return {"runs": [r.__dict__ for r in DB.list_runs(project_id=project_id, workstream_id=workstream_id)]}
+
+
+@app.get("/v1/runs/{run_id}")
+def v1_run_get(run_id: str):
+    row = DB.get_run(run_id)
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found", "run_id": run_id})
+    return {"run": row.__dict__}
+
+
+@app.post("/v1/runs/start")
+def v1_run_start(payload: RunStartIn):
+    _require_leader_write()
+    spec = crewai_orchestrator.RunSpec(
+        project_id=str(payload.project_id or "teamos"),
+        workstream_id=str(payload.workstream_id or "general"),
+        objective=str(payload.objective),
+        pipeline=str(payload.pipeline or "doctor"),
+    )
+    out = crewai_orchestrator.run_once(db=DB, spec=spec, actor="crewai_orchestrator")
+    return out
 
 
 @app.get("/v1/focus")
@@ -1049,6 +1144,61 @@ def v1_requirements_list(project_id: str):
     with y.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return {"project_id": project_id, "requirements_dir": str(req_dir), "requirements": data.get("requirements") or []}
+
+
+@app.get("/v1/hub/status")
+def v1_hub_status():
+    env = _hub_env()
+    pg_host = str(env.get("PG_BIND_IP") or "127.0.0.1")
+    pg_port = int(str(env.get("PG_PORT") or "5432"))
+    redis_enabled = str(env.get("HUB_REDIS_ENABLED") or "1") == "1"
+    redis_host = str(env.get("REDIS_BIND_IP") or "127.0.0.1")
+    redis_port = int(str(env.get("REDIS_PORT") or "6379"))
+    mig_rows = _db_rows("SELECT version, applied_at FROM schema_migrations ORDER BY version DESC LIMIT 20")
+    return {
+        "hub_root": str(_hub_root()),
+        "postgres": {
+            "bind_ip": pg_host,
+            "port": pg_port,
+            "tcp_open": _tcp_open(pg_host, pg_port),
+            "connections": _db_rows("SELECT count(*)::int AS count FROM pg_stat_activity"),
+        },
+        "redis": {
+            "enabled": redis_enabled,
+            "bind_ip": redis_host,
+            "port": redis_port,
+            "tcp_open": _tcp_open(redis_host, redis_port) if redis_enabled else False,
+        },
+        "migrations": mig_rows,
+        "approvals_pending": _db_rows("SELECT count(*)::int AS count FROM approvals WHERE status='REQUESTED'"),
+        "locks_held": _db_rows("SELECT count(*)::int AS count FROM locks WHERE state='HELD'"),
+    }
+
+
+@app.get("/v1/hub/migrations")
+def v1_hub_migrations():
+    rows = _db_rows("SELECT version, applied_at FROM schema_migrations ORDER BY version ASC")
+    return {"migrations": rows}
+
+
+@app.get("/v1/hub/locks")
+def v1_hub_locks(limit: int = Query(default=100, ge=1, le=500)):
+    rows = _db_rows("SELECT lock_key, backend, holder, lease_ttl_sec, acquired_at, heartbeat_at, expires_at, state FROM locks ORDER BY heartbeat_at DESC LIMIT %s", (int(limit),))
+    return {"locks": rows}
+
+
+@app.get("/v1/hub/approvals")
+def v1_hub_approvals(limit: int = Query(default=100, ge=1, le=500)):
+    rows = _db_rows(
+        """
+        SELECT approval_id, task_id, action_kind, action_summary, risk_level, category, status, requested_by, requested_at, decided_by, decided_at, decision_engine
+        FROM approvals
+        ORDER BY requested_at DESC
+        LIMIT %s
+        """,
+        (int(limit),),
+    )
+    return {"approvals": rows}
 
 
 @app.get("/v1/nodes")

@@ -121,3 +121,14 @@ export GITHUB_TOKEN="$(gh auth token -h github.com)"
 TEAMOS_PANEL_GH_WRITE_ENABLED=1
 TEAMOS_PANEL_GH_AUTO_SYNC=1
 ```
+
+## Hub APIs
+
+Control Plane now exposes hub APIs for presentation/orchestration layers:
+
+- `GET /v1/hub/status`
+- `GET /v1/hub/migrations`
+- `GET /v1/hub/locks`
+- `GET /v1/hub/approvals`
+- `GET /v1/runs`
+- `POST /v1/runs/start`
