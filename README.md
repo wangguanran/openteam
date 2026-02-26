@@ -1,6 +1,6 @@
 # Team OS (通用 AI 开发团队操作系统)
 
-本仓库提供一个可长期运行、可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统（Team OS）”，并通过“Runtime 模板”在单机上 24/7 运行 Control Plane（Orchestrator） + OpenHands + Temporal + Postgres。
+本仓库提供一个可长期运行、可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统（Team OS）”，并通过“Runtime 模板”在单机上 24/7 运行 Control Plane（CrewAI Orchestrator）+ 确定性 Pipelines + Hub(Postgres/Redis)。
 
 核心约束（硬规则）：
 
@@ -68,13 +68,18 @@ cd team-os
 ## 项目状态（截至 2026-02-15）
 
 - Team OS 规范与落盘结构已完成：`AGENTS.md`、`TEAMOS.md`、`docs/`、`.team-os/`
-- 默认角色与工作流已落盘：`.team-os/roles/`、`.team-os/workflows/`
+- 默认角色与 Crew Flow 定义已落盘：`.team-os/roles/`、`.team-os/workflows/`
 - 统一脚本入口可用：`./scripts/teamos.sh`
   - `doctor/new-task/skill-boot/retro/self-improve`
   - `runtime-init/runtime-secrets`（用于在新环境生成 `team-os-runtime`）
 - Runtime 模板已落盘：`.team-os/templates/runtime/`
 - Runtime 最小闭环已验证（本机 localhost 绑定）：
   - Control Plane：`http://127.0.0.1:8787/healthz`（状态：`/v1/status`）
+  - CrewAI 运行入口：`POST /v1/runs/start`（查询：`GET /v1/runs`）
+  - Hub 运行状态：`GET /v1/hub/status`
+  - Hub 容器编排：`teamos hub init|up|status|migrate`
+  - n8n 展示层模板：`n8n/workflows/templates/teamos_hub_monitor.json`
+  - 兼容组件（可选保留）：OpenHands + Temporal
   - OpenHands Agent Server：`http://127.0.0.1:18000/alive`
   - Temporal UI：`http://127.0.0.1:18081`
   - Temporal gRPC：`127.0.0.1:7233`
@@ -103,7 +108,7 @@ cd team-os
 ## 目录速览
 
 - `.team-os/roles/`：角色定义（每角色 1 文件）
-- `.team-os/workflows/`：工作流（YAML 状态机）
+- `.team-os/workflows/`：Crew Flow 定义（YAML）
 - `.team-os/kb/`：知识库（含来源摘要、Skill Cards）
 - `.team-os/memory/`：长期记忆索引
 - `.team-os/ledger/`：任务台账、自我升级台账、pending issues
@@ -121,6 +126,6 @@ cd team-os
 
 ## Roadmap（后续任务驱动完善）
 
-- Orchestrator：对 `.team-os/workflows` 的 durable 执行（Temporal activities/workflows）
+- Orchestrator：统一 CrewAI Flow 编排与可观测性增强
 - 观测：OpenTelemetry 接入（trace/metrics/log correlation）
 - 供应链：镜像/依赖可审计与扫描（SBOM、签名、漏洞扫描）

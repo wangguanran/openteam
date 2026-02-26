@@ -155,12 +155,14 @@ def _team_os_checks(team_os_path: str) -> dict[str, Any]:
     workflows_dir = p / ".team-os" / "workflows"
     roles_dir = p / ".team-os" / "roles"
     state_dir = p / ".team-os" / "state"
+    crewai_orchestrator_file = p / ".team-os" / "templates" / "runtime" / "orchestrator" / "app" / "crewai_orchestrator.py"
     return {
         "team_os_path": str(p),
         "exists": p.exists(),
         "workflows_dir_exists": workflows_dir.exists(),
         "roles_dir_exists": roles_dir.exists(),
         "state_dir_exists": state_dir.exists(),
+        "crewai_orchestrator_exists": crewai_orchestrator_file.exists(),
         "workflow_files": sorted([x.name for x in workflows_dir.glob("*.yaml")]) if workflows_dir.exists() else [],
         "role_files": sorted([x.name for x in roles_dir.glob("*.md")]) if roles_dir.exists() else [],
     }
@@ -576,7 +578,9 @@ class RunStartIn(BaseModel):
     project_id: str = "teamos"
     workstream_id: str = "general"
     objective: str = Field(..., min_length=1)
-    pipeline: str = "doctor"
+    flow: str = "standard"
+    # backward-compatible with old payload shape
+    pipeline: Optional[str] = None
 
 
 class NodeRegisterIn(BaseModel):
@@ -615,7 +619,7 @@ class RecoveryResumeIn(BaseModel):
 def healthz(response: Response):
     team_os_path = os.getenv("TEAM_OS_REPO_PATH", "/team-os")
     checks = _team_os_checks(team_os_path)
-    ok = checks["exists"] and checks["workflows_dir_exists"] and checks["roles_dir_exists"]
+    ok = checks["exists"] and checks["roles_dir_exists"] and checks["crewai_orchestrator_exists"]
     db = {"backend": ("postgres" if (os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
     try:
         # Minimal DB probe (no side effects).
@@ -704,11 +708,12 @@ def v1_run_get(run_id: str):
 @app.post("/v1/runs/start")
 def v1_run_start(payload: RunStartIn):
     _require_leader_write()
+    flow = str(payload.flow or payload.pipeline or "standard")
     spec = crewai_orchestrator.RunSpec(
         project_id=str(payload.project_id or "teamos"),
         workstream_id=str(payload.workstream_id or "general"),
         objective=str(payload.objective),
-        pipeline=str(payload.pipeline or "doctor"),
+        flow=flow,
     )
     out = crewai_orchestrator.run_once(db=DB, spec=spec, actor="crewai_orchestrator")
     return out
@@ -1365,6 +1370,7 @@ def _create_task_scaffold(*, title: str, project_id: str, workstream_id: str, mo
         "recovery": {"last_scan_at": "", "last_resume_at": "", "notes": ""},
         "owners": ["PM-Intake"],
         "roles_involved": ["PM-Intake"],
+        "orchestration": {"engine": "crewai", "flow": "genesis"},
         "workflows": ["Genesis"],
         "created_at": now,
         "updated_at": now,

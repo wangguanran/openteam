@@ -1,0 +1,41 @@
+id: TEAMOS-0033
+title: TEAMOS-CREWAI-UNIFY-PROCESS
+project_id: teamos
+workstream_id: architecture
+workstreams:
+- architecture
+- governance
+status: closed
+risk_level: R1
+need_pm_decision: false
+repo:
+  locator: ''
+  workdir: ''
+  branch: ''
+  mode: auto
+checkpoint:
+  stage: closed
+  last_event_ts: '2026-02-26T14:42:28Z'
+recovery:
+  last_scan_at: ''
+  last_resume_at: ''
+  notes: ''
+approvals_required:
+- R2/R3 actions
+owners:
+- PM-Intake
+roles_involved:
+- PM-Intake
+workflows:
+- Genesis
+created_at: '2026-02-26T14:38:07Z'
+updated_at: '2026-02-26T14:42:28Z'
+links:
+  pr: ''
+  issue: ''
+artifacts:
+  ledger: .team-os/ledger/tasks/TEAMOS-0033.yaml
+  logs_dir: .team-os/logs/tasks/TEAMOS-0033
+evidence:
+- type: log
+  path: .team-os/logs/tasks/TEAMOS-0033/00_intake.md

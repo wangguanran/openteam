@@ -152,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         "approvals_required": ["R2/R3 actions"],
         "owners": ["PM-Intake"],
         "roles_involved": ["PM-Intake"],
+        "orchestration": {"engine": "crewai", "flow": "genesis"},
         "workflows": ["Genesis"],
         "created_at": now,
         "updated_at": now,

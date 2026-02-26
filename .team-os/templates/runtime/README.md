@@ -2,9 +2,9 @@
 
 单机运行时环境（Docker Compose），用于 24/7 跑：
 
-- Control Plane（Python + FastAPI + OpenAI Agents SDK）
+- Control Plane（Python + FastAPI + CrewAI orchestrator）
 - OpenHands Agent Server（隔离执行平面）
-- Temporal + UI（durable workflow）
+- Temporal + UI（兼容组件，可选）
 - Postgres（Temporal DB + 运行时元数据预留）
 
 ## 安全提示 (先读)
