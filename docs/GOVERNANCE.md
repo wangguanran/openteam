@@ -151,3 +151,14 @@ cd team-os
 - `./teamos project config init|validate --project <id>`
 - `./teamos req add|import|rebuild --scope project:<id>`
 - `./teamos task new --scope project:<id> --mode bootstrap|upgrade`
+
+## Hub Risk Additions
+
+The following actions are HIGH risk and must use approvals:
+
+- `teamos hub expose ...`
+- `teamos hub restore --file ...`
+- `teamos hub push-config ...` (contains connection secrets)
+- `teamos node add --execute ...` with remote password mode
+
+Redis default is enabled but bound locally by default. Remote Redis exposure must be explicitly approved.

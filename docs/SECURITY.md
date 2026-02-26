@@ -77,3 +77,9 @@ n8n 在本仓库仅作为“自动化/通知补充”，不得作为主计划面
 - 必须设置强认证与最小权限（限制谁能创建/编辑 workflow）
 - 必须定期升级到官方修复版本（建议纳入月度/季度例行升级）
 - Webhook 入口必须增加防重放/签名校验/来源限制（后续增强项）
+
+## 8. Hub Exposure Controls
+
+- Local hub defaults: Postgres + Redis enabled, both bound to loopback.
+- Remote exposure requires explicit high-risk approval (`teamos hub expose`).
+- `hub push-config` distributes secrets over SSH only; secrets must not appear in CLI args/logs.

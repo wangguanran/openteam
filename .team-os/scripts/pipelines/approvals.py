@@ -70,6 +70,13 @@ def risk_classify(*, action_kind: str, action_summary: str, payload: dict[str, A
         "git_branch_delete": "GIT_BRANCH_DELETE",
         "workspace_migrate_force": "DATA_MOVE_OVERWRITE",
         "node_add_execute": "REMOTE_SSH_EXEC",
+        "hub_expose_remote_access": "PUBLIC_PORT",
+        "hub_restore": "DATA_RESTORE",
+        "hub_push_config_with_secrets": "SECRET_DISTRIBUTION",
+        "docker_install_system": "REMOTE_ROOT_INSTALL",
+        "systemd_service_write": "SYSTEM_CONFIG",
+        "firewall_change": "SYSTEM_CONFIG",
+        "redis_remote_expose": "PUBLIC_PORT",
         "git_push_force": "FORCE_PUSH",
         "rm_rf": "DATA_DELETE",
         "open_public_port": "PUBLIC_PORT",
@@ -197,7 +204,37 @@ def _db_list_approvals(conn, *, limit: int = 50) -> list[dict[str, Any]]:
             for k, v in list(d.items()):
                 d[k] = to_jsonable(v)
             out.append(d)
-        return out
+    return out
+
+
+def _db_insert_execution(
+    conn,
+    *,
+    approval_id: str,
+    execution_status: str,
+    executor: str,
+    note: str,
+    detail: dict[str, Any],
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO approval_executions (
+              execution_id, approval_id, execution_status, executor, note, detail
+            ) VALUES (
+              %s,%s,%s,%s,%s,%s::jsonb
+            )
+            """,
+            (
+                str(uuid.uuid4()),
+                str(approval_id),
+                str(execution_status),
+                str(executor or ""),
+                str(note or "")[:800],
+                json.dumps(detail or {}, ensure_ascii=False),
+            ),
+        )
+    conn.commit()
 
 
 def _policy_decide(policy: dict[str, Any], *, category: str) -> Optional[str]:
@@ -431,6 +468,52 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_record_execution(args: argparse.Namespace) -> int:
+    repo = resolve_repo_root(args)
+    ws_root = resolve_workspace_root(args)
+    approval_id = str(args.approval_id or "").strip()
+    if not approval_id:
+        raise PipelineError("approval_id is required")
+    status = str(args.execution_status or "").strip().upper()
+    if status not in ("STARTED", "SUCCEEDED", "FAILED", "SKIPPED"):
+        raise PipelineError("--execution-status must be STARTED|SUCCEEDED|FAILED|SKIPPED")
+    executor = str(args.executor or "").strip() or getpass.getuser()
+    note = str(args.note or "").strip()
+    detail: dict[str, Any] = {}
+    if str(getattr(args, "detail_json", "") or "").strip():
+        try:
+            detail = json.loads(str(args.detail_json))
+        except Exception as e:
+            raise PipelineError(f"invalid --detail-json: {e}") from e
+        if not isinstance(detail, dict):
+            raise PipelineError("--detail-json must be a JSON object")
+
+    dsn = get_db_url(override=str(getattr(args, "db_url", "") or ""))
+    if _db_available(dsn):
+        conn = connect(dsn)
+        try:
+            _ensure_db_schema(conn, repo_root=repo)
+            _db_insert_execution(conn, approval_id=approval_id, execution_status=status, executor=executor, note=note, detail=detail)
+        finally:
+            conn.close()
+        _emit_json({"ok": True, "approval_id": approval_id, "execution_status": status, "db": {"enabled": True}}, json_mode=bool(args.json))
+        return 0
+
+    event = {
+        "ts": utc_now_iso(),
+        "event": "APPROVAL_EXECUTION",
+        "pending_sync": True,
+        "approval_id": approval_id,
+        "execution_status": status,
+        "executor": executor,
+        "note": note,
+        "detail": detail,
+    }
+    _write_fallback_event(ws_root, event, dry_run=bool(args.dry_run))
+    _emit_json({"ok": True, "approval_id": approval_id, "execution_status": status, "db": {"enabled": False}}, json_mode=bool(args.json))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Approvals engine (DB-backed; deterministic)")
     add_default_args(ap)
@@ -468,6 +551,15 @@ def main(argv: list[str] | None = None) -> int:
     l = sp.add_parser("list", help="List recent approvals")
     l.add_argument("--limit", type=int, default=50)
     l.set_defaults(fn=cmd_list)
+
+    rx = sp.add_parser("record-execution", help="Record execution result for an approved action")
+    rx.add_argument("approval_id")
+    rx.add_argument("--execution-status", required=True, help="STARTED|SUCCEEDED|FAILED|SKIPPED")
+    rx.add_argument("--executor", default="")
+    rx.add_argument("--note", default="")
+    rx.add_argument("--detail-json", default="")
+    rx.add_argument("--dry-run", action="store_true")
+    rx.set_defaults(fn=cmd_record_execution)
 
     args = ap.parse_args(argv)
     fn = getattr(args, "fn", None)

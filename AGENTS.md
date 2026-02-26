@@ -111,3 +111,14 @@ cd team-os
 - `python3 -m unittest -q`：PASS
 - `./teamos task close <TASK_ID>`：PASS
 - push 结果可在远程看到对应 commit（main 或工作分支；或在日志中记录阻塞）
+
+## Hub Operations (Deterministic)
+
+Use deterministic pipelines via CLI only:
+
+- `teamos hub init|up|down|status|logs|migrate`
+- `teamos hub expose` (HIGH risk, approval required)
+- `teamos hub backup|restore` (`restore` is HIGH risk)
+- `teamos hub export-config|push-config` (`push-config` is HIGH risk)
+
+Redis is enabled by default for local Hub, but remote access is not enabled by default.

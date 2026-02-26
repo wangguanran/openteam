@@ -72,3 +72,17 @@ curl -fsSL https://example.invalid/teamos/join_node.sh | bash -s -- \\
 - 不要写在命令行参数里（会进入 shell history / `ps`）
 - 使用交互式输入或 `--password-stdin`
 
+
+## Brain Hub Config Push
+
+After node bootstrap, Brain can push hub DB/Redis config directly:
+
+```bash
+teamos node add --host <ip> --user <user> --cluster-repo <owner/repo> --execute --push-hub-config --ssh-key ~/.ssh/id_ed25519
+```
+
+Password mode:
+
+```bash
+printf '%s' "$SSH_PASSWORD" | teamos node add --host <ip> --user <user> --cluster-repo <owner/repo> --execute --password-stdin --push-hub-config
+```

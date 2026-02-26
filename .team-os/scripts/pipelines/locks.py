@@ -428,6 +428,64 @@ def acquire_scope_lock(
     return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
 
 
+def acquire_cluster_lock(
+    *,
+    repo_root: Optional[Path] = None,
+    instance_id: str = "",
+    agent_id: str = "",
+    task_id: str = "",
+    ttl_sec: int = 180,
+    wait_sec: float = 30.0,
+    poll_sec: float = 0.2,
+    prefer_db: bool = True,
+) -> LockHandle:
+    rr = (repo_root or Path.cwd()).resolve()
+    lock_key = "cluster:global"
+    holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
+
+    dsn = _db_dsn()
+    if prefer_db and _can_use_db(dsn):
+        try:
+            return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
+        except LockBusy:
+            raise
+        except Exception:
+            pass
+
+    lock_dir = rr / ".team-os" / "state" / "locks"
+    lock_path = lock_dir / "cluster.lock"
+    return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
+
+
+def acquire_hub_lock(
+    *,
+    hub_root: Optional[Path] = None,
+    instance_id: str = "",
+    agent_id: str = "",
+    task_id: str = "",
+    ttl_sec: int = 180,
+    wait_sec: float = 30.0,
+    poll_sec: float = 0.2,
+    prefer_db: bool = True,
+) -> LockHandle:
+    hr = (hub_root or (Path.home() / ".teamos" / "hub")).expanduser().resolve()
+    lock_key = "hub:global"
+    holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
+
+    dsn = _db_dsn()
+    if prefer_db and _can_use_db(dsn):
+        try:
+            return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
+        except LockBusy:
+            raise
+        except Exception:
+            pass
+
+    lock_dir = hr / "state" / "locks"
+    lock_path = lock_dir / "hub.lock"
+    return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
+
+
 def release_lock(h: Optional[LockHandle]) -> None:
     if h is None:
         return
