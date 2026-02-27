@@ -357,6 +357,47 @@ def _acquire_db_advisory_lock(
         time.sleep(max(0.05, float(poll_sec or 0.2)))
 
 
+def _acquire_lock_with_preferred_backends(
+    *,
+    lock_key: str,
+    holder: dict[str, Any],
+    lock_path: Path,
+    ttl_sec: int,
+    wait_sec: float,
+    poll_sec: float,
+    prefer_db: bool,
+) -> LockHandle:
+    """
+    Backend order is deterministic:
+    1) Postgres advisory lock when TEAMOS_DB_URL is configured and prefer_db=True.
+       - Lock contention surfaces as LOCK_BUSY (no downgrade to file lock).
+       - DB-unavailable falls back to file lock.
+    2) File lock fallback.
+    """
+    dsn = _db_dsn()
+    if prefer_db and _can_use_db(dsn):
+        try:
+            return _acquire_db_advisory_lock(
+                lock_key=lock_key,
+                dsn=dsn,
+                holder=holder,
+                wait_sec=wait_sec,
+                poll_sec=poll_sec,
+            )
+        except LockBusy:
+            raise
+        except DbUnavailable:
+            pass
+    return _acquire_file_lock(
+        lock_key=lock_key,
+        lock_path=lock_path,
+        holder=holder,
+        ttl_sec=int(ttl_sec),
+        wait_sec=wait_sec,
+        poll_sec=poll_sec,
+    )
+
+
 def acquire_repo_lock(
     *,
     repo_root: Optional[Path] = None,
@@ -373,19 +414,17 @@ def acquire_repo_lock(
     lock_key = "repo:teamos"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
-    dsn = _db_dsn()
-    if prefer_db and _can_use_db(dsn):
-        try:
-            return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
-        except LockBusy:
-            raise
-        except Exception:
-            # Fall back to file lock if DB is unavailable.
-            pass
-
     lock_dir = runtime_state_root(override=_runtime_override_for_repo(rr)) / "locks"
     lock_path = lock_dir / "repo.lock"
-    return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
+    return _acquire_lock_with_preferred_backends(
+        lock_key=lock_key,
+        holder=holder,
+        lock_path=lock_path,
+        ttl_sec=int(ttl_sec),
+        wait_sec=wait_sec,
+        poll_sec=poll_sec,
+        prefer_db=prefer_db,
+    )
 
 
 def acquire_scope_lock(
@@ -419,15 +458,6 @@ def acquire_scope_lock(
     lock_key = f"scope:{s}"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
-    dsn = _db_dsn()
-    if prefer_db and _can_use_db(dsn):
-        try:
-            return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
-        except LockBusy:
-            raise
-        except Exception:
-            pass
-
     # File lock path: teamos -> runtime state; project -> workspace project state;
     # fallback -> runtime state locks/fallback (keeps transient lock files outside repo/workspace truth-source roots).
     lock_dir: Path
@@ -441,7 +471,15 @@ def acquire_scope_lock(
         if req_dir is not None and not lock_dir.exists():
             lock_dir = runtime_state_root(override=runtime_override) / "locks" / "fallback"
     lock_path = lock_dir / lock_name
-    return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
+    return _acquire_lock_with_preferred_backends(
+        lock_key=lock_key,
+        holder=holder,
+        lock_path=lock_path,
+        ttl_sec=int(ttl_sec),
+        wait_sec=wait_sec,
+        poll_sec=poll_sec,
+        prefer_db=prefer_db,
+    )
 
 
 def acquire_cluster_lock(
@@ -459,18 +497,17 @@ def acquire_cluster_lock(
     lock_key = "cluster:global"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
-    dsn = _db_dsn()
-    if prefer_db and _can_use_db(dsn):
-        try:
-            return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
-        except LockBusy:
-            raise
-        except Exception:
-            pass
-
     lock_dir = runtime_state_root(override=_runtime_override_for_repo(rr)) / "locks"
     lock_path = lock_dir / "cluster.lock"
-    return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
+    return _acquire_lock_with_preferred_backends(
+        lock_key=lock_key,
+        holder=holder,
+        lock_path=lock_path,
+        ttl_sec=int(ttl_sec),
+        wait_sec=wait_sec,
+        poll_sec=poll_sec,
+        prefer_db=prefer_db,
+    )
 
 
 def acquire_hub_lock(
@@ -488,18 +525,17 @@ def acquire_hub_lock(
     lock_key = "hub:global"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
-    dsn = _db_dsn()
-    if prefer_db and _can_use_db(dsn):
-        try:
-            return _acquire_db_advisory_lock(lock_key=lock_key, dsn=dsn, holder=holder, wait_sec=wait_sec, poll_sec=poll_sec)
-        except LockBusy:
-            raise
-        except Exception:
-            pass
-
     lock_dir = hr / "state" / "locks"
     lock_path = lock_dir / "hub.lock"
-    return _acquire_file_lock(lock_key=lock_key, lock_path=lock_path, holder=holder, ttl_sec=int(ttl_sec), wait_sec=wait_sec, poll_sec=poll_sec)
+    return _acquire_lock_with_preferred_backends(
+        lock_key=lock_key,
+        holder=holder,
+        lock_path=lock_path,
+        ttl_sec=int(ttl_sec),
+        wait_sec=wait_sec,
+        poll_sec=poll_sec,
+        prefer_db=prefer_db,
+    )
 
 
 def release_lock(h: Optional[LockHandle]) -> None:

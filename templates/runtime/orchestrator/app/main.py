@@ -21,6 +21,7 @@ from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraph
 from .n8n_hook import emit_n8n_event
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
+from . import redis_bus
 from .requirements_store import (
     RequirementsError,
     add_requirement_raw_first,
@@ -251,6 +252,24 @@ def _scope_from_project_id(project_id: str) -> str:
 
 def _local_base_url() -> str:
     return str(os.getenv("TEAMOS_BASE_URL") or os.getenv("CONTROL_PLANE_BASE_URL") or "http://127.0.0.1:8787").strip()
+
+
+def _publish_redis_event(*, event_type: str, actor: str, project_id: str, workstream_id: str, payload: dict[str, Any]) -> None:
+    # Best-effort pubsub: never block or fail control-plane writes.
+    try:
+        redis_bus.publish_event(
+            channel="",
+            payload={
+                "event_type": event_type,
+                "actor": actor,
+                "project_id": project_id,
+                "workstream_id": workstream_id,
+                "payload": payload,
+                "ts": _utc_now_iso(),
+            },
+        )
+    except Exception:
+        pass
 
 
 def _require_leader_write() -> dict[str, Any]:
@@ -489,6 +508,18 @@ def _startup_background_threads() -> None:
     st = threading.Thread(target=_ensure_self_improve_daemon, name="self-improve-daemon-ensure", daemon=True)
     st.start()
 
+    # Startup indicator for optional Redis runtime bus.
+    try:
+        DB.add_event(
+            event_type="REDIS_BUS_STATUS",
+            actor="control-plane",
+            project_id=_default_project_id(),
+            workstream_id=_default_workstream_id(),
+            payload=redis_bus.describe(),
+        )
+    except Exception:
+        pass
+
 
 def _seed_if_enabled() -> None:
     if os.getenv("TEAMOS_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
@@ -629,7 +660,7 @@ def healthz(response: Response):
         db["error"] = str(e)[:200]
     if not ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"status": "ok" if ok else "degraded", "checks": checks, "db": db}
+    return {"status": "ok" if ok else "degraded", "checks": checks, "db": db, "redis_bus": redis_bus.describe()}
 
 
 @app.get("/v1/status")
@@ -656,6 +687,7 @@ def v1_status():
         "agents": agents,
         "tasks": tasks,
         "pending_decisions": pending,
+        "redis_bus": redis_bus.describe(),
     }
 
 
@@ -1440,6 +1472,13 @@ def v1_tasks_new(payload: TaskNewIn):
     wsid = str((payload.workstreams or ["general"])[0] if payload.workstreams else "general")
     created = _create_task_scaffold(title=payload.title, project_id=payload.project_id, workstream_id=wsid, mode=mode)
     DB.add_event(
+        event_type="TASK_NEW",
+        actor="user",
+        project_id=payload.project_id,
+        workstream_id=wsid,
+        payload={"task_id": created["task_id"], "mode": mode, "dry_run": bool(payload.dry_run), "repo_locator": (payload.repo_locator or "")[:120]},
+    )
+    _publish_redis_event(
         event_type="TASK_NEW",
         actor="user",
         project_id=payload.project_id,

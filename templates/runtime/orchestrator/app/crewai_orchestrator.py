@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .state_store import team_os_root
+from . import redis_bus
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,23 @@ def _pipeline_cmd(*, pipeline: str, repo: Path, ws_root: Path) -> list[str]:
     raise ValueError(f"unsupported_pipeline: {pipeline}")
 
 
+def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payload: dict[str, Any]) -> None:
+    # Best-effort only; must never fail run execution.
+    try:
+        redis_bus.publish_event(
+            channel="",
+            payload={
+                "event_type": event_type,
+                "actor": actor,
+                "project_id": spec.project_id,
+                "workstream_id": spec.workstream_id,
+                "payload": payload,
+            },
+        )
+    except Exception:
+        pass
+
+
 def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any]:
     flow = _normalize_flow(spec.flow)
     try:
@@ -91,6 +109,12 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             workstream_id=spec.workstream_id,
             payload={"run_id": run_id, "flow": flow, "error": str(e)},
         )
+        _publish_redis_run_event(
+            event_type="RUN_FAILED",
+            actor=actor,
+            spec=spec,
+            payload={"run_id": run_id, "flow": flow, "error": str(e)},
+        )
         return {"ok": False, "run_id": run_id, "flow": flow, "error": str(e)}
 
     run_id = db.upsert_run(run_id=None, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
@@ -99,6 +123,12 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         actor=actor,
         project_id=spec.project_id,
         workstream_id=spec.workstream_id,
+        payload={"run_id": run_id, "flow": flow, "pipelines": pipelines},
+    )
+    _publish_redis_run_event(
+        event_type="RUN_STARTED",
+        actor=actor,
+        spec=spec,
         payload={"run_id": run_id, "flow": flow, "pipelines": pipelines},
     )
 
@@ -139,6 +169,17 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         actor=actor,
         project_id=spec.project_id,
         workstream_id=spec.workstream_id,
+        payload={
+            "run_id": run_id,
+            "flow": flow,
+            "pipelines": pipelines,
+            "steps": step_results,
+        },
+    )
+    _publish_redis_run_event(
+        event_type="RUN_FINISHED" if ok else "RUN_FAILED",
+        actor=actor,
+        spec=spec,
         payload={
             "run_id": run_id,
             "flow": flow,
