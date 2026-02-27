@@ -34,6 +34,7 @@ from .self_improve_runner import SelfImproveError
 from . import self_improve_runner
 from . import cluster_manager
 from . import crewai_orchestrator
+from . import crew_tools
 from .state_store import (
     StateError,
     ensure_instance_id,
@@ -609,7 +610,7 @@ class RunStartIn(BaseModel):
     project_id: str = "teamos"
     workstream_id: str = "general"
     objective: str = Field(..., min_length=1)
-    flow: str = "standard"
+    flow: Optional[str] = None
     # backward-compatible with old payload shape
     pipeline: Optional[str] = None
 
@@ -740,7 +741,7 @@ def v1_run_get(run_id: str):
 @app.post("/v1/runs/start")
 def v1_run_start(payload: RunStartIn):
     _require_leader_write()
-    flow = str(payload.flow or payload.pipeline or "standard")
+    flow = crew_tools.resolve_run_request_flow(flow=payload.flow, pipeline=payload.pipeline)
     spec = crewai_orchestrator.RunSpec(
         project_id=str(payload.project_id or "teamos"),
         workstream_id=str(payload.workstream_id or "general"),
@@ -1355,111 +1356,9 @@ def _ts_compact_utc() -> str:
     return _utc_now_iso().replace(":", "").replace("-", "")
 
 
-def _render_log_template(tpl_path: Path, *, task_id: str, title: str) -> str:
-    text = tpl_path.read_text(encoding="utf-8")
-    date = _utc_now_iso().split("T", 1)[0]
-    return text.replace("{{TASK_ID}}", task_id).replace("{{TITLE}}", title).replace("{{DATE}}", date)
-
-
-def _create_task_scaffold(*, title: str, project_id: str, workstream_id: str, mode: str) -> dict[str, Any]:
-    # Task truth source:
-    # - scope=teamos -> in-repo `.team-os/ledger` + `.team-os/logs`
-    # - scope=project:<id> -> workspace `projects/<id>/state/...`
-    #
-    # Templates are always sourced from the Team OS repo.
-    root = team_os_root()
-    tasks_dir = _ledger_tasks_dir(project_id, ensure=True)
-    logs_root = _logs_tasks_dir(project_id, ensure=True)
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    logs_root.mkdir(parents=True, exist_ok=True)
-
-    # Task id
-    task_id = ""
-    for _ in range(10):
-        cand = f"TASK-{_ts_compact_utc()}"
-        if not (tasks_dir / f"{cand}.yaml").exists():
-            task_id = cand
-            break
-        time.sleep(1)
-    if not task_id:
-        raise RuntimeError("failed to generate task_id")
-
-    now = _utc_now_iso()
-    in_repo = _is_teamos(project_id)
-    artifacts_ledger = (f".team-os/ledger/tasks/{task_id}.yaml") if in_repo else (f"state/ledger/tasks/{task_id}.yaml")
-    artifacts_logs_dir = (f".team-os/logs/tasks/{task_id}/") if in_repo else (f"state/logs/tasks/{task_id}/")
-    evidence_intake = (f".team-os/logs/tasks/{task_id}/00_intake.md") if in_repo else (f"state/logs/tasks/{task_id}/00_intake.md")
-    ledger = {
-        "id": task_id,
-        "title": title,
-        "project_id": project_id,
-        "workstream_id": workstream_id,
-        "status": "intake",
-        "risk_level": "R1",
-        "need_pm_decision": False,
-        "repo": {"locator": "", "workdir": "", "branch": "", "mode": mode},
-        "checkpoint": {"stage": "intake", "last_event_ts": now},
-        "recovery": {"last_scan_at": "", "last_resume_at": "", "notes": ""},
-        "owners": ["PM-Intake"],
-        "roles_involved": ["PM-Intake"],
-        "orchestration": {"engine": "crewai", "flow": "genesis"},
-        "workflows": ["Genesis"],
-        "created_at": now,
-        "updated_at": now,
-        "links": {"pr": "", "issue": ""},
-        "artifacts": {"ledger": artifacts_ledger, "logs_dir": artifacts_logs_dir},
-        "evidence": [{"type": "log", "path": evidence_intake}],
-    }
-    ledger_path = tasks_dir / f"{task_id}.yaml"
-    ledger_path.write_text(yaml.safe_dump(ledger, sort_keys=False, allow_unicode=True), encoding="utf-8")
-
-    logs_dir = logs_root / task_id
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    tpls = root / "templates"
-    for name, tpl in [
-        ("00_intake.md", "task_log_00_intake.md"),
-        ("01_plan.md", "task_log_01_plan.md"),
-        ("02_todo.md", "task_log_02_todo.md"),
-        ("03_work.md", "task_log_03_work.md"),
-        ("04_test.md", "task_log_04_test.md"),
-        ("05_release.md", "task_log_05_release.md"),
-        ("06_observe.md", "task_log_06_observe.md"),
-        ("07_retro.md", "task_log_07_retro.md"),
-    ]:
-        out = logs_dir / name
-        if out.exists():
-            continue
-        tp = tpls / tpl
-        if not tp.exists():
-            continue
-        out.write_text(_render_log_template(tp, task_id=task_id, title=title), encoding="utf-8")
-
-    metrics = logs_dir / "metrics.jsonl"
-    if not metrics.exists():
-        metrics.write_text(
-            json.dumps(
-                {
-                    "ts": now,
-                    "event_type": "TASK_CREATED",
-                    "actor": "control-plane",
-                    "task_id": task_id,
-                    "project_id": project_id,
-                    "workstream_id": workstream_id,
-                    "severity": "INFO",
-                    "message": "task scaffold created",
-                    "payload": {"ledger": str(ledger_path), "logs_dir": str(logs_dir)},
-                },
-                ensure_ascii=False,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-
-    return {"task_id": task_id, "ledger_path": str(ledger_path), "logs_dir": str(logs_dir)}
-
-
 @app.post("/v1/tasks/new")
 def v1_tasks_new(payload: TaskNewIn):
+    _require_leader_write()
     # Safety: do not touch remotes by default.
     if payload.create_repo_if_missing and not (payload.repo_locator or "").strip():
         # Repo creation is high risk -> require explicit approval and remote-write enable.
@@ -1469,21 +1368,51 @@ def v1_tasks_new(payload: TaskNewIn):
     if mode not in ("auto", "bootstrap", "upgrade"):
         mode = "auto"
 
-    wsid = str((payload.workstreams or ["general"])[0] if payload.workstreams else "general")
-    created = _create_task_scaffold(title=payload.title, project_id=payload.project_id, workstream_id=wsid, mode=mode)
+    workstreams = [str(x).strip() for x in (payload.workstreams or ["general"]) if str(x).strip()] or ["general"]
+    wsid = str(workstreams[0])
+    scope = _scope_from_project_id(str(payload.project_id or "teamos"))
+    try:
+        delegated = crew_tools.run_task_create_pipeline(
+            repo_root=team_os_root(),
+            workspace_root=_workspace_root(),
+            scope=scope,
+            title=str(payload.title),
+            workstreams=workstreams,
+            mode=mode,
+            # Keep legacy behavior: task scaffold is always materialized locally.
+            # This endpoint never performs remote writes.
+            dry_run=False,
+        )
+    except crew_tools.CrewToolsError as e:
+        raise HTTPException(status_code=400, detail={"error": "TASK_CREATE_PIPELINE_FAILED", "message": str(e)})
+
+    created = delegated.get("result") or {}
+    step = delegated.get("step") or {}
+    task_id = str(created.get("task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=500, detail={"error": "TASK_CREATE_PIPELINE_INVALID_OUTPUT", "message": "missing task_id"})
+    event_payload = {
+        "task_id": task_id,
+        "mode": mode,
+        "scope": scope,
+        "dry_run": bool(payload.dry_run),
+        "repo_locator": (payload.repo_locator or "")[:120],
+        "write_delegate": step.get("write_delegate") or {},
+        "evidence": "truth-source writes are delegated to scripts/pipelines/task_create.py",
+    }
     DB.add_event(
         event_type="TASK_NEW",
         actor="user",
         project_id=payload.project_id,
         workstream_id=wsid,
-        payload={"task_id": created["task_id"], "mode": mode, "dry_run": bool(payload.dry_run), "repo_locator": (payload.repo_locator or "")[:120]},
+        payload=event_payload,
     )
     _publish_redis_event(
         event_type="TASK_NEW",
         actor="user",
         project_id=payload.project_id,
         workstream_id=wsid,
-        payload={"task_id": created["task_id"], "mode": mode, "dry_run": bool(payload.dry_run), "repo_locator": (payload.repo_locator or "")[:120]},
+        payload=event_payload,
     )
     _mark_panel_dirty(payload.project_id)
     pending: list[dict[str, Any]] = []
@@ -1492,12 +1421,18 @@ def v1_tasks_new(payload: TaskNewIn):
             {
                 "type": "REPO_UNDERSTANDING_GATE",
                 "project_id": payload.project_id,
-                "task_id": created["task_id"],
+                "task_id": task_id,
                 "message": "mode=upgrade requires docs/team_os/REPO_UNDERSTANDING.md before any code changes.",
                 "artifact_template": "templates/repo_understanding.md",
             }
         )
-    return {"task_id": created["task_id"], "ledger_path": created["ledger_path"], "logs_dir": created["logs_dir"], "pending_decisions": pending}
+    return {
+        "task_id": task_id,
+        "ledger_path": str(created.get("ledger_path") or ""),
+        "logs_dir": str(created.get("logs_dir") or ""),
+        "pending_decisions": pending,
+        "write_delegate": step.get("write_delegate") or {},
+    }
 
 
 @app.post("/v1/recovery/scan")

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
+from . import crew_tools
 from .state_store import team_os_root
 from . import redis_bus
 
@@ -17,66 +14,6 @@ class RunSpec:
     workstream_id: str
     objective: str
     flow: str
-
-
-_FLOW_PIPELINES: dict[str, list[str]] = {
-    # CrewAI-first flow aliases. Pipelines remain deterministic execution units.
-    "genesis": ["doctor"],
-    "standard": ["doctor"],
-    "maintenance": ["doctor", "db_migrate"],
-    "migration": ["db_migrate"],
-}
-
-_ALLOWED_PIPELINES = {"doctor", "db_migrate"}
-
-
-def _workspace_root() -> Path:
-    env_ws = str((os.getenv("TEAMOS_WORKSPACE_ROOT") or "")).strip()
-    if env_ws:
-        return Path(env_ws).expanduser().resolve()
-    return (Path.home() / ".teamos" / "workspace").resolve()
-
-
-def _normalize_flow(raw: str) -> str:
-    return str(raw or "standard").strip().lower()
-
-
-def _flow_to_pipelines(flow: str) -> list[str]:
-    f = _normalize_flow(flow)
-    if f in _FLOW_PIPELINES:
-        return list(_FLOW_PIPELINES[f])
-    # Backward-compatible direct pipeline mode:
-    # - flow="doctor"
-    # - flow="pipeline:doctor"
-    if f.startswith("pipeline:"):
-        p = f.split(":", 1)[1].strip()
-        if p in _ALLOWED_PIPELINES:
-            return [p]
-    if f in _ALLOWED_PIPELINES:
-        return [f]
-    raise ValueError(f"unsupported_flow: {flow}")
-
-
-def _pipeline_cmd(*, pipeline: str, repo: Path, ws_root: Path) -> list[str]:
-    if pipeline == "doctor":
-        return [
-            sys.executable,
-            str(repo / "scripts" / "pipelines" / "doctor.py"),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(ws_root),
-        ]
-    if pipeline == "db_migrate":
-        return [
-            sys.executable,
-            str(repo / "scripts" / "pipelines" / "db_migrate.py"),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(ws_root),
-        ]
-    raise ValueError(f"unsupported_pipeline: {pipeline}")
 
 
 def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payload: dict[str, Any]) -> None:
@@ -97,39 +34,62 @@ def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payl
 
 
 def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any]:
-    flow = _normalize_flow(spec.flow)
+    flow = crew_tools.normalize_flow(spec.flow)
     try:
-        pipelines = _flow_to_pipelines(flow)
-    except ValueError as e:
+        pipelines = crew_tools.flow_to_pipelines(flow)
+    except crew_tools.CrewToolsError as e:
+        err_payload = {
+            "run_id": "",
+            "flow": flow,
+            "error": str(e),
+            "supported_flows": crew_tools.supported_flows(),
+            "direct_pipeline_allowlist": crew_tools.direct_pipeline_allowlist(),
+            "write_mode": "delegated_pipeline_script_only",
+        }
         run_id = db.upsert_run(run_id=None, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="FAILED")
+        err_payload["run_id"] = run_id
         db.add_event(
             event_type="RUN_FAILED",
             actor=actor,
             project_id=spec.project_id,
             workstream_id=spec.workstream_id,
-            payload={"run_id": run_id, "flow": flow, "error": str(e)},
+            payload=err_payload,
         )
         _publish_redis_run_event(
             event_type="RUN_FAILED",
             actor=actor,
             spec=spec,
-            payload={"run_id": run_id, "flow": flow, "error": str(e)},
+            payload=err_payload,
         )
-        return {"ok": False, "run_id": run_id, "flow": flow, "error": str(e)}
+        return {"ok": False, "run_id": run_id, "flow": flow, "error": str(e), "supported_flows": crew_tools.supported_flows(), "direct_pipeline_allowlist": crew_tools.direct_pipeline_allowlist()}
 
     run_id = db.upsert_run(run_id=None, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
+    repo = team_os_root()
+    ws_root = crew_tools.workspace_root()
+    write_delegate = crew_tools.run_write_evidence(pipelines=pipelines, repo_root=repo)
     db.add_event(
         event_type="RUN_STARTED",
         actor=actor,
         project_id=spec.project_id,
         workstream_id=spec.workstream_id,
-        payload={"run_id": run_id, "flow": flow, "pipelines": pipelines},
+        payload={
+            "run_id": run_id,
+            "flow": flow,
+            "pipelines": pipelines,
+            "write_delegate": write_delegate,
+            "evidence": "truth-source writes are delegated to deterministic pipeline scripts",
+        },
     )
     _publish_redis_run_event(
         event_type="RUN_STARTED",
         actor=actor,
         spec=spec,
-        payload={"run_id": run_id, "flow": flow, "pipelines": pipelines},
+        payload={
+            "run_id": run_id,
+            "flow": flow,
+            "pipelines": pipelines,
+            "write_delegate": write_delegate,
+        },
     )
 
     stages = ["intake", "planning", "execute", "verify", "report"]
@@ -142,22 +102,34 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             payload={"run_id": run_id, "stage": st, "flow": flow},
         )
 
-    repo = team_os_root()
-    ws_root = _workspace_root()
     step_results: list[dict[str, Any]] = []
     ok = True
     for pipeline in pipelines:
-        cmd = _pipeline_cmd(pipeline=pipeline, repo=repo, ws_root=ws_root)
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-        step_ok = p.returncode == 0
-        step_results.append(
-            {
+        step = crew_tools.run_pipeline(pipeline=pipeline, repo_root=repo, workspace_root=ws_root)
+        step_ok = int(step.get("returncode", 1)) == 0
+        step_summary = {
+            "pipeline": pipeline,
+            "script_path": str(step.get("script_path") or ""),
+            "returncode": int(step.get("returncode", 1)),
+            "ok": step_ok,
+            "stdout": str(step.get("stdout") or "")[-1000:],
+            "stderr": str(step.get("stderr") or "")[-1000:],
+            "write_delegate": step.get("write_delegate") or {},
+        }
+        step_results.append(step_summary)
+        db.add_event(
+            event_type="RUN_PIPELINE_DELEGATED",
+            actor=actor,
+            project_id=spec.project_id,
+            workstream_id=spec.workstream_id,
+            payload={
+                "run_id": run_id,
+                "flow": flow,
                 "pipeline": pipeline,
-                "returncode": p.returncode,
-                "ok": step_ok,
-                "stdout": (p.stdout or "")[-1000:],
-                "stderr": (p.stderr or "")[-1000:],
-            }
+                "returncode": step_summary["returncode"],
+                "ok": step_summary["ok"],
+                "write_delegate": step_summary["write_delegate"],
+            },
         )
         if not step_ok:
             ok = False
@@ -174,6 +146,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             "flow": flow,
             "pipelines": pipelines,
             "steps": step_results,
+            "write_delegate": write_delegate,
         },
     )
     _publish_redis_run_event(
@@ -185,6 +158,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             "flow": flow,
             "pipelines": pipelines,
             "steps": step_results,
+            "write_delegate": write_delegate,
         },
     )
     last_rc = 0
@@ -201,4 +175,5 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         "pipeline": step_results[0]["pipeline"] if len(step_results) == 1 else "multi",
         "returncode": last_rc,
         "steps": step_results,
+        "write_delegate": write_delegate,
     }
