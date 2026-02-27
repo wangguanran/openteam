@@ -22,6 +22,12 @@ cd team-os
 # 默认 Workspace: ../team-os-runtime/workspace
 # 覆盖方式: TEAMOS_RUNTIME_ROOT 或 TEAMOS_WORKSPACE_ROOT
 
+# 在项目 repo 目录下可直接进入 requirement REPL（无需子命令）
+cd ../team-os-runtime/workspace/projects/<project_id>/repo
+teamos
+# 启动后会提示：输入会落盘为 Raw，不要输入密码/密钥
+# 控制命令：/help /status /exit
+
 # 创建任务（默认生成 00~07；用 --short 仅生成 00~02）
 ./scripts/teamos.sh new-task "一句话需求标题"
 

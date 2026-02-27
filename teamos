@@ -636,7 +636,8 @@ def _detect_workspace_project_from_cwd(workspace_root: Path, cwd: Optional[Path]
 def _project_repl(args: argparse.Namespace, *, project_id: str) -> int:
     base, _prof = _base_url(args)
     print(f"project_repl: project_id={project_id} scope=project:{project_id}")
-    print("Enter requirement text. Commands: /exit /help")
+    print("输入会落盘为 Raw，不要输入密码/密钥。")
+    print("Enter requirement text. Commands: /exit /help /status")
     while True:
         try:
             line = sys.stdin.readline()
@@ -647,10 +648,21 @@ def _project_repl(args: argparse.Namespace, *, project_id: str) -> int:
         text = line.rstrip("\n")
         if not text.strip():
             continue
-        if text.strip() in ("/exit", "/quit"):
+        cmd = text.strip()
+        if cmd in ("/exit", "/quit"):
             break
-        if text.strip() == "/help":
-            print("commands: /exit /help ; any other text is captured as RAW requirement")
+        if cmd == "/help":
+            print("commands: /exit /help /status ; any other text is captured as RAW requirement")
+            continue
+        if cmd == "/status":
+            st = _http_json("GET", base + "/v1/status")
+            instance_id = str(st.get("instance_id") or "").strip()
+            leader_base = ""
+            if isinstance(st.get("leader"), dict):
+                leader_base = str((st.get("leader") or {}).get("leader_base_url") or "").strip()
+            print(f"status.instance_id={instance_id}")
+            if leader_base:
+                print(f"status.leader_base_url={leader_base}")
             continue
         out = _http_json(
             "POST",
@@ -2194,16 +2206,33 @@ def main(argv: Optional[list[str]] = None) -> int:
     # when invoked as `teamos` (no subcommand) inside <workspace>/projects/<id>/repo,
     # enter a raw-requirement REPL.
     if not argv:
+        cfg: dict[str, Any] = {}
         try:
             cfg = _load_config()
-            ws = _workspace_root_from_cfg(cfg)
-            pid = _detect_workspace_project_from_cwd(ws)
+        except Exception:
+            cfg = {}
+        cur = Path.cwd().resolve()
+        ws_candidates = [_workspace_root_from_cfg(cfg)]
+        for p in [cur] + list(cur.parents):
+            if p.name == "workspace":
+                ws_candidates.append(p)
+        seen: set[str] = set()
+        for ws in ws_candidates:
+            k = str(ws.resolve())
+            if k in seen:
+                continue
+            seen.add(k)
+            try:
+                pid = _detect_workspace_project_from_cwd(ws, cwd=cur)
+            except Exception:
+                continue
             if pid:
                 tmp = argparse.Namespace(profile=None, workspace_root=str(ws))
-                return int(_project_repl(tmp, project_id=pid))
-        except Exception:
-            # Fall through to argparse help.
-            pass
+                try:
+                    return int(_project_repl(tmp, project_id=pid))
+                except Exception as e:
+                    eprint(f"ERROR: {e}")
+                    return 2
 
     p = argparse.ArgumentParser(prog="teamos", description="Team OS CLI (Control Plane client)")
     p.add_argument("--profile", help="profile name (from ~/.teamos/config.toml)")
