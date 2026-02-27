@@ -4,8 +4,15 @@ from __future__ import annotations
 import argparse
 import socket
 
-from _common import add_default_args
-from hub_common import hub_compose_path, hub_env_path, hub_root, parse_env_file, run_compose, write_json_stdout
+from _common import PipelineError, add_default_args
+from hub_common import (
+    enforce_hub_env_config_security,
+    hub_root,
+    load_hub_env_required,
+    run_compose,
+    validate_hub_compose_required,
+    write_json_stdout,
+)
 
 
 def _tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:
@@ -22,18 +29,18 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     hub = hub_root()
-    compose = hub_compose_path(hub)
-    env = parse_env_file(hub_env_path(hub))
-
-    if not compose.exists():
-        write_json_stdout({"ok": False, "error": f"missing compose file: {compose}", "hint": "run: teamos hub init"})
+    try:
+        env = load_hub_env_required(hub)
+        validate_hub_compose_required(hub)
+        enforce_hub_env_config_security(hub)
+    except PipelineError as e:
+        write_json_stdout({"ok": False, "error": str(e), "hint": "run: teamos hub init"})
         return 2
 
     ps = run_compose(hub=hub, args=["ps"], capture=True)
 
     pg_host = str(env.get("PG_BIND_IP") or "127.0.0.1")
     pg_port = int(str(env.get("PG_PORT") or "5432"))
-    redis_enabled = str(env.get("HUB_REDIS_ENABLED") or "1") == "1"
     redis_host = str(env.get("REDIS_BIND_IP") or "127.0.0.1")
     redis_port = int(str(env.get("REDIS_PORT") or "6379"))
 
@@ -48,10 +55,10 @@ def main(argv: list[str] | None = None) -> int:
             "tcp_open": _tcp_open(pg_host, pg_port),
         },
         "redis": {
-            "enabled": redis_enabled,
+            "enabled": True,
             "bind_ip": redis_host,
             "port": redis_port,
-            "tcp_open": _tcp_open(redis_host, redis_port) if redis_enabled else False,
+            "tcp_open": _tcp_open(redis_host, redis_port),
         },
     }
     write_json_stdout(out)

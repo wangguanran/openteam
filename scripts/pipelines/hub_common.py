@@ -2,33 +2,67 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from _common import PipelineError, read_text, render_template, write_text
+from _common import PipelineError, is_within, read_text, render_template, runtime_hub_root
 
 
 def hub_root() -> Path:
-    return (Path.home() / ".teamos" / "hub").resolve()
+    return runtime_hub_root()
+
+
+def hub_env_path(hub: Path) -> Path:
+    return hub / "env" / ".env"
+
+
+def hub_compose_path(hub: Path) -> Path:
+    return hub / "compose" / "docker-compose.yml"
+
+
+def _chmod_best_effort(path: Path, mode: int) -> None:
+    try:
+        os.chmod(path, mode)
+    except Exception:
+        pass
 
 
 def ensure_dir_secure(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path, 0o700)
-    except Exception:
-        pass
+    _chmod_best_effort(path, 0o700)
 
 
 def write_secure_file(path: Path, text: str, *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    try:
-        os.chmod(path, mode)
-    except Exception:
-        pass
+    _chmod_best_effort(path, mode)
+
+
+def enforce_hub_env_config_security(hub: Path) -> None:
+    # Enforce strict modes for hub env/config + compose surfaces.
+    secure_dirs = [
+        hub / "env",
+        hub / "config",
+        hub / "config" / "postgres",
+        hub / "compose",
+    ]
+    for d in secure_dirs:
+        ensure_dir_secure(d)
+
+    secure_files = [
+        hub_env_path(hub),
+        hub_compose_path(hub),
+        hub / "config" / "postgres" / "pg_hba.conf",
+        hub / "CONNECTION_INFO.md",
+        hub / "README.md",
+        hub / "FIREWALL_PLAN.md",
+    ]
+    for p in secure_files:
+        if p.exists():
+            _chmod_best_effort(p, 0o600)
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -62,36 +96,15 @@ def load_template(repo_root: Path, rel: str) -> str:
     return read_text(p)
 
 
-def render_compose(*, repo_root: Path, pg_bind_ip: str, pg_port: int, redis_enabled: bool, redis_bind_ip: str, redis_port: int) -> str:
+def render_compose(*, repo_root: Path, pg_bind_ip: str, pg_port: int, redis_bind_ip: str, redis_port: int) -> str:
     tpl = load_template(repo_root, "templates/hub/docker-compose.yml.j2")
-    redis_block = ""
-    if redis_enabled:
-        redis_block = "\n".join(
-            [
-                "  redis:",
-                "    image: redis:7",
-                "    container_name: teamos-hub-redis",
-                "    restart: unless-stopped",
-                "    env_file:",
-                "      - ../env/.env",
-                "    command: [\"redis-server\", \"--appendonly\", \"yes\", \"--requirepass\", \"$${REDIS_PASSWORD}\"]",
-                "    ports:",
-                f"      - \"{redis_bind_ip}:{int(redis_port)}:6379\"",
-                "    volumes:",
-                "      - ../data/redisdata:/data",
-                "    healthcheck:",
-                "      test: [\"CMD-SHELL\", \"redis-cli -a $${REDIS_PASSWORD} ping | grep PONG\"]",
-                "      interval: 10s",
-                "      timeout: 5s",
-                "      retries: 10",
-            ]
-        )
     return render_template(
         tpl,
         {
             "PG_BIND_IP": str(pg_bind_ip),
             "PG_PORT": str(int(pg_port)),
-            "REDIS_BLOCK": redis_block,
+            "REDIS_BIND_IP": str(redis_bind_ip),
+            "REDIS_PORT": str(int(redis_port)),
         },
     )
 
@@ -107,7 +120,7 @@ def render_pg_hba(*, repo_root: Path, allow_cidrs: list[str]) -> str:
     return render_template(tpl, {"ALLOW_RULES": "\n".join(rules)})
 
 
-def render_hub_readme(*, repo_root: Path, hub: Path, pg_bind_ip: str, pg_port: int, redis_enabled: bool, redis_bind_ip: str, redis_port: int) -> str:
+def render_hub_readme(*, repo_root: Path, hub: Path, pg_bind_ip: str, pg_port: int, redis_bind_ip: str, redis_port: int) -> str:
     tpl = load_template(repo_root, "templates/hub/README.md.j2")
     return render_template(
         tpl,
@@ -115,7 +128,6 @@ def render_hub_readme(*, repo_root: Path, hub: Path, pg_bind_ip: str, pg_port: i
             "HUB_ROOT": str(hub),
             "PG_BIND_IP": str(pg_bind_ip),
             "PG_PORT": str(int(pg_port)),
-            "REDIS_ENABLED": "true" if redis_enabled else "false",
             "REDIS_BIND_IP": str(redis_bind_ip),
             "REDIS_PORT": str(int(redis_port)),
         },
@@ -153,12 +165,58 @@ def run_compose(*, hub: Path, args: list[str], capture: bool = False) -> dict[st
     }
 
 
-def hub_env_path(hub: Path) -> Path:
-    return hub / "env" / ".env"
+def validate_hub_redis_required(env: dict[str, str], *, env_path: Path) -> None:
+    redis_enabled = str(env.get("HUB_REDIS_ENABLED") or "").strip()
+    if redis_enabled != "1":
+        if not redis_enabled:
+            raise PipelineError(f"missing HUB_REDIS_ENABLED=1 in hub env: {env_path}")
+        raise PipelineError(f"hub redis is mandatory; HUB_REDIS_ENABLED must be 1 (got: {redis_enabled!r})")
+
+    missing: list[str] = []
+    for k in ("REDIS_BIND_IP", "REDIS_PORT", "REDIS_PASSWORD"):
+        if not str(env.get(k) or "").strip():
+            missing.append(k)
+    if missing:
+        raise PipelineError(f"missing required redis config in hub env ({', '.join(missing)}): {env_path}")
 
 
-def hub_compose_path(hub: Path) -> Path:
-    return hub / "compose" / "docker-compose.yml"
+def validate_hub_postgres_required(env: dict[str, str], *, env_path: Path) -> None:
+    missing: list[str] = []
+    for k in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "PG_BIND_IP", "PG_PORT"):
+        if not str(env.get(k) or "").strip():
+            missing.append(k)
+    if missing:
+        raise PipelineError(f"missing required postgres config in hub env ({', '.join(missing)}): {env_path}")
+
+
+def load_hub_env_required(hub: Path) -> dict[str, str]:
+    env_path = hub_env_path(hub)
+    env = parse_env_file(env_path)
+    if not env:
+        raise PipelineError(f"missing hub env: {env_path} (run: teamos hub init)")
+    validate_hub_postgres_required(env, env_path=env_path)
+    validate_hub_redis_required(env, env_path=env_path)
+    return env
+
+
+def validate_hub_compose_required(hub: Path) -> None:
+    compose = hub_compose_path(hub)
+    if not compose.exists():
+        raise PipelineError(f"missing compose file: {compose} (run: teamos hub init)")
+    text = read_text(compose)
+    missing_services: list[str] = []
+    if not re.search(r"(?m)^  postgres:\s*$", text):
+        missing_services.append("postgres")
+    if not re.search(r"(?m)^  redis:\s*$", text):
+        missing_services.append("redis")
+    if missing_services:
+        raise PipelineError(f"hub compose missing required services: {', '.join(missing_services)} ({compose})")
+
+
+def validate_hub_runtime_path(path: Path, *, hub: Path, label: str) -> None:
+    p = path.expanduser().resolve()
+    if not is_within(p, hub):
+        raise PipelineError(f"{label} must be inside runtime hub root: {hub} (got: {p})")
 
 
 def local_db_dsn(env: dict[str, str]) -> str:
@@ -175,7 +233,6 @@ def connection_info_md(env: dict[str, str]) -> str:
     pg_db = str(env.get("POSTGRES_DB") or "teamos")
     pg_host = str(env.get("PG_BIND_IP") or "127.0.0.1")
     pg_port = str(env.get("PG_PORT") or "5432")
-    redis_enabled = str(env.get("HUB_REDIS_ENABLED") or "1") == "1"
     redis_host = str(env.get("REDIS_BIND_IP") or "127.0.0.1")
     redis_port = str(env.get("REDIS_PORT") or "6379")
 
@@ -190,17 +247,12 @@ def connection_info_md(env: dict[str, str]) -> str:
         f"- User: `{pg_user}`",
         f"- DB: `{pg_db}`",
         "- DSN template: `postgresql://<user>:<password>@<host>:<port>/<db>`",
+        "",
+        "## Redis (Required)",
+        f"- Host: `{redis_host}`",
+        f"- Port: `{redis_port}`",
+        "- URL template: `redis://:<password>@<host>:<port>/0`",
     ]
-    if redis_enabled:
-        lines.extend(
-            [
-                "",
-                "## Redis",
-                f"- Host: `{redis_host}`",
-                f"- Port: `{redis_port}`",
-                "- URL template: `redis://:<password>@<host>:<port>/0`",
-            ]
-        )
     return "\n".join(lines).rstrip() + "\n"
 
 

@@ -19,4 +19,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-{{REDIS_BLOCK}}
+  redis:
+    image: redis:7
+    container_name: teamos-hub-redis
+    restart: unless-stopped
+    env_file:
+      - ../env/.env
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "$${REDIS_PASSWORD}"]
+    ports:
+      - "{{REDIS_BIND_IP}}:{{REDIS_PORT}}:6379"
+    volumes:
+      - ../data/redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

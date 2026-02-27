@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 
-from _common import PipelineError, add_default_args, resolve_repo_root
+from _common import add_default_args, resolve_repo_root
 from hub_common import (
     connection_info_md,
+    enforce_hub_env_config_security,
     ensure_dir_secure,
     format_env,
     hub_compose_path,
@@ -24,10 +24,8 @@ from hub_common import (
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Initialize local Team-OS Hub (Postgres + optional Redis)")
+    ap = argparse.ArgumentParser(description="Initialize local Team-OS Hub (Postgres + Redis)")
     add_default_args(ap)
-    ap.add_argument("--with-redis", action="store_true", help="enable redis (default: enabled)")
-    ap.add_argument("--without-redis", action="store_true", help="disable redis")
     ap.add_argument("--pg-port", type=int, default=5432)
     ap.add_argument("--redis-port", type=int, default=6379)
     ap.add_argument("--dry-run", action="store_true")
@@ -36,15 +34,10 @@ def main(argv: list[str] | None = None) -> int:
     repo = resolve_repo_root(args)
     hub = hub_root()
 
-    with_redis = True
-    if bool(args.without_redis):
-        with_redis = False
-    elif bool(args.with_redis):
-        with_redis = True
-
     old_umask = os.umask(0o077)
     try:
         dirs = [
+            hub,
             hub / "compose",
             hub / "env",
             hub / "data" / "pgdata",
@@ -53,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             hub / "backups",
             hub / "logs",
             hub / "state" / "locks",
+            hub / "state" / "tmp",
         ]
         if not args.dry_run:
             for d in dirs:
@@ -66,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             env.setdefault("REDIS_PASSWORD", random_secret())
             env["PG_BIND_IP"] = "127.0.0.1"
             env["PG_PORT"] = str(int(args.pg_port))
-            env["HUB_REDIS_ENABLED"] = "1" if with_redis else "0"
+            env["HUB_REDIS_ENABLED"] = "1"
             env["REDIS_BIND_IP"] = "127.0.0.1"
             env["REDIS_PORT"] = str(int(args.redis_port))
             write_secure_file(env_path, format_env(env), mode=0o600)
@@ -75,7 +69,6 @@ def main(argv: list[str] | None = None) -> int:
                 repo_root=repo,
                 pg_bind_ip=env["PG_BIND_IP"],
                 pg_port=int(env["PG_PORT"]),
-                redis_enabled=(env.get("HUB_REDIS_ENABLED") == "1"),
                 redis_bind_ip=env["REDIS_BIND_IP"],
                 redis_port=int(env["REDIS_PORT"]),
             )
@@ -89,11 +82,11 @@ def main(argv: list[str] | None = None) -> int:
                 hub=hub,
                 pg_bind_ip=env["PG_BIND_IP"],
                 pg_port=int(env["PG_PORT"]),
-                redis_enabled=(env.get("HUB_REDIS_ENABLED") == "1"),
                 redis_bind_ip=env["REDIS_BIND_IP"],
                 redis_port=int(env["REDIS_PORT"]),
             ), mode=0o600)
             write_secure_file(hub / "CONNECTION_INFO.md", connection_info_md(env), mode=0o600)
+            enforce_hub_env_config_security(hub)
 
         write_json_stdout(
             {
@@ -101,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
                 "dry_run": bool(args.dry_run),
                 "hub_root": str(hub),
                 "postgres": {"bind_ip": "127.0.0.1", "port": int(args.pg_port)},
-                "redis": {"enabled": with_redis, "bind_ip": "127.0.0.1", "port": int(args.redis_port)},
+                "redis": {"enabled": True, "bind_ip": "127.0.0.1", "port": int(args.redis_port)},
             }
         )
         return 0

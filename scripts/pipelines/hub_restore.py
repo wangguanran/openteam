@@ -6,7 +6,14 @@ import subprocess
 from pathlib import Path
 
 from _common import PipelineError, add_default_args
-from hub_common import hub_env_path, hub_root, parse_env_file, run_compose, write_json_stdout
+from hub_common import (
+    enforce_hub_env_config_security,
+    hub_root,
+    load_hub_env_required,
+    validate_hub_compose_required,
+    validate_hub_runtime_path,
+    write_json_stdout,
+)
 
 
 def _compose_cmd(hub: Path) -> list[str]:
@@ -22,13 +29,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     hub = hub_root()
-    env = parse_env_file(hub_env_path(hub))
-    if not env:
-        raise PipelineError("missing hub env")
+    env = load_hub_env_required(hub)
+    validate_hub_compose_required(hub)
+    enforce_hub_env_config_security(hub)
 
     src = Path(str(args.file)).expanduser().resolve()
     if not src.exists():
         raise PipelineError(f"backup file not found: {src}")
+    validate_hub_runtime_path(src, hub=hub, label="restore input")
 
     user = str(env.get("POSTGRES_USER") or "teamos")
     db = str(env.get("POSTGRES_DB") or "teamos")

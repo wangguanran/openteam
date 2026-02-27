@@ -6,7 +6,14 @@ import argparse
 from _common import PipelineError, add_default_args, resolve_repo_root
 from _db import connect
 from db_migrate import apply_migrations
-from hub_common import hub_env_path, hub_root, local_db_dsn, parse_env_file, write_json_stdout
+from hub_common import (
+    enforce_hub_env_config_security,
+    hub_root,
+    load_hub_env_required,
+    local_db_dsn,
+    validate_hub_compose_required,
+    write_json_stdout,
+)
 
 
 def _list_migrations(repo_root):
@@ -27,9 +34,9 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = resolve_repo_root(args)
     hub = hub_root()
-    env = parse_env_file(hub_env_path(hub))
-    if not env:
-        raise PipelineError(f"missing hub env: {hub_env_path(hub)} (run teamos hub init)")
+    env = load_hub_env_required(hub)
+    validate_hub_compose_required(hub)
+    enforce_hub_env_config_security(hub)
 
     migrations = _list_migrations(repo)
     if not migrations:

@@ -1370,10 +1370,6 @@ def cmd_hub_init(args: argparse.Namespace) -> None:
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))]
-    if bool(getattr(args, "with_redis", False)):
-        argv.append("--with-redis")
-    if bool(getattr(args, "without_redis", False)):
-        argv.append("--without-redis")
     argv += ["--pg-port", str(int(getattr(args, "pg_port", 5432) or 5432))]
     argv += ["--redis-port", str(int(getattr(args, "redis_port", 6379) or 6379))]
     _run_pipeline(repo_root, "scripts/pipelines/hub_init.py", argv)
@@ -2355,8 +2351,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     hb = sp.add_parser("hub", help="Local/central Hub operations (Postgres + Redis)")
     hb_sp = hb.add_subparsers(dest="subcmd", required=True)
     hinit = hb_sp.add_parser("init", help="Initialize hub structure and compose files")
-    hinit.add_argument("--with-redis", action="store_true", help="enable redis (default already enabled)")
-    hinit.add_argument("--without-redis", action="store_true", help="disable redis")
     hinit.add_argument("--pg-port", type=int, default=5432)
     hinit.add_argument("--redis-port", type=int, default=6379)
     hinit.set_defaults(fn=cmd_hub_init)

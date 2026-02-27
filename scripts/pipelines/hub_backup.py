@@ -4,8 +4,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _common import add_default_args, ts_compact_utc
-from hub_common import hub_env_path, hub_root, parse_env_file, run_compose, write_json_stdout
+from _common import PipelineError, add_default_args, ts_compact_utc
+from hub_common import (
+    enforce_hub_env_config_security,
+    ensure_dir_secure,
+    hub_root,
+    load_hub_env_required,
+    run_compose,
+    validate_hub_compose_required,
+    validate_hub_runtime_path,
+    write_json_stdout,
+    write_secure_file,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -15,13 +25,20 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     hub = hub_root()
-    env = parse_env_file(hub_env_path(hub))
-    if not env:
-        write_json_stdout({"ok": False, "error": "missing hub env", "hint": "run teamos hub init"})
+    try:
+        env = load_hub_env_required(hub)
+        validate_hub_compose_required(hub)
+        enforce_hub_env_config_security(hub)
+    except PipelineError as e:
+        write_json_stdout({"ok": False, "error": str(e), "hint": "run teamos hub init"})
         return 2
 
-    out_path = Path(str(args.output or "")).expanduser().resolve() if str(args.output or "").strip() else (hub / "backups" / f"hub_{ts_compact_utc()}.sql")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if str(args.output or "").strip():
+        out_path = Path(str(args.output)).expanduser().resolve()
+    else:
+        out_path = hub / "backups" / f"hub_{ts_compact_utc()}.sql"
+    validate_hub_runtime_path(out_path, hub=hub, label="backup output")
+    ensure_dir_secure(out_path.parent)
 
     user = str(env.get("POSTGRES_USER") or "teamos")
     db = str(env.get("POSTGRES_DB") or "teamos")
@@ -30,7 +47,8 @@ def main(argv: list[str] | None = None) -> int:
         write_json_stdout({"ok": False, "stderr": dump.get("stderr", "")[-1000:]})
         return 2
 
-    out_path.write_text(str(dump.get("stdout") or ""), encoding="utf-8")
+    write_secure_file(out_path, str(dump.get("stdout") or ""), mode=0o600)
+    enforce_hub_env_config_security(hub)
     write_json_stdout({"ok": True, "output": str(out_path), "bytes": out_path.stat().st_size})
     return 0
 

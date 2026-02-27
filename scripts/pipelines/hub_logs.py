@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import argparse
 
-from _common import add_default_args
-from hub_common import hub_compose_path, hub_root, run_compose
+from _common import PipelineError, add_default_args
+from hub_common import (
+    enforce_hub_env_config_security,
+    hub_root,
+    load_hub_env_required,
+    run_compose,
+    validate_hub_compose_required,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -15,9 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     hub = hub_root()
-    compose = hub_compose_path(hub)
-    if not compose.exists():
-        print(f"ERROR: missing compose file: {compose}\nnext: teamos hub init")
+    try:
+        load_hub_env_required(hub)
+        validate_hub_compose_required(hub)
+        enforce_hub_env_config_security(hub)
+    except PipelineError as e:
+        print(f"ERROR: {e}\nnext: teamos hub init")
         return 2
 
     cmd = ["logs", "--tail", str(int(args.tail))]

@@ -8,13 +8,14 @@ import locks
 
 from _common import PipelineError, add_default_args, resolve_repo_root
 from hub_common import (
+    enforce_hub_env_config_security,
     hub_compose_path,
-    hub_env_path,
     hub_root,
-    parse_env_file,
+    load_hub_env_required,
     render_compose,
     render_pg_hba,
     run_compose,
+    validate_hub_compose_required,
     write_json_stdout,
     write_secure_file,
 )
@@ -55,10 +56,10 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = resolve_repo_root(args)
     hub = hub_root()
-    env_path = hub_env_path(hub)
-    env = parse_env_file(env_path)
-    if not env:
-        raise PipelineError(f"missing hub env: {env_path}")
+    env_path = hub / "env" / ".env"
+    env = load_hub_env_required(hub)
+    validate_hub_compose_required(hub)
+    enforce_hub_env_config_security(hub)
 
     allow = _cidrs(str(args.allow_cidrs or ""))
     if not allow:
@@ -80,7 +81,6 @@ def main(argv: list[str] | None = None) -> int:
                 repo_root=repo,
                 pg_bind_ip=str(env.get("PG_BIND_IP") or "127.0.0.1"),
                 pg_port=int(str(env.get("PG_PORT") or "5432")),
-                redis_enabled=(str(env.get("HUB_REDIS_ENABLED") or "1") == "1"),
                 redis_bind_ip=str(env.get("REDIS_BIND_IP") or "127.0.0.1"),
                 redis_port=int(str(env.get("REDIS_PORT") or "6379")),
             )
@@ -105,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             if bool(args.open_redis):
                 plan_lines.append(f"- ufw allow from <cidr> to {bind_ip} port {env.get('REDIS_PORT','6379')} proto tcp")
             write_secure_file(fw_plan, "\n".join(plan_lines).rstrip() + "\n", mode=0o600)
+            enforce_hub_env_config_security(hub)
 
             run_compose(hub=hub, args=["up", "-d", "--force-recreate"], capture=False)
 
@@ -118,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             "open_redis": bool(args.open_redis),
             "firewall_plan": str(hub / "FIREWALL_PLAN.md"),
             "postgres_tcp_open": _tcp_open(str(env.get("PG_BIND_IP") or bind_ip), int(str(env.get("PG_PORT") or "5432"))),
-            "redis_tcp_open": _tcp_open(str(env.get("REDIS_BIND_IP") or bind_ip), int(str(env.get("REDIS_PORT") or "6379"))) if str(env.get("HUB_REDIS_ENABLED") or "1") == "1" else False,
+            "redis_tcp_open": _tcp_open(str(env.get("REDIS_BIND_IP") or bind_ip), int(str(env.get("REDIS_PORT") or "6379"))),
         }
         write_json_stdout(out)
         return 0
