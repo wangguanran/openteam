@@ -108,6 +108,37 @@ class HubPipelinesTests(unittest.TestCase):
             out = json.loads(p.stdout)
             self.assertIn("missing required redis config", out.get("error", ""))
 
+    def test_hub_push_config_dry_run_includes_policy_paths(self):
+        with tempfile.TemporaryDirectory() as td:
+            env, _runtime_root = self._env(td)
+            repo = str(self._repo_root())
+            p0 = self._run("hub_init.py", ["--repo-root", repo, "--workspace-root", str(Path(td) / "ws")], env)
+            self.assertEqual(p0.returncode, 0, p0.stderr)
+
+            p = self._run(
+                "hub_push_config.py",
+                [
+                    "--repo-root",
+                    repo,
+                    "--workspace-root",
+                    str(Path(td) / "ws"),
+                    "--host",
+                    "127.0.0.1",
+                    "--user",
+                    "ubuntu",
+                    "--dry-run",
+                ],
+                env,
+            )
+            self.assertEqual(p.returncode, 0, p.stderr)
+            out = json.loads(p.stdout)
+            self.assertEqual(out.get("remote_policy_dir"), "~/.teamos/policies")
+            self.assertEqual(out.get("remote_allowlist_path"), "~/.teamos/policies/central_model_allowlist.yaml")
+            self.assertEqual(out.get("remote_approvals_path"), "~/.teamos/policies/approvals.yaml")
+            env_vars = out.get("remote_env_vars") or {}
+            self.assertEqual(env_vars.get("TEAMOS_CENTRAL_MODEL_ALLOWLIST_PATH"), "~/.teamos/policies/central_model_allowlist.yaml")
+            self.assertEqual(env_vars.get("TEAMOS_APPROVALS_POLICY_PATH"), "~/.teamos/policies/approvals.yaml")
+
 
 if __name__ == "__main__":
     unittest.main()
