@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from . import codex_llm
 from .demo_seed import seed_mock_data
 from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraphQL, RATE_LIMIT_QUERY, resolve_github_token
-from .n8n_hook import emit_n8n_event
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
 from . import redis_bus
@@ -964,16 +963,6 @@ def v1_chat(payload: ChatIn):
             payload={"run_id": payload.run_id, "state": desired},
         )
         _mark_panel_dirty(project_id)
-        # Optional notification hook (n8n): treat run state updates as a "task_state_changed" signal.
-        try:
-            emit_n8n_event(
-                "task_state_changed",
-                project_id=project_id,
-                workstream_id=workstream_id,
-                payload={"run_id": payload.run_id, "state": desired},
-            )
-        except Exception:
-            pass
         actions.append(f"run_state={desired}")
         response_lines.append(f"run_id={payload.run_id} state={desired}")
         return {"response_text": "\n".join(response_lines).strip() + "\n", "actions_taken": actions, "pending_decisions": pending}
@@ -1758,23 +1747,6 @@ def _handle_new_requirement(
         },
     )
     _mark_panel_dirty(project_id)
-
-    if outcome.classification in ("CONFLICT", "DRIFT", "NEED_PM_DECISION"):
-        # Optional notification hook (n8n): pending decision created.
-        try:
-            emit_n8n_event(
-                "need_pm_decision",
-                project_id=project_id,
-                workstream_id=workstream_id,
-                payload={
-                    "req_id": outcome.req_id or "",
-                    "conflicts_with": outcome.conflicts_with,
-                    "conflict_report_path": outcome.conflict_report_path or "",
-                    "drift_report_path": outcome.drift_report_path or "",
-                },
-            )
-        except Exception:
-            pass
 
     if outcome.classification == "DUPLICATE":
         summary = "\n".join(

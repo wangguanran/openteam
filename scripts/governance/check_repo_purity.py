@@ -50,7 +50,6 @@ _ROOT_STATIC_ALLOWLIST = {
     "evals",
     "integrations",
     "migrations",
-    "n8n",
     "policies",
     "prompt-library",
     "roles",

@@ -5,7 +5,6 @@
 - Migrate static assets to root-level directories: `scripts/`, `templates/`, `policies/`, `schemas/`, `migrations/`.
 - Enforce runtime-only dynamic outputs under `../team-os-runtime/`.
 - Keep orchestration on CrewAI + deterministic Python pipelines only.
-- Remove n8n from runtime, code, docs, and dependencies.
 
 ## Hard Rules
 - Repo contains static assets only.
@@ -33,7 +32,7 @@ Required runtime layout:
 3. Subagent D: CrewAI orchestrator tooling boundary (pipelines-only writes).
 4. Subagent E: project REPL raw-input auto-capture v3 + feasibility.
 5. Subagent F: remote node bootstrap + safe config push + installer knowledge.
-6. Subagent G: n8n removal from code/assets/docs.
+6. Subagent G: remove deprecated external workflow layer references.
 7. Subagent H: e2e tests + final runtime audit artifacts.
 
 ## Acceptance Gates

@@ -86,7 +86,7 @@ cd team-os
   - CrewAI 运行入口：`POST /v1/runs/start`（查询：`GET /v1/runs`）
   - Hub 运行状态：`GET /v1/hub/status`
   - Hub 容器编排：`teamos hub init|up|status|migrate`
-  - n8n 展示层模板：`n8n/workflows/templates/teamos_hub_monitor.json`
+  - 任务状态/决策流由 CrewAI + 确定性 pipelines 统一处理（并可同步到 GitHub Projects 视图层）
   - 兼容组件（可选保留）：OpenHands + Temporal
   - OpenHands Agent Server：`http://127.0.0.1:18000/alive`
   - Temporal UI：`http://127.0.0.1:18081`

@@ -361,27 +361,13 @@ cd team-os
 ./teamos panel show --project demo
 ```
 
-#### 5.4.5 n8n（可选：通知/自动化补充，不是主面板）
+#### 5.4.5 事件通知与自动化边界（CrewAI + 确定性 Pipelines）
 
-如果你需要把“需要 PM 决策/状态变化”等事件转发到 Slack/飞书/邮件，可选启用 n8n webhook（仅用于通知与自动化，不承担计划面板）。
+“需要 PM 决策/状态变化”等事件由 Control Plane 记录到 runtime state，再通过确定性 pipelines 同步到视图层（如 GitHub Projects）。
 
-1) 在 runtime `.env` 配置 webhook：
-
-```bash
-N8N_WEBHOOK_URL="https://<your-n8n>/webhook/<id>"
-```
-
-2) Control Plane 会 best-effort POST JSON 事件（失败不影响主流程）。当前已实现的事件：
-
-- `need_pm_decision`：新增需求冲突进入 `NEED_PM_DECISION`
-- `task_state_changed`：run 状态变化（PAUSE/RESUME/STOP）
-
-预留（TODO）：
-
-- `release_completed`
-- `incident_opened`
-
-安全要求见：`docs/SECURITY.md`（内网部署、最小权限、及时升级）。
+- 真相源写路径统一走脚本/CLI，不依赖外部 workflow 引擎 webhook。
+- 任何外围通知（Slack/飞书/邮件）都必须作为可选派生动作，失败不得影响主流程。
+- 自动化扩展应放在 `scripts/pipelines/*` 或受控的编排工具入口中，保持可审计与可重放。
 
 #### 5.4.6 自动同步（可选：30~60s 刷新；会写入 Projects）
 

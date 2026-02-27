@@ -67,16 +67,14 @@
 - 仅在需要同步的环境注入 token（例如本机 `team-os-runtime/.env`）
 - 定期轮换 token（轮换属于高风险动作，需审批并记录）
 
-## 7. 可选 n8n 安全加固与升级要求
+## 7. CrewAI + 确定性 Pipelines 边界
 
-n8n 在本仓库仅作为“自动化/通知补充”，不得作为主计划面板（主面板为 GitHub Projects v2）。
+Team OS 的控制面与自动化边界如下：
 
-如果启用 n8n（例如接收 Control Plane 的 webhook 事件，转发到 Slack/飞书/邮件）：
-
-- 必须部署在内网/受限网络，不得直接暴露公网
-- 必须设置强认证与最小权限（限制谁能创建/编辑 workflow）
-- 必须定期升级到官方修复版本（建议纳入月度/季度例行升级）
-- Webhook 入口必须增加防重放/签名校验/来源限制（后续增强项）
+- 编排层由 CrewAI Orchestrator 负责（任务流转、工具调用、状态聚合）。
+- 所有会改变真相源的写操作必须经过确定性 pipelines（CLI/脚本入口），不得绕过写入。
+- GitHub Projects 仅作为视图层；真相源仍在 Team OS 的 ledger/logs/requirements/runtime store。
+- 任何通知或外围自动化都不能成为主状态机，也不能引入未审计的写路径。
 
 ## 8. Hub Exposure Controls
 

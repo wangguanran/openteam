@@ -129,8 +129,6 @@ services:
       TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}
       TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC: ${TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC:-60}
       TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC: ${TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC:-30}
-      # Optional: n8n webhook URL for notifications only (do not expose publicly)
-      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       # Optional override; default is /team-os/.team-os/state/runtime.db
       RUNTIME_DB_PATH: ${RUNTIME_DB_PATH:-}
     ports:
