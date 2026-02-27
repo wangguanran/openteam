@@ -8,7 +8,7 @@ from pathlib import Path
 def _add_template_app_to_syspath():
     # Source of truth for control-plane path policy.
     repo_root = Path(__file__).resolve().parents[1]
-    app_dir = repo_root / ".team-os" / "templates" / "runtime" / "orchestrator"
+    app_dir = repo_root / "templates" / "runtime" / "orchestrator"
     sys.path.insert(0, str(app_dir))
 
 

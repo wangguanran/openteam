@@ -77,7 +77,7 @@ OK
 
 ### req_verify
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace verify --scope teamos`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace verify --scope teamos`
 - rc: 0
 
 ```text
@@ -97,7 +97,7 @@ OK
 
 ### prompt_compile
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/prompt_compile.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --scope teamos --dry-run`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/prompt_compile.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --scope teamos --dry-run`
 - rc: 0
 
 ```text

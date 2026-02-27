@@ -75,7 +75,7 @@
 - Approvals engine + risk classifier (DB-backed): PASS  (risk_classify + request/approve/deny + audit records)
 - Cluster election (DB-first) + central model allowlist gate: PASS  (leader lease TTL/heartbeat + model_id allowlist)
 - Recovery (resume after restart) + restore sequence: PASS  (control-plane endpoints implement gate-aware scan/resume (pending approvals / PM decisions / blocked))
-  - evidence: template=.team-os/templates/runtime/orchestrator/app/main.py gates=yes
+  - evidence: template=templates/runtime/orchestrator/app/main.py gates=yes
 - Always-on self-improve (auto enter on teamos run): PASS  (daemon exists + (running now OR control-plane auto-start hook present))
   - evidence: running=True auto_start_hook=yes
 - Project config (Workspace-local) + schema: PASS  (teamos project config init/show/set/validate)

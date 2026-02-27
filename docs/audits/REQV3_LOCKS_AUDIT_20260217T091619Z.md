@@ -71,7 +71,7 @@
 
 ### approvals_request
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/approvals.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace request --task-id TEAMOS-0019 --action-kind repo_create --summary [E2E:20260217T091619Z] approvals db write check --role single --yes`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/approvals.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace request --task-id TEAMOS-0019 --action-kind repo_create --summary [E2E:20260217T091619Z] approvals db write check --role single --yes`
 - rc: 0
 
 ```text
@@ -131,7 +131,7 @@
 
 ### req_add_feasible
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace add --scope project:audit-e2e --text [E2E:20260217T091619Z] Add a feasible requirement for v3 verification. --workstream qa --priority P2 --source cli --user e2e`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace add --scope project:audit-e2e --text [E2E:20260217T091619Z] Add a feasible requirement for v3 verification. --workstream qa --priority P2 --source cli --user e2e`
 - rc: 0
 
 ```text
@@ -167,7 +167,7 @@
 
 ### req_add_not_feasible
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace add --scope project:audit-e2e --text [E2E:20260217T091619Z] 将项目 requirements 写入 team-os repo 并提交 --workstream qa --priority P1 --source cli --user e2e`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace add --scope project:audit-e2e --text [E2E:20260217T091619Z] 将项目 requirements 写入 team-os repo 并提交 --workstream qa --priority P1 --source cli --user e2e`
 - rc: 0
 
 ```text
@@ -211,7 +211,7 @@
 
 ### self_improve_run_once
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/self_improve_daemon.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace run-once --scope teamos --force`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/self_improve_daemon.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace run-once --scope teamos --force`
 - rc: 0
 
 ```text

@@ -10,7 +10,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PIPE = REPO_ROOT / ".team-os" / "scripts" / "pipelines"
+PIPE = REPO_ROOT / "scripts" / "pipelines"
 
 
 def _run(cmd: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess:

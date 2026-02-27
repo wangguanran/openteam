@@ -1,0 +1,77 @@
+schema_version: 1
+workflow_id: "TRUNK"
+version: "0.1"
+last_updated: "2026-02-16"
+
+# The TRUNK workflow defines the standard lifecycle stages.
+# Project-specific workflows (Genesis/Discovery/Delivery/Incident/Self-Improve) can still exist,
+# but TRUNK + plugins is the composable "execution engine" contract.
+
+trunk_stages:
+  - id: "intake"
+    roles: ["PM-Intake"]
+    required_artifacts:
+      - ".team-os/ledger/tasks/<TASK_ID>.yaml"
+      - ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+    exit_criteria:
+      - "scope clarified"
+      - "risk assessed"
+      - "approval gates listed"
+
+  - id: "plan"
+    roles: ["Architect", "PM-Intake"]
+    required_artifacts:
+      - ".team-os/logs/tasks/<TASK_ID>/01_plan.md"
+      - ".team-os/logs/tasks/<TASK_ID>/02_todo.md"
+    exit_criteria:
+      - "workstreams identified"
+      - "acceptance criteria defined"
+      - "tests/verification plan exists"
+
+  - id: "execute"
+    roles: ["Developer-Backend", "Developer-AI", "Developer-Web"]
+    required_artifacts:
+      - ".team-os/logs/tasks/<TASK_ID>/03_work.md"
+    exit_criteria:
+      - "implementation complete"
+      - "code changes reviewed (if any)"
+
+  - id: "verify"
+    roles: ["QA", "Reviewer"]
+    required_artifacts:
+      - ".team-os/logs/tasks/<TASK_ID>/04_test.md"
+    exit_criteria:
+      - "tests executed"
+      - "quality gates passed"
+
+  - id: "release"
+    roles: ["Release-Ops"]
+    required_artifacts:
+      - ".team-os/logs/tasks/<TASK_ID>/05_release.md"
+    exit_criteria:
+      - "release approved (if risky)"
+      - "rollback plan documented"
+
+  - id: "observe"
+    roles: ["Data-Analyst", "Release-Ops"]
+    required_artifacts:
+      - ".team-os/logs/tasks/<TASK_ID>/06_observe.md"
+    exit_criteria:
+      - "health checks OK"
+      - "metrics/alerts reviewed"
+
+  - id: "retro"
+    roles: ["Process-Guardian"]
+    required_artifacts:
+      - ".team-os/logs/tasks/<TASK_ID>/07_retro.md"
+    exit_criteria:
+      - "retro completed"
+      - "self-improve items captured"
+
+plugins:
+  # Plugins are conditional gates that attach to stages based on triggers.
+  - plugin_id: "repo_understanding"
+    path: "workflows/plugins/repo_understanding.yaml"
+  - plugin_id: "risk_gate"
+    path: "workflows/plugins/risk_gate.yaml"
+

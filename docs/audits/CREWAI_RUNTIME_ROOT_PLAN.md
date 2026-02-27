@@ -28,15 +28,13 @@ Required runtime layout:
 - `../team-os-runtime/{tmp,cache}`
 
 ## Module Execution Plan (Subagents)
-1. Subagent 0: `.team-os` static asset migration to repo root + path rewrites.
-2. Subagent A: runtime layout resolver + purity enforcement + doctor updates.
-3. Subagent B: Hub pipelines for PostgreSQL+Redis Docker lifecycle.
-4. Subagent C: DB advisory locks + Redis event/queue integration.
-5. Subagent D: CrewAI orchestrator tooling boundary (pipelines-only writes).
-6. Subagent E: project REPL raw-input auto-capture v3 + feasibility.
-7. Subagent F: remote node bootstrap + safe config push + installer knowledge.
-8. Subagent G: n8n removal from code/assets/docs.
-9. Subagent H: e2e tests + final runtime audit artifacts.
+1. Subagent B: Hub pipelines for PostgreSQL+Redis Docker lifecycle.
+2. Subagent C: DB advisory locks + Redis event/queue integration.
+3. Subagent D: CrewAI orchestrator tooling boundary (pipelines-only writes).
+4. Subagent E: project REPL raw-input auto-capture v3 + feasibility.
+5. Subagent F: remote node bootstrap + safe config push + installer knowledge.
+6. Subagent G: n8n removal from code/assets/docs.
+7. Subagent H: e2e tests + final runtime audit artifacts.
 
 ## Acceptance Gates
 - `teamos doctor` fails if `.team-os/` exists in repo.

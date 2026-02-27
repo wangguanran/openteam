@@ -28,7 +28,7 @@
 
 ## GitHub 控制总线（必须）
 
-集群控制总线基于两条“控制 issue”，位于 `.team-os/cluster/config.yaml` 的 `cluster.cluster_repo` 指定仓库。
+集群控制总线基于两条“控制 issue”，位于 `cluster/config.yaml` 的 `cluster.cluster_repo` 指定仓库。
 
 ### 1) CLUSTER-LEADER（选主租约）
 
@@ -55,7 +55,7 @@ last_updated_at: "2026-02-15T12:34:10Z"
 安全闸门：
 
 - 任何写入该 issue（选主/续租/接管）属于 GitHub 远程写操作
-- 默认必须显式启用环境变量（见 `.team-os/cluster/config.yaml`）：
+- 默认必须显式启用环境变量（见 `cluster/config.yaml`）：
   - `TEAMOS_GH_CLUSTER_WRITE_ENABLED=1`
 
 ### 2) CLUSTER-NODES（节点注册与心跳）
@@ -103,14 +103,14 @@ lease:
 
 - 只有 lease 空/过期时可以领取
 - 领取者必须“写入后读回确认”
-- 续租间隔与 TTL 由 `.team-os/cluster/config.yaml` 控制
+- 续租间隔与 TTL 由 `cluster/config.yaml` 控制
 - required_capabilities 不满足则不得领取
 
 ## Brain 掉线后的接管与恢复（必须）
 
 Assistant 成功接管后，必须执行恢复序列，并落盘到：
 
-- `.team-os/cluster/state/recovery_<timestamp>.md`（gitignored）
+- `cluster/state/recovery_<timestamp>.md`（gitignored）
 
 恢复序列（最小要求）：
 

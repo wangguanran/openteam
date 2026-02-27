@@ -19,6 +19,8 @@ cd team-os
 ./teamos config init
 ./teamos workspace init
 ./teamos workspace doctor
+# 默认 Workspace: ../team-os-runtime/workspace
+# 覆盖方式: TEAMOS_RUNTIME_ROOT 或 TEAMOS_WORKSPACE_ROOT
 
 # 创建任务（默认生成 00~07；用 --short 仅生成 00~02）
 ./scripts/teamos.sh new-task "一句话需求标题"
@@ -39,7 +41,7 @@ make ps
 任何 `project:<id>` 的真相源文件（requirements/冲突报告/任务台账/任务日志/prompts/知识库/状态快照/项目 repo workdir 等）必须落在 **Workspace**（不在 `team-os/` 目录树内）：
 
 ```text
-~/.teamos/workspace/
+../team-os-runtime/workspace/
   projects/
     <project_id>/
       repo/        # 项目代码工作区（clone/checkout）
@@ -67,12 +69,12 @@ cd team-os
 
 ## 项目状态（截至 2026-02-15）
 
-- Team OS 规范与落盘结构已完成：`AGENTS.md`、`TEAMOS.md`、`docs/`、`.team-os/`
-- 默认角色与 Crew Flow 定义已落盘：`.team-os/roles/`、`.team-os/workflows/`
+- Team OS 规范与落盘结构已完成：`AGENTS.md`、`TEAMOS.md`、`docs/`（运行态动态数据在 repo 外 runtime root）
+- 默认角色与 Crew Flow 定义已落盘：`roles/`、`workflows/`
 - 统一脚本入口可用：`./scripts/teamos.sh`
   - `doctor/new-task/skill-boot/retro/self-improve`
   - `runtime-init/runtime-secrets`（用于在新环境生成 `team-os-runtime`）
-- Runtime 模板已落盘：`.team-os/templates/runtime/`
+- Runtime 模板已落盘：`templates/runtime/`
 - Runtime 最小闭环已验证（本机 localhost 绑定）：
   - Control Plane：`http://127.0.0.1:8787/healthz`（状态：`/v1/status`）
   - CrewAI 运行入口：`POST /v1/runs/start`（查询：`GET /v1/runs`）
@@ -95,7 +97,7 @@ cd team-os
 - 容器卷数据（Postgres/Temporal 状态）
 - 与宿主机强相关的运行态文件
 
-因此本仓库只提交 “Runtime 模板”到 `.team-os/templates/runtime/`，在新环境用：
+因此本仓库只提交 “Runtime 模板”到 `templates/runtime/`，在新环境用：
 
 ```bash
 cd team-os
@@ -107,13 +109,12 @@ cd team-os
 
 ## 目录速览
 
-- `.team-os/roles/`：角色定义（每角色 1 文件）
-- `.team-os/workflows/`：Crew Flow 定义（YAML）
-- `.team-os/kb/`：知识库（含来源摘要、Skill Cards）
-- `.team-os/memory/`：长期记忆索引
-- `.team-os/ledger/`：任务台账、自我升级台账、pending issues
-- `.team-os/logs/`：任务全流程日志（00~07）
-- `.team-os/templates/`：模板（含 runtime 模板）
+- `roles/`：角色定义（每角色 1 文件）
+- `workflows/`：Crew Flow 定义（YAML）
+- `../team-os-runtime/state/kb/`：知识库（含来源摘要、Skill Cards）
+- `../team-os-runtime/state/ledger/`：任务台账、自我升级台账、pending issues
+- `../team-os-runtime/state/logs/`：任务全流程日志（00~07）
+- `templates/`：模板（含 runtime 模板）
 - `scripts/`：脚本实现
 - `./teamos`：运行态 CLI（连接 Control Plane）
 

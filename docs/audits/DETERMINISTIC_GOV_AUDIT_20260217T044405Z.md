@@ -110,7 +110,7 @@ repo: OK
 
 ### doctor_json
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/doctor.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --json`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/doctor.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --json`
 - rc: 0
 
 ```text
@@ -170,7 +170,7 @@ OK
 
 ### req_verify
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace verify --scope teamos`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace verify --scope teamos`
 - rc: 0
 
 ```text
@@ -190,7 +190,7 @@ OK
 
 ### prompt_compile
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/prompt_compile.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --scope teamos --dry-run`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/prompt_compile.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --scope teamos --dry-run`
 - rc: 0
 
 ```text
@@ -206,7 +206,7 @@ OK
 
 ### db_migrate_plan
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/db_migrate.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --dry-run`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/db_migrate.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --dry-run`
 - rc: 0
 
 ```text
@@ -283,7 +283,7 @@ OK
       "o3"
     ]
   },
-  "policy_path": "/Users/wangguanran/OpenTeam/team-os/.team-os/policies/central_model_allowlist.yaml"
+  "policy_path": "/Users/wangguanran/OpenTeam/team-os/policies/central_model_allowlist.yaml"
 }
 ```
 
@@ -327,7 +327,7 @@ OK
 
 ### project_config
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo init`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo init`
 - rc: 0
 
 ```text
@@ -342,7 +342,7 @@ OK
 
 ### project_config_validate
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo validate`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo validate`
 - rc: 0
 
 ```text
@@ -355,7 +355,7 @@ OK
 
 ### project_agents_inject
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws/projects/demo/repo --manual-version v1 --no-leader-only`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws/projects/demo/repo --manual-version v1 --no-leader-only`
 - rc: 0
 
 ```text
@@ -380,7 +380,7 @@ OK
 
 ### project_agents_inject_idempotent
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws/projects/demo/repo --manual-version v1 --no-leader-only`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmpzkj3dcf3/ws/projects/demo/repo --manual-version v1 --no-leader-only`
 - rc: 0
 
 ```text

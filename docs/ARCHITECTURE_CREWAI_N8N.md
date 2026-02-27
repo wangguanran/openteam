@@ -5,8 +5,8 @@
 Team-OS is split into three layers:
 
 1. Presentation layer: n8n workflows (`n8n/workflows/templates/*`)
-2. Orchestration layer: CrewAI orchestrator (`.team-os/templates/runtime/orchestrator/app/crewai_orchestrator.py`)
-3. Execution layer: deterministic pipelines (`.team-os/scripts/pipelines/*.py`)
+2. Orchestration layer: CrewAI orchestrator (`templates/runtime/orchestrator/app/crewai_orchestrator.py`)
+3. Execution layer: deterministic pipelines (`scripts/pipelines/*.py`)
 
 n8n and CrewAI are not truth sources. Truth is persisted in:
 

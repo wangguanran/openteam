@@ -173,32 +173,36 @@ def _agent_is_active(agent_state: Any) -> bool:
     return bool(s) and s not in ("IDLE", "DONE")
 
 
+def _looks_like_teamos_repo(root: Path) -> bool:
+    return (root / "AGENTS.md").exists() and (root / "scripts" / "pipelines").exists()
+
+
 def _find_team_os_repo_root() -> Optional[Path]:
     """
     Best-effort Team OS repo root detection.
     Priority:
     1) env TEAM_OS_REPO_PATH
-    2) this script location or parents containing `.team-os/` + `AGENTS.md`
-    3) current directory or parents containing `.team-os/` + `AGENTS.md`
+    2) this script location or parents containing AGENTS + scripts/pipelines
+    3) current directory or parents containing AGENTS + scripts/pipelines
     """
     env = (os.getenv("TEAM_OS_REPO_PATH") or "").strip()
     if env:
         p = Path(env).expanduser().resolve()
-        if (p / ".team-os").exists():
+        if _looks_like_teamos_repo(p):
             return p
 
     # When invoked by absolute path from another repo, detect relative to this file.
     try:
         here = Path(__file__).resolve()
         for p in [here.parent] + list(here.parents):
-            if (p / ".team-os").exists() and (p / "AGENTS.md").exists():
+            if _looks_like_teamos_repo(p):
                 return p
     except Exception:
         pass
 
     cur = Path.cwd().resolve()
     for p in [cur] + list(cur.parents):
-        if (p / ".team-os").exists() and (p / "AGENTS.md").exists():
+        if _looks_like_teamos_repo(p):
             return p
     return None
 
@@ -307,7 +311,7 @@ def _approval_gate(
     else:
         argv.append("--interactive")
     # Pipeline prints JSON and exits non-zero when not approved.
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/approvals.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/approvals.py", argv)
 
 
 def _workspace_root_from_cfg(cfg: dict[str, Any]) -> Path:
@@ -541,7 +545,7 @@ def cmd_workspace_migrate(args: argparse.Namespace) -> None:
 
     root = _workspace_root(args)
     # Local governance script (no remote writes).
-    script = repo_root / ".team-os" / "scripts" / "governance" / "migrate_repo_projects.py"
+    script = repo_root / "scripts" / "governance" / "migrate_repo_projects.py"
     if not script.exists():
         raise RuntimeError(f"migration script missing: {script}")
 
@@ -700,7 +704,7 @@ def _inject_project_agents_manual(args: argparse.Namespace, *, project_id: str, 
     # Note: we don't try to commit/push project repo here; that's a project-level workflow.
     if reason:
         print(f"project_agents_inject.trigger={reason} project_id={project_id}")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/project_agents_inject.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/project_agents_inject.py", argv)
 
 
 def cmd_project_config_init(args: argparse.Namespace) -> None:
@@ -720,7 +724,7 @@ def cmd_project_config_init(args: argparse.Namespace) -> None:
     if bool(getattr(args, "dry_run", False)):
         argv.append("--dry-run")
     argv.append("init")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/project_config.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/project_config.py", argv)
 
     # Hook: ensure project repo AGENTS.md contains the manual block.
     _inject_project_agents_manual(args, project_id=pid, reason="project_config_init")
@@ -740,7 +744,7 @@ def cmd_project_config_show(args: argparse.Namespace) -> None:
         pid,
         "show",
     ]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/project_config.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/project_config.py", argv)
 
 
 def cmd_project_config_set(args: argparse.Namespace) -> None:
@@ -759,7 +763,7 @@ def cmd_project_config_set(args: argparse.Namespace) -> None:
     if bool(getattr(args, "dry_run", False)):
         argv.append("--dry-run")
     argv += ["set", "--key", str(args.key), "--value", str(args.value)]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/project_config.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/project_config.py", argv)
 
 
 def cmd_project_config_validate(args: argparse.Namespace) -> None:
@@ -776,7 +780,7 @@ def cmd_project_config_validate(args: argparse.Namespace) -> None:
         pid,
         "validate",
     ]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/project_config.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/project_config.py", argv)
 
     # Hook: if validate runs, ensure AGENTS manual exists (idempotent).
     _inject_project_agents_manual(args, project_id=pid, reason="project_config_validate")
@@ -1299,7 +1303,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
     _run_pipeline(
         repo_root,
-        ".team-os/scripts/pipelines/doctor.py",
+        "scripts/pipelines/doctor.py",
         [
             "--repo-root",
             str(repo_root),
@@ -1318,7 +1322,7 @@ def cmd_policy_check(args: argparse.Namespace) -> None:
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
 
-    script = repo_root / ".team-os" / "scripts" / "policy_check.py"
+    script = repo_root / "scripts" / "policy_check.py"
     if not script.exists():
         raise RuntimeError(f"policy_check script missing: {script}")
 
@@ -1341,7 +1345,7 @@ def cmd_db_migrate(args: argparse.Namespace) -> None:
         argv += ["--db-url", str(args.db_url).strip()]
     if bool(getattr(args, "dry_run", False)):
         argv.append("--dry-run")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/db_migrate.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/db_migrate.py", argv)
 
 
 def cmd_approvals_list(args: argparse.Namespace) -> None:
@@ -1358,7 +1362,7 @@ def cmd_approvals_list(args: argparse.Namespace) -> None:
         "--limit",
         str(int(getattr(args, "limit", 50) or 50)),
     ]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/approvals.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/approvals.py", argv)
 
 
 def cmd_hub_init(args: argparse.Namespace) -> None:
@@ -1372,28 +1376,28 @@ def cmd_hub_init(args: argparse.Namespace) -> None:
         argv.append("--without-redis")
     argv += ["--pg-port", str(int(getattr(args, "pg_port", 5432) or 5432))]
     argv += ["--redis-port", str(int(getattr(args, "redis_port", 6379) or 6379))]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_init.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_init.py", argv)
 
 
 def cmd_hub_up(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_up.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+    _run_pipeline(repo_root, "scripts/pipelines/hub_up.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
 
 
 def cmd_hub_down(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_down.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+    _run_pipeline(repo_root, "scripts/pipelines/hub_down.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
 
 
 def cmd_hub_status(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_status.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+    _run_pipeline(repo_root, "scripts/pipelines/hub_status.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
 
 
 def cmd_hub_logs(args: argparse.Namespace) -> None:
@@ -1403,14 +1407,14 @@ def cmd_hub_logs(args: argparse.Namespace) -> None:
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--tail", str(int(getattr(args, "tail", 200) or 200))]
     if str(getattr(args, "service", "") or "").strip():
         argv += ["--service", str(args.service).strip()]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_logs.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_logs.py", argv)
 
 
 def cmd_hub_migrate(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_migrate.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
+    _run_pipeline(repo_root, "scripts/pipelines/hub_migrate.py", ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))])
 
 
 def cmd_hub_expose(args: argparse.Namespace) -> None:
@@ -1440,7 +1444,7 @@ def cmd_hub_expose(args: argparse.Namespace) -> None:
     ]
     if bool(args.open_redis):
         argv.append("--open-redis")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_expose.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_expose.py", argv)
 
 
 def cmd_hub_backup(args: argparse.Namespace) -> None:
@@ -1450,7 +1454,7 @@ def cmd_hub_backup(args: argparse.Namespace) -> None:
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))]
     if str(getattr(args, "output", "") or "").strip():
         argv += ["--output", str(args.output).strip()]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_backup.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_backup.py", argv)
 
 
 def cmd_hub_restore(args: argparse.Namespace) -> None:
@@ -1465,7 +1469,7 @@ def cmd_hub_restore(args: argparse.Namespace) -> None:
         payload={"file": str(args.file)},
     )
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--file", str(args.file)]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_restore.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_restore.py", argv)
 
 
 def cmd_hub_export_config(args: argparse.Namespace) -> None:
@@ -1473,7 +1477,7 @@ def cmd_hub_export_config(args: argparse.Namespace) -> None:
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--format", str(args.format)]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_export_config.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_export_config.py", argv)
 
 
 def cmd_hub_push_config(args: argparse.Namespace) -> None:
@@ -1511,7 +1515,7 @@ def cmd_hub_push_config(args: argparse.Namespace) -> None:
         argv.append("--password-stdin")
         env = dict(os.environ)
         env["TEAMOS_SSH_PASSWORD"] = pw
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_push_config.py", argv, env=env)
+    _run_pipeline(repo_root, "scripts/pipelines/hub_push_config.py", argv, env=env)
 
 
 def cmd_panel_show(args: argparse.Namespace) -> None:
@@ -1642,7 +1646,7 @@ def cmd_self_improve(args: argparse.Namespace) -> None:
     # NOTE:
     # - `--dry-run` / `--local` are kept for backwards compatibility; remote writes are governed by policy.
     # - To compute proposals only (no local writes), run: teamos daemon status / or pipeline --dry-run-local
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
 
 
 def cmd_daemon_start(args: argparse.Namespace) -> None:
@@ -1663,7 +1667,7 @@ def cmd_daemon_start(args: argparse.Namespace) -> None:
         argv += ["--profile", args.profile]
     # Foreground is useful for debugging.
     argv += ["daemon" if bool(getattr(args, "foreground", False)) else "start"]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
 
 
 def cmd_daemon_stop(args: argparse.Namespace) -> None:
@@ -1679,7 +1683,7 @@ def cmd_daemon_stop(args: argparse.Namespace) -> None:
     if args.profile:
         argv += ["--profile", args.profile]
     argv += ["stop"]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
 
 
 def cmd_daemon_status(args: argparse.Namespace) -> None:
@@ -1695,7 +1699,7 @@ def cmd_daemon_status(args: argparse.Namespace) -> None:
     if args.profile:
         argv += ["--profile", args.profile]
     argv += ["status"]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/self_improve_daemon.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
 
 
 def cmd_audit_deterministic_gov(args: argparse.Namespace) -> None:
@@ -1713,7 +1717,7 @@ def cmd_audit_deterministic_gov(args: argparse.Namespace) -> None:
     # Pass through CLI profile (used by the audit generator to run doctor/daemon status consistently).
     if getattr(args, "profile", ""):
         argv += ["--profile", str(args.profile).strip()]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/audit_deterministic_gov.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/audit_deterministic_gov.py", argv)
 
 
 def cmd_audit_execution_strategy(args: argparse.Namespace) -> None:
@@ -1730,7 +1734,7 @@ def cmd_audit_execution_strategy(args: argparse.Namespace) -> None:
         argv += ["--out", str(args.out).strip()]
     if getattr(args, "profile", ""):
         argv += ["--profile", str(args.profile).strip()]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/audit_execution_strategy.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/audit_execution_strategy.py", argv)
 
 
 def cmd_audit_reqv3_locks(args: argparse.Namespace) -> None:
@@ -1751,7 +1755,7 @@ def cmd_audit_reqv3_locks(args: argparse.Namespace) -> None:
         argv.append("--skip-self-improve")
     if bool(getattr(args, "skip_db", False)):
         argv.append("--skip-db")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/audit_reqv3_locks.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/audit_reqv3_locks.py", argv)
 
 
 def _parse_metrics_jsonl(path: Path) -> list[str]:
@@ -1780,7 +1784,7 @@ def cmd_metrics_check(args: argparse.Namespace) -> None:
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
 
-    required_schema = repo_root / ".team-os" / "schemas" / "telemetry_event.schema.json"
+    required_schema = repo_root / "schemas" / "telemetry_event.schema.json"
     if not required_schema.exists():
         print(f"FAIL missing_schema={required_schema}")
         raise SystemExit(2)
@@ -1832,7 +1836,7 @@ def cmd_metrics_analyze(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    script = repo_root / ".team-os" / "scripts" / "metrics" / "analyze_evolution.py"
+    script = repo_root / "scripts" / "metrics" / "analyze_evolution.py"
     if not script.exists():
         raise RuntimeError(f"missing metrics analyzer: {script}")
     p = subprocess.run([sys.executable, str(script), "--tasks-dir", str(repo_root / ".team-os" / "logs" / "tasks")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1847,7 +1851,7 @@ def cmd_metrics_bootstrap(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    script = repo_root / ".team-os" / "scripts" / "migrations" / "bootstrap_task_artifacts.py"
+    script = repo_root / "scripts" / "migrations" / "bootstrap_task_artifacts.py"
     if not script.exists():
         raise RuntimeError(f"missing bootstrap script: {script}")
     argv = [sys.executable, str(script), "--full"]
@@ -1908,7 +1912,7 @@ def cmd_cluster_qualify(args: argparse.Namespace) -> None:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
     _run_pipeline(
         repo_root,
-        ".team-os/scripts/pipelines/cluster_election.py",
+        "scripts/pipelines/cluster_election.py",
         ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "qualify"],
     )
 
@@ -2020,7 +2024,7 @@ def cmd_node_add(args: argparse.Namespace) -> None:
             summary=f"node add push hub config host={args.host} user={args.user}",
             payload={"host": args.host, "user": args.user, "remote_env_path": str(getattr(args, 'remote_env_path', '') or '~/.teamos/node.env')},
         )
-        _run_pipeline(repo_root, ".team-os/scripts/pipelines/hub_push_config.py", argv2, env=env2)
+        _run_pipeline(repo_root, "scripts/pipelines/hub_push_config.py", argv2, env=env2)
 
 
 def cmd_repo_create(args: argparse.Namespace) -> None:
@@ -2086,7 +2090,7 @@ def cmd_task_new(args: argparse.Namespace) -> None:
     ]
     if bool(args.dry_run):
         argv.append("--dry-run")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_create.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/task_create.py", argv)
 
     # Hook: project bootstrap/upgrade should ensure project repo AGENTS.md contains Team-OS manual block.
     if str(scope or "").strip().startswith("project:"):
@@ -2115,7 +2119,7 @@ def cmd_task_close(args: argparse.Namespace) -> None:
         argv.append("--skip-tests")
     if bool(getattr(args, "dry_run", False)):
         argv.append("--dry-run")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_close.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/task_close.py", argv)
 
 
 def cmd_task_ship(args: argparse.Namespace) -> None:
@@ -2143,7 +2147,7 @@ def cmd_task_ship(args: argparse.Namespace) -> None:
         argv.append("--no-pr")
     if bool(getattr(args, "dry_run", False)):
         argv.append("--dry-run")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/task_ship.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/task_ship.py", argv)
 
 
 def cmd_prompt_compile(args: argparse.Namespace) -> None:
@@ -2158,7 +2162,7 @@ def cmd_prompt_compile(args: argparse.Namespace) -> None:
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--scope", scope]
     if bool(getattr(args, "dry_run", False)):
         argv.append("--dry-run")
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/prompt_compile.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/prompt_compile.py", argv)
 
 
 def cmd_prompt_diff(args: argparse.Namespace) -> None:
@@ -2171,7 +2175,7 @@ def cmd_prompt_diff(args: argparse.Namespace) -> None:
     if getattr(args, "scope", ""):
         scope = str(args.scope).strip()
     argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args)), "--scope", scope]
-    _run_pipeline(repo_root, ".team-os/scripts/pipelines/prompt_diff.py", argv)
+    _run_pipeline(repo_root, "scripts/pipelines/prompt_diff.py", argv)
 
 
 def cmd_task_resume(args: argparse.Namespace) -> None:

@@ -23,7 +23,7 @@
 ## 3. 组件说明 (Runtime)
 
 - Control Plane（Python + FastAPI + CrewAI Orchestrator）：统一流程编排入口；对外提供 HTTP API 供 CLI 查询/对话/注入需求
-- Deterministic Pipelines（`.team-os/scripts/pipelines/*.py`）：唯一允许的真相源写入执行层
+- Deterministic Pipelines（`scripts/pipelines/*.py`）：唯一允许的真相源写入执行层
 - Hub（Postgres + Redis）：审批、锁、运行态聚合数据
 - 兼容组件（可选保留）：OpenHands Agent Server、Temporal
 
@@ -35,6 +35,8 @@
 cd team-os
 ./teamos doctor
 ```
+
+`doctor` 会在以下情况失败：repo 根存在 `.team-os/`，或存在 `runtime/workspace/hub/state/logs/ledger/tasks` 等运行态动态目录。
 
 创建新任务：
 
@@ -127,7 +129,7 @@ Team OS 强制 **Repo vs Workspace** 边界：
 
 默认 Workspace 路径：
 
-- `~/.teamos/workspace`（可通过 `~/.teamos/config.toml` 或 CLI `--workspace-root` 覆盖）
+- `../team-os-runtime/workspace`（可通过 `TEAMOS_RUNTIME_ROOT` 或 CLI `--workspace-root` 覆盖）
 
 project_id 约束（跨平台文件系统安全）：
 
@@ -258,7 +260,7 @@ cd team-os
 
 Workstream 是“平台/模块协作域”的一级概念，用于让 agents/tasks/requirements 可过滤、可并行协作：
 
-- 登记表：`.team-os/state/workstreams.yaml`
+- 登记表：`../team-os-runtime/state/workstreams.yaml`
 - 约束：任务台账必须填写 `workstream_id`；需求必须包含 `workstreams`
 - 常用过滤示例：
 
@@ -280,9 +282,9 @@ GitHub Projects v2 是 Team OS 的 **主面板/视图层**，用于：
 重要原则：
 
 - Projects 只是视图层，系统真相源仍是：
-  - scope=`teamos`（Team OS 自身）：`team-os/.team-os/ledger`、`team-os/docs/teamos/requirements/**`
+  - scope=`teamos`（Team OS 自身）：`../team-os-runtime/state/ledger`、`team-os/docs/teamos/requirements/**`
   - scope=`project:<id>`（项目）：`<WORKSPACE>/projects/<id>/state/{ledger,logs,requirements,plan,prompts}`
-  - Control Plane 的运行态状态库（SQLite）：`team-os/.team-os/state/runtime.db`（可迁移 Postgres）
+  - Control Plane 的运行态状态库（SQLite）：`../team-os-runtime/state/runtime.db`（可迁移 Postgres）
 - Projects 必须可随时从真相源 **全量重建/重同步**（不依赖 Projects 本身的编辑为事实来源）。
 
 #### 5.4.1 创建/绑定一个 Project（每个 `project_id` 一个）
@@ -294,7 +296,7 @@ GitHub Projects v2 是 Team OS 的 **主面板/视图层**，用于：
 
 2) 在本仓库登记映射（真相源）
 
-编辑：`.team-os/integrations/github_projects/mapping.yaml`，为你的 `project_id` 填入：
+编辑：`integrations/github_projects/mapping.yaml`，为你的 `project_id` 填入：
 
 - `owner_type`（ORG/USER/REPO）
 - `owner`（org/user login）
@@ -395,7 +397,7 @@ TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC=60
 
 #### 5.4.7 排障
 
-- `panel show` 显示未配置：检查 `.team-os/integrations/github_projects/mapping.yaml` 是否包含该 `project_id`
+- `panel show` 显示未配置：检查 `integrations/github_projects/mapping.yaml` 是否包含该 `project_id`
 - `sync` 报 auth 错误：检查 `GITHUB_TOKEN` 是否存在（推荐 `gh auth token` 获取 OAuth token）
 - GitHub rate limit：降低 `TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC` 频率，或减少单次同步项数量（拆项目/分 workstream）
 
@@ -411,7 +413,7 @@ TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC=60
 
 安全闸门：
 
-- 选主/节点心跳/任务 lease 等属于 GitHub 远程写操作，默认必须通过 env gate 显式启用（详见 `.team-os/cluster/config.yaml`）。
+- 选主/节点心跳/任务 lease 等属于 GitHub 远程写操作，默认必须通过 env gate 显式启用（详见 `cluster/config.yaml`）。
 - 远程机器安装依赖/写 systemd/启动服务属于高风险动作，必须审批后执行。
 
 停止：
@@ -501,13 +503,13 @@ make ps
 
 ## 8. 角色如何扩展
 
-1. 复制模板：`.team-os/templates/role.md` -> `.team-os/roles/<Role>.md`
+1. 复制模板：`templates/role.md` -> `roles/<Role>.md`
 2. 补齐职责/输入输出/权限/产物/DoR/DoD/Skill Boot 要求/记忆规则
 3. 执行一次 Skill Boot（可以先写 TODO 占位，但必须落盘）
 
 ## 9. Crew Flow 如何扩展
 
-1. 复制模板：`.team-os/templates/workflow.yaml` -> `.team-os/workflows/<Workflow>.yaml`
+1. 复制模板：`templates/workflow.yaml` -> `workflows/<Workflow>.yaml`
 2. 明确状态机、步骤、角色映射、产物、闸门、退出条件
 3. 在相关任务中试运行并在 Retro 中修订
 

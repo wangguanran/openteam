@@ -76,12 +76,12 @@ requirements:
 
     Evidence:
 
-    - missing: .team-os/scripts/pipelines/task_ship.py
+    - missing: scripts/pipelines/task_ship.py
 
 
     Acceptance:
 
-    - 新增 pipeline: .team-os/scripts/pipelines/task_ship.py
+    - 新增 pipeline: scripts/pipelines/task_ship.py
 
     - CLI: ./teamos task ship 可用并可 dry-run'
   workstreams:

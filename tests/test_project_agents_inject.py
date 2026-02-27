@@ -15,7 +15,7 @@ class TestProjectAgentsInject(unittest.TestCase):
 
     def test_inject_creates_and_is_idempotent(self) -> None:
         repo = self._repo_root()
-        script = repo / ".team-os" / "scripts" / "pipelines" / "project_agents_inject.py"
+        script = repo / "scripts" / "pipelines" / "project_agents_inject.py"
         self.assertTrue(script.exists())
 
         with tempfile.TemporaryDirectory() as td:
@@ -77,7 +77,7 @@ class TestProjectAgentsInject(unittest.TestCase):
 
     def test_inject_preserves_existing_content_and_replaces_block(self) -> None:
         repo = self._repo_root()
-        script = repo / ".team-os" / "scripts" / "pipelines" / "project_agents_inject.py"
+        script = repo / "scripts" / "pipelines" / "project_agents_inject.py"
 
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td) / "ws"

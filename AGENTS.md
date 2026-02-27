@@ -28,7 +28,7 @@
 
 - Team OS 仓库（本仓库）：`./team-os`（此 repo）
 - Workspace（项目真相源根目录，repo 外）：默认 `~/.teamos/workspace`（可通过 `~/.teamos/config.toml` 或 CLI `--workspace-root` 覆盖）
-- 统一入口（推荐）：`./teamos`（CLI，内部调用 `.team-os/scripts/pipelines/*.py`）
+- 统一入口（推荐）：`./teamos`（CLI，内部调用 `scripts/pipelines/*.py`）
 - 兼容入口（可选）：`./scripts/teamos.sh`（历史脚本包装，逐步迁移中）
 
 ## 2. 统一任务流程（Update Unit）

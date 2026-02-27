@@ -14,7 +14,7 @@ class TestProjectConfig(unittest.TestCase):
 
     def test_init_set_validate(self) -> None:
         repo = self._repo_root()
-        script = repo / ".team-os" / "scripts" / "pipelines" / "project_config.py"
+        script = repo / "scripts" / "pipelines" / "project_config.py"
         self.assertTrue(script.exists())
 
         with tempfile.TemporaryDirectory() as td:
@@ -101,7 +101,7 @@ class TestProjectConfig(unittest.TestCase):
 
     def test_set_rejects_unknown_keys(self) -> None:
         repo = self._repo_root()
-        script = repo / ".team-os" / "scripts" / "pipelines" / "project_config.py"
+        script = repo / "scripts" / "pipelines" / "project_config.py"
 
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td) / "ws"

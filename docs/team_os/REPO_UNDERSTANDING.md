@@ -9,25 +9,25 @@
 ## 总体架构
 
 - `team-os/teamos`：CLI 客户端（默认连本机 Control Plane）。
-- `.team-os/templates/runtime/orchestrator/app/main.py`：Control Plane（FastAPI）模板代码。
+- `templates/runtime/orchestrator/app/main.py`：Control Plane（FastAPI）模板代码。
 - 真相源（scope=teamos）在 repo 内：`.team-os/ledger`、`.team-os/logs`、`docs/teamos/requirements`。
 - 真相源（scope=project:<id>）必须在 Workspace（repo 外）。
-- GitHub Projects v2 为视图层（mapping 在 `.team-os/integrations/github_projects/mapping.yaml`）。
+- GitHub Projects v2 为视图层（mapping 在 `integrations/github_projects/mapping.yaml`）。
 
 ## 模块边界与职责
 
 - CLI：`team-os/teamos`。
-- Pipelines（本次新增）：`team-os/.team-os/scripts/pipelines/`。
-- Governance：`team-os/.team-os/scripts/governance/`（repo purity 等）。
-- Requirements 协议：`team-os/.team-os/scripts/requirements/` + runtime template `app/requirements_store.py`。
+- Pipelines（本次新增）：`team-os/scripts/pipelines/`。
+- Governance：`team-os/scripts/governance/`（repo purity 等）。
+- Requirements 协议：`team-os/scripts/requirements/` + runtime template `app/requirements_store.py`。
 - Panel Sync：runtime template `app/panel_github_sync.py`（通过 Control Plane 触发）。
-- Runtime 模板：`team-os/.team-os/templates/runtime/`（生成到 repo 外 `team-os-runtime/`）。
+- Runtime 模板：`team-os/templates/runtime/`（生成到 repo 外 `team-os-runtime/`）。
 
 ## 关键目录与入口
 
 - CLI：`team-os/teamos`。
-- Shell 入口：`team-os/scripts/teamos.sh` -> `team-os/.team-os/scripts/teamos.sh`。
-- Pipelines：`team-os/.team-os/scripts/pipelines/*.py`。
+- Shell 入口：`team-os/scripts/teamos.sh` -> `team-os/scripts/teamos.sh`。
+- Pipelines：`team-os/scripts/pipelines/*.py`。
 - Requirements 真相源：`team-os/docs/teamos/requirements/`。
 - Prompt 真相源（teamos）：`team-os/prompt-library/teamos/`。
 
@@ -103,19 +103,19 @@ $ find . -maxdepth 2 -type d (selected)
 ./.git/objects
 ./.git/refs
 ./.team-os
-./.team-os/cluster
-./.team-os/integrations
+./cluster
+./integrations
 ./.team-os/kb
 ./.team-os/ledger
 ./.team-os/logs
 ./.team-os/memory
-./.team-os/policies
-./.team-os/roles
-./.team-os/schemas
-./.team-os/scripts
+./policies
+./roles
+./schemas
+./scripts
 ./.team-os/state
-./.team-os/templates
-./.team-os/workflows
+./templates
+./workflows
 ./docs
 ./docs/audits
 ./docs/plan
@@ -131,7 +131,7 @@ $ find . -maxdepth 2 -type d (selected)
 ### rg
 
 ```text
-$ rg -n "@app.(get|post)\(\"/v1/" .team-os/templates/runtime/orchestrator/app/main.py | head
+$ rg -n "@app.(get|post)\(\"/v1/" templates/runtime/orchestrator/app/main.py | head
 
 522:@app.get("/v1/status")
 549:@app.get("/v1/agents")
@@ -179,7 +179,7 @@ $ rg -n "cmd_task_new|cmd_req_add|_auto_wake_self_improve" teamos
 ### build/test scripts
 
 ```text
-$ ls -la .team-os/scripts
+$ ls -la scripts
 
 total 104
 drwxr-xr-x  20 wangguanran  staff   640 Feb 17 07:41 .
@@ -205,7 +205,7 @@ drwxr-xr-x   3 wangguanran  staff    96 Feb 16 07:57 resources
 
 
 
-$ ls -la .team-os/scripts/pipelines
+$ ls -la scripts/pipelines
 
 total 176
 drwxr-xr-x  14 wangguanran  staff    448 Feb 17 07:48 .

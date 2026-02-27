@@ -30,11 +30,11 @@
 
 模板控制平面逻辑位于：
 
-- `.team-os/templates/runtime/orchestrator/app/requirements_store.py`
+- `templates/runtime/orchestrator/app/requirements_store.py`
   - `add_requirement(...)`：写入 `requirements.yaml`/`REQUIREMENTS.md`/`CHANGELOG.md`，并生成 conflict report
   - `req_conflict.py`：提供 duplicate/conflict 的规则检测 + workstream 推断
   - 可选语义检查：通过 `codex exec` + schema（`requirement_distill_and_classify.schema.json`）
-- `.team-os/templates/runtime/orchestrator/app/main.py`
+- `templates/runtime/orchestrator/app/main.py`
   - `/v1/chat` NEW_REQUIREMENT -> `_handle_new_requirement` -> `add_requirement`
   - `/v1/requirements` POST/GET（旧接口）
 
@@ -115,15 +115,15 @@
 
 ### 4.1 新增（repo 内）
 
-- `.team-os/schemas/requirement_raw_input.schema.json`
-- `.team-os/schemas/requirements.schema.json`
-- `.team-os/scripts/requirements/*`（脚本入口，调用模板控制平面实现，保证可回归）
+- `schemas/requirement_raw_input.schema.json`
+- `schemas/requirements.schema.json`
+- `scripts/requirements/*`（脚本入口，调用模板控制平面实现，保证可回归）
 
 ### 4.2 修改（Control Plane 模板）
 
-- `.team-os/templates/runtime/orchestrator/app/requirements_store.py`
+- `templates/runtime/orchestrator/app/requirements_store.py`
   - 增加 Raw‑First + Baseline + Drift/Conflict 的 v2 pipeline（保持旧 `add_requirement` 兼容或作为 wrapper）
-- `.team-os/templates/runtime/orchestrator/app/main.py`
+- `templates/runtime/orchestrator/app/main.py`
   - 新增 endpoints：
     - `POST /v1/requirements/add`
     - `POST /v1/requirements/import`

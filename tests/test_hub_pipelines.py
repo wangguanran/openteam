@@ -11,7 +11,7 @@ class HubPipelinesTests(unittest.TestCase):
         return Path(__file__).resolve().parents[1]
 
     def _run(self, script: str, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-        cmd = ["python3", str(self._repo_root() / ".team-os" / "scripts" / "pipelines" / script)] + args
+        cmd = ["python3", str(self._repo_root() / "scripts" / "pipelines" / script)] + args
         return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, check=False)
 
     def test_hub_init_defaults_enable_redis_local_bind(self):

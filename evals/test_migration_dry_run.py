@@ -9,7 +9,7 @@ from pathlib import Path
 class MigrationDryRunEvals(unittest.TestCase):
     def test_migrate_from_repo_dry_run_plans_but_does_not_move(self):
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / ".team-os" / "scripts" / "governance" / "migrate_repo_projects.py"
+        script = repo_root / "scripts" / "governance" / "migrate_repo_projects.py"
         self.assertTrue(script.exists(), f"missing migration script: {script}")
 
         with tempfile.TemporaryDirectory() as td_repo, tempfile.TemporaryDirectory() as td_ws:

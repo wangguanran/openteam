@@ -83,7 +83,7 @@ OK
 
 ### req_verify
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace verify --scope teamos`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/requirements_raw_first.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace verify --scope teamos`
 - rc: 0
 
 ```text
@@ -103,7 +103,7 @@ OK
 
 ### prompt_compile
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/prompt_compile.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --scope teamos --dry-run`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/prompt_compile.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /Users/wangguanran/.teamos/workspace --scope teamos --dry-run`
 - rc: 0
 
 ```text
@@ -119,7 +119,7 @@ OK
 
 ### project_config
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo init`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo init`
 - rc: 0
 
 ```text
@@ -134,7 +134,7 @@ OK
 
 ### project_config_validate
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo validate`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_config.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo validate`
 - rc: 0
 
 ```text
@@ -147,7 +147,7 @@ OK
 
 ### project_agents_inject
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws/projects/demo/repo --manual-version v1 --no-leader-only`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws/projects/demo/repo --manual-version v1 --no-leader-only`
 - rc: 0
 
 ```text
@@ -172,7 +172,7 @@ OK
 
 ### project_agents_inject_idempotent
 
-- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/.team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws/projects/demo/repo --manual-version v1 --no-leader-only`
+- cmd: `/Library/Developer/CommandLineTools/usr/bin/python3 /Users/wangguanran/OpenTeam/team-os/scripts/pipelines/project_agents_inject.py --repo-root /Users/wangguanran/OpenTeam/team-os --workspace-root /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws --project demo --repo-path /var/folders/h1/nj29fmv90zs2trv6jkvh9_mh0000gn/T/tmp9do9n_gl/ws/projects/demo/repo --manual-version v1 --no-leader-only`
 - rc: 0
 
 ```text

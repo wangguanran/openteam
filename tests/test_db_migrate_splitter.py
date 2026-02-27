@@ -5,7 +5,7 @@ import unittest
 
 def _add_pipelines_to_syspath():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    p = os.path.join(repo_root, ".team-os", "scripts", "pipelines")
+    p = os.path.join(repo_root, "scripts", "pipelines")
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -44,4 +44,3 @@ class SqlSplitterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -82,64 +82,64 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### B1. 角色是“能力契约”且字段齐全 — FAIL
 
 - Evidence:
-  - `.team-os/roles/*.md` 存在 YAML frontmatter（role_id/version/permissions 等），但缺少 checklist 要求的完整契约字段集合。
+  - `roles/*.md` 存在 YAML frontmatter（role_id/version/permissions 等），但缺少 checklist 要求的完整契约字段集合。
 - Gap:
   - 缺少/不统一：`scope/non_scope`、`capability_tags`、`tools_allowed`、`quality_gates`、`handoff_rules`、`metrics_required`、`memory_policy`、`risk_policy`。
 - Impact:
   - 无法自动路由/拆分/验收；无法与集群 capability/required_capabilities 对齐。
 - Fix (proposed):
   - 定义 role schema（文档 + 简易校验脚本），并将现有角色按最小字段补齐。
-  - 更新 `.team-os/templates/role.md` 作为唯一模板源。
+  - 更新 `templates/role.md` 作为唯一模板源。
 - Acceptance:
   - 新增 `teamos doctor` 检查：roles frontmatter 必含字段；缺失则 FAIL。
 - Files:
-  - `.team-os/roles/*.md`, `.team-os/templates/role.md`, `teamos`, `docs/GOVERNANCE.md`
+  - `roles/*.md`, `templates/role.md`, `teamos`, `docs/GOVERNANCE.md`
 
 ### B2. Role Registry 足够细 + ROLE_TAXONOMY.yaml — FAIL
 
 - Gap:
   - 缺少 `ROLE_TAXONOMY.yaml`；无法表达 driver.camera/lcd/sensor 等层级扩展。
 - Fix (proposed):
-  - 新增 `.team-os/roles/ROLE_TAXONOMY.yaml`（含示例层级、capability_tags 约束、扩展规则）。
+  - 新增 `roles/ROLE_TAXONOMY.yaml`（含示例层级、capability_tags 约束、扩展规则）。
 - Acceptance:
   - `teamos doctor` 能读取并校验 taxonomy 与 role_id 一致性（子角色可选）。
 - Files:
-  - `.team-os/roles/ROLE_TAXONOMY.yaml`, `teamos`
+  - `roles/ROLE_TAXONOMY.yaml`, `teamos`
 
 ### B3. 工作流必须“主干 + 插件” — FAIL
 
 - Evidence:
-  - `.team-os/workflows/*.yaml` 仅有 Genesis/Discovery/Delivery/Incident/Self-Improve 单文件。
+  - `workflows/*.yaml` 仅有 Genesis/Discovery/Delivery/Incident/Self-Improve 单文件。
 - Gap:
   - 缺少 trunk_stages + plugins 结构；缺少 `workflows/plugins/`；缺少触发条件/闸门插件化落盘。
 - Fix (proposed):
-  - 引入 `.team-os/workflows/trunk.yaml` 与 `.team-os/workflows/plugins/*.yaml`（至少包含 `repo_understanding` 插件、`risk_gate` 插件）。
+  - 引入 `workflows/trunk.yaml` 与 `workflows/plugins/*.yaml`（至少包含 `repo_understanding` 插件、`risk_gate` 插件）。
 - Acceptance:
   - `teamos doctor` 校验 trunk+plugins 结构存在；control plane `/v1/tasks/new` 在 upgrade 模式强制触发插件（见 H/I）。
 - Files:
-  - `.team-os/workflows/*`
+  - `workflows/*`
 
 ### B4. evolution_policy.yaml 存在并可配置 — FAIL
 
 - Gap:
-  - 缺少 `.team-os/policies/evolution_policy.yaml`。
+  - 缺少 `policies/evolution_policy.yaml`。
 - Fix (proposed):
   - 新增政策文件，定义复杂度向量（D/M/A/R/U/T/E/F）、拆分触发器、新增角色触发器、规则优先级。
 - Acceptance:
   - `teamos self-improve --dry-run` 能引用该政策生成 ROLE_SPLIT/PLUGIN_ADD/GATE_TUNE 建议。
 - Files:
-  - `.team-os/policies/evolution_policy.yaml`, self-improve 实现（CLI/CP）
+  - `policies/evolution_policy.yaml`, self-improve 实现（CLI/CP）
 
 ### B5. metrics 收集/分析脚本存在 — FAIL
 
 - Gap:
-  - 缺少 `.team-os/scripts/metrics/collect_from_logs.py`、`analyze_evolution.py` 等。
+  - 缺少 `scripts/metrics/collect_from_logs.py`、`analyze_evolution.py` 等。
 - Fix (proposed):
   - 新增 metrics 脚本（纯本地、可离线），生成 self_improve 提案。
 - Acceptance:
   - `teamos metrics analyze` 输出改进候选并落盘为 proposal（见 K）。
 - Files:
-  - `.team-os/scripts/metrics/*`, `teamos`
+  - `scripts/metrics/*`, `teamos`
 
 ## C) 任务台账/日志/遥测（任务×阶段×角色）
 
@@ -155,18 +155,18 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Acceptance:
   - `teamos doctor` 检查所有 OPEN/DOING/BLOCKED 任务具备完整日志与 metrics。
 - Files:
-  - `.team-os/templates/task_log_*.md`, `.team-os/templates/task_ledger.yaml`, `.team-os/scripts/new_task.sh`（或等价）、`teamos`
+  - `templates/task_log_*.md`, `templates/task_ledger.yaml`, `scripts/new_task.sh`（或等价）、`teamos`
 
 ### C2. telemetry schema 存在且 metrics.jsonl 符合 — FAIL
 
 - Gap:
-  - 缺少 `.team-os/schemas/telemetry_event.schema.json`；无法校验 events。
+  - 缺少 `schemas/telemetry_event.schema.json`；无法校验 events。
 - Fix (proposed):
   - 新增 schema；self-improve/requirements/panel sync/agent heartbeat 等事件写入 metrics.jsonl 并通过 schema 校验。
 - Acceptance:
   - `teamos metrics check` 能校验每个 task 的 metrics.jsonl。
 - Files:
-  - `.team-os/schemas/telemetry_event.schema.json`, metrics 写入代码（CP/CLI）
+  - `schemas/telemetry_event.schema.json`, metrics 写入代码（CP/CLI）
 
 ### C3. teamos 提供 metrics-check/analyze 命令 + 关闭闸门 — FAIL
 
@@ -216,7 +216,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Acceptance:
   - `curl` 访问上述端点均返回 200/明确错误码（非 404）；dry_run 可离线演示。
 - Files:
-  - `.team-os/templates/runtime/orchestrator/app/main.py`（或拆分模块）、`runtime_db.py`, `state_store.py`, `docs/*`
+  - `templates/runtime/orchestrator/app/main.py`（或拆分模块）、`runtime_db.py`, `state_store.py`, `docs/*`
 
 ### E2. teamos CLI 命令覆盖完整 — FAIL
 
@@ -249,7 +249,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### F1. mapping 完整（含 req_id↔issue_id↔item_id）— FAIL
 
 - Evidence:
-  - `.team-os/integrations/github_projects/mapping.yaml` 存在并绑定 `teamos -> projects/3`。
+  - `integrations/github_projects/mapping.yaml` 存在并绑定 `teamos -> projects/3`。
 - Gap:
   - mapping 未显式记录 `req_id`/`issue_id`/`item_id` 的可追溯映射（需要落盘到 truth-source 或 runtime DB，并可全量重建）。
 - Fix (proposed):
@@ -257,7 +257,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Acceptance:
   - full sync 可在空项目面板上重建 items；dry-run 输出稳定的 key 列表。
 - Files:
-  - `.team-os/integrations/github_projects/mapping.yaml`, `panel_github_sync.py`, `runtime_db.py`
+  - `integrations/github_projects/mapping.yaml`, `panel_github_sync.py`, `runtime_db.py`
 
 ### F2. 可从真相源全量重建/重同步（幂等）— PASS (tasks/decisions/milestones)
 
@@ -319,7 +319,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Evidence:
   - 已有文档：`docs/REPO_BOOTSTRAP_AND_UPGRADE.md`。
 - Gap:
-  - 缺少模板 `.team-os/templates/repo_understanding.md` 与 workflow plugin `.team-os/workflows/plugins/repo_understanding.yaml` 与强制执行点。
+  - 缺少模板 `templates/repo_understanding.md` 与 workflow plugin `workflows/plugins/repo_understanding.yaml` 与强制执行点。
 
 ### H3. 空仓库 bootstrap — FAIL
 
@@ -408,7 +408,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - 风险：低（新增文件与忽略规则）。
 
 2) Telemetry/Metrics 体系（C1/C2/C3 + B5）
-- 变更：新增 `.team-os/schemas/telemetry_event.schema.json`；新增 `.team-os/scripts/metrics/*`；任务模板与 new-task 逻辑补齐 `00~07` 与 `metrics.jsonl`；CLI 增加 `metrics check/analyze`。
+- 变更：新增 `schemas/telemetry_event.schema.json`；新增 `scripts/metrics/*`；任务模板与 new-task 逻辑补齐 `00~07` 与 `metrics.jsonl`；CLI 增加 `metrics check/analyze`。
 - 验证：
   - `./teamos metrics check --all`（或等价）通过
   - self-improve 生成 proposal 可引用 metrics 聚类
@@ -425,12 +425,12 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - 风险：中（涉及后台触发与节流；需避免递归触发）。
 
 4) Role 契约化与 taxonomy（B1/B2）
-- 变更：补齐所有 `.team-os/roles/*.md` frontmatter 字段；新增 `.team-os/roles/ROLE_TAXONOMY.yaml`；doctor 校验。
+- 变更：补齐所有 `roles/*.md` frontmatter 字段；新增 `roles/ROLE_TAXONOMY.yaml`；doctor 校验。
 - 验证：`./teamos doctor` role-check PASS。
 - 风险：低（文档与校验）。
 
 5) Workflow trunk+plugins + evolution policy（B3/B4）
-- 变更：新增 `.team-os/workflows/trunk.yaml` 与 `.team-os/workflows/plugins/*.yaml`（至少 repo_understanding/risk_gate）；新增 `.team-os/policies/evolution_policy.yaml`；doctor 校验。
+- 变更：新增 `workflows/trunk.yaml` 与 `workflows/plugins/*.yaml`（至少 repo_understanding/risk_gate）；新增 `policies/evolution_policy.yaml`；doctor 校验。
 - 验证：`./teamos doctor` workflow-check PASS。
 - 风险：低（新增文件；保持旧 workflow YAML 兼容不删除）。
 
