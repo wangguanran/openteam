@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             write_secure_file(hub_compose_path(hub), compose, mode=0o600)
 
             pg_hba = render_pg_hba(repo_root=repo, allow_cidrs=[])
-            write_secure_file(hub / "config" / "postgres" / "pg_hba.conf", pg_hba, mode=0o600)
+            write_secure_file(hub / "config" / "postgres" / "pg_hba.conf", pg_hba, mode=0o644)
 
             write_secure_file(hub / "README.md", render_hub_readme(
                 repo_root=repo,

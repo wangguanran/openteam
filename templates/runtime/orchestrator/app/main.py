@@ -29,8 +29,6 @@ from .requirements_store import (
     propose_baseline_v2,
 )
 from .runtime_db import RuntimeDB
-from .self_improve_runner import SelfImproveError
-from . import self_improve_runner
 from . import cluster_manager
 from . import crewai_orchestrator
 from . import crew_tools
@@ -42,6 +40,8 @@ from .state_store import (
     load_focus,
     load_workstreams,
     github_projects_mapping_path,
+    runtime_root,
+    runtime_state_root,
     save_focus,
     team_os_root,
     teamos_requirements_dir,
@@ -92,7 +92,7 @@ def _utc_now_iso() -> str:
 
 
 def _hub_root() -> Path:
-    return (Path.home() / ".teamos" / "hub").resolve()
+    return (runtime_root() / "hub").resolve()
 
 
 def _hub_env() -> dict[str, str]:
@@ -155,7 +155,7 @@ def _team_os_checks(team_os_path: str) -> dict[str, Any]:
     p = Path(team_os_path)
     workflows_dir = p / "workflows"
     roles_dir = p / "roles"
-    state_dir = p / ".team-os" / "state"
+    state_dir = runtime_state_root()
     crewai_orchestrator_file = p / "templates" / "runtime" / "orchestrator" / "app" / "crewai_orchestrator.py"
     return {
         "team_os_path": str(p),
@@ -172,7 +172,7 @@ def _team_os_checks(team_os_path: str) -> dict[str, Any]:
 def _db() -> RuntimeDB:
     db_path = os.getenv("RUNTIME_DB_PATH")
     if not db_path:
-        db_path = str(team_os_root() / ".team-os" / "state" / "runtime.db")
+        db_path = str(runtime_state_root() / "runtime.db")
     return RuntimeDB(db_path)
 
 
@@ -329,7 +329,7 @@ def _logs_tasks_dir(project_id: str, *, ensure: bool) -> Path:
 
 def _conversations_dir(project_id: str, *, ensure: bool) -> Path:
     if _is_teamos(project_id):
-        return team_os_root() / ".team-os" / "ledger" / "conversations" / "teamos"
+        return runtime_state_root() / "ledger" / "conversations" / "teamos"
     _ensure_workspace_safe_for_project_writes()
     if ensure:
         workspace_store.ensure_project_scaffold(project_id)
@@ -1490,7 +1490,7 @@ def v1_recovery_scan():
         t2["gates"] = _gates_for_task(t2)
         active.append(t2)
     active.sort(key=lambda x: (str(x.get("project_id") or ""), str(x.get("workstream_id") or ""), str(x.get("task_id") or "")))
-    snap_dir = team_os_root() / "cluster" / "state"
+    snap_dir = runtime_state_root() / "audit" / "recovery"
     snap_dir.mkdir(parents=True, exist_ok=True)
     ts = _ts_compact_utc()
     path = snap_dir / f"recovery_{ts}.md"
@@ -1604,15 +1604,36 @@ def v1_self_improve_run(payload: SelfImproveIn):
     - This endpoint performs local scanning + local truth-source updates (requirements/pending drafts).
     """
     try:
-        routes = [getattr(r, "path", "") for r in app.routes if getattr(r, "path", "")]
-        out = self_improve_runner.run(
-            dry_run=bool(payload.dry_run),
-            force=bool(payload.force),
-            actor="user",
-            trigger=str(payload.trigger or "api"),
-            api_routes=routes,
-            project_id="teamos",
-        )
+        repo = team_os_root()
+        ws = _workspace_root()
+        script = repo / "scripts" / "pipelines" / "self_improve_daemon.py"
+        if not script.exists():
+            raise RuntimeError(f"missing pipeline: {script}")
+        runner_py = str(os.getenv("TEAMOS_PIPELINE_PYTHON") or sys.executable).strip() or sys.executable
+        argv = [
+            runner_py,
+            str(script),
+            "--repo-root",
+            str(repo),
+            "--workspace-root",
+            str(ws),
+            "--base-url",
+            _local_base_url(),
+            "run-once",
+            "--scope",
+            "teamos",
+        ]
+        if bool(payload.force):
+            argv.append("--force")
+        if bool(payload.dry_run):
+            argv.append("--dry-run-local")
+        p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        out_text = (p.stdout or "").strip()
+        if p.returncode != 0:
+            raise RuntimeError((p.stderr or out_text or f"self_improve run-once failed rc={p.returncode}")[:500])
+        out = json.loads(out_text) if out_text else {}
+        if not isinstance(out, dict):
+            out = {"ok": False, "_raw": out_text}
         # Best-effort: compute a panel sync plan (dry-run) so the user can see what would appear on the Projects panel.
         try:
             svc = GitHubProjectsPanelSync(db=DB)

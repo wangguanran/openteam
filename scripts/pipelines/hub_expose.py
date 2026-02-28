@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
             write_secure_file(hub_compose_path(hub), compose_text, mode=0o600)
 
             pg_hba = render_pg_hba(repo_root=repo, allow_cidrs=allow if bool(args.open_postgres) else [])
-            write_secure_file(hub / "config" / "postgres" / "pg_hba.conf", pg_hba, mode=0o600)
+            write_secure_file(hub / "config" / "postgres" / "pg_hba.conf", pg_hba, mode=0o644)
 
             fw_plan = hub / "FIREWALL_PLAN.md"
             plan_lines = [

@@ -6,7 +6,7 @@ Design goals:
 - Deterministic: rules/templates only (no LLM).
 - Governance-safe: leader-only writes; non-leader is scan-only.
 - Outputs are reproducible and schema-validated via existing pipelines:
-  - proposals: .team-os/ledger/self_improve/<ts>-proposal.md
+  - proposals: <runtime_root>/state/teamos/self_improve/proposals/<ts>-proposal.md
   - requirements: system channel updates requirements.yaml -> REQUIREMENTS.md -> CHANGELOG.md (does NOT write raw_inputs.jsonl)
 - Daemon mode is host-level (git repo available). Remote writes are gated by policy.
 """
@@ -27,7 +27,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Optional
 
-from _common import PipelineError, add_default_args, resolve_repo_root, utc_now_iso, write_json
+from _common import PipelineError, add_default_args, resolve_repo_root, runtime_state_root, utc_now_iso, write_json
 from _db import connect, get_db_url
 from db_migrate import apply_migrations as _apply_migrations
 
@@ -81,17 +81,24 @@ def _is_pid_running(pid: int) -> bool:
         return False
 
 
+def _runtime_state_root_for_repo(repo: Path) -> Path:
+    override = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    if override:
+        return runtime_state_root(override=override)
+    return runtime_state_root(override=str(repo.parent / "team-os-runtime"))
+
+
 def _pid_path(repo: Path) -> Path:
-    return repo / ".team-os" / "state" / "self_improve_daemon.pid"
+    return _runtime_state_root_for_repo(repo) / "self_improve_daemon.pid"
 
 
 def _state_path(repo: Path) -> Path:
-    # Runtime state (gitignored).
-    return repo / ".team-os" / "state" / "self_improve_state.json"
+    # Runtime state (outside repo).
+    return _runtime_state_root_for_repo(repo) / "self_improve_state.json"
 
 
 def _log_path(repo: Path) -> Path:
-    return repo / ".team-os" / "state" / "self_improve_daemon.log"
+    return _runtime_state_root_for_repo(repo) / "logs" / "self_improve_daemon.log"
 
 
 def _sha256_text(s: str) -> str:
@@ -528,7 +535,7 @@ def run_once(
     proposal_path = ""
     if enabled and bool(si.get("write_proposal_md")) and bool(leader.get("is_leader")) and (not dry_run_local) and ok_deb:
         md = _proposal_md(ts=ts, actor=actor, trigger=trigger, scan=scan, applied=applied, leader=leader, policy=pol)
-        outp = repo / ".team-os" / "ledger" / "self_improve" / f"{ts}-proposal.md"
+        outp = _runtime_state_root_for_repo(repo) / "teamos" / "self_improve" / "proposals" / f"{ts}-proposal.md"
         outp.parent.mkdir(parents=True, exist_ok=True)
         outp.write_text(md, encoding="utf-8")
         proposal_path = str(outp)
@@ -719,6 +726,7 @@ def _start_daemon(repo: Path, ws_root: Path, *, profile: str, base_url: str) -> 
     logp = _log_path(repo)
     logp.parent.mkdir(parents=True, exist_ok=True)
     logf = logp.open("a", encoding="utf-8")
+    pidp.parent.mkdir(parents=True, exist_ok=True)
 
     argv = [
         sys.executable,
@@ -810,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dm = sp.add_parser("daemon", help="Run daemon loop in foreground")
 
-    st = sp.add_parser("start", help="Spawn daemon in background (writes pid/log/state under .team-os/state/)")
+    st = sp.add_parser("start", help="Spawn daemon in background (writes pid/log/state under runtime_root/state/)")
 
     sp_stop = sp.add_parser("stop", help="Stop background daemon (best-effort)")
 

@@ -26,6 +26,31 @@ def _list_migrations(repo_root):
     return out
 
 
+def _ensure_target_db_exists(*, env: dict[str, str]) -> None:
+    user = str(env.get("POSTGRES_USER") or "teamos")
+    pwd = str(env.get("POSTGRES_PASSWORD") or "")
+    db = str(env.get("POSTGRES_DB") or "teamos")
+    bind_ip = str(env.get("PG_BIND_IP") or "127.0.0.1")
+    port = int(str(env.get("PG_PORT") or "5432"))
+    admin_dsn = f"postgresql://{user}:{pwd}@{bind_ip}:{port}/postgres"
+    conn = connect(admin_dsn)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM pg_database WHERE datname = %s
+                """,
+                (db,),
+            )
+            row = cur.fetchone()
+            if row:
+                return
+            cur.execute(f'CREATE DATABASE \"{db}\"')
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Apply Team-OS DB migrations to local hub Postgres")
     add_default_args(ap)
@@ -46,7 +71,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     dsn = local_db_dsn(env)
-    conn = connect(dsn)
+    try:
+        conn = connect(dsn)
+    except Exception as e:
+        msg = str(e)
+        if "does not exist" in msg and "database" in msg:
+            _ensure_target_db_exists(env=env)
+            conn = connect(dsn)
+        else:
+            raise
     try:
         out = apply_migrations(conn, migrations)
     finally:

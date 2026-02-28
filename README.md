@@ -13,7 +13,10 @@
 ```bash
 git clone https://github.com/wangguanran/team-os.git
 cd team-os
-./scripts/teamos.sh doctor
+./run.sh            # 一键启动（runtime + Hub + migrate + control-plane + orchestrator + self-improve bootstrap）
+./run.sh status
+./run.sh doctor
+./run.sh stop
 
 # 初始化 Workspace（所有 project:<id> 真相源必须落在 Workspace，不在 team-os/ 目录树内）
 ./teamos config init
@@ -28,16 +31,9 @@ teamos
 # 启动后会提示：输入会落盘为 Raw，不要输入密码/密钥
 # 控制命令：/help /status /exit
 
-# 创建任务（默认生成 00~07；用 --short 仅生成 00~02）
-./scripts/teamos.sh new-task "一句话需求标题"
-
-# 生成运行时目录（默认创建到 ../team-os-runtime）
-./scripts/teamos.sh runtime-init
-./scripts/teamos.sh runtime-secrets
-
-cd ../team-os-runtime
-make up
-make ps
+# 检查 self-improve 已实际执行（非仅注册定时器）
+cat ../team-os-runtime/state/self_improve_state.json | head -n 40
+ls ../team-os-runtime/state/teamos/self_improve/proposals/
 ```
 
 ## Repo vs Workspace（硬隔离）

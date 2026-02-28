@@ -7,7 +7,7 @@ schema_version: 1
 # Notes:
 # - "leader_only" enforces cluster governance: only the Brain(leader) may write truth sources.
 # - "dry_run_remote" keeps GitHub Projects sync as view-layer safe by default.
-# - Runtime state is stored under `.team-os/state/` and is gitignored.
+# - Runtime state is stored under `../team-os-runtime/state/` (or TEAMOS_RUNTIME_ROOT).
 
 self_improve:
   enabled: true
@@ -19,8 +19,8 @@ self_improve:
   min_proposals_per_run: 3
 
   # Writes
-  write_proposal_md: true     # .team-os/ledger/self_improve/<ts>-proposal.md
-  write_requirements: true    # system update channel: update requirements.yaml/REQUIREMENTS.md/CHANGELOG.md (no raw_inputs writes)
+  write_proposal_md: true     # ../team-os-runtime/state/teamos/self_improve/proposals/<ts>-proposal.md
+  write_requirements: false   # keep startup idempotent; static asset updates should go through explicit Team-OS tasks
 
   # Roadmap sync (GitHub Projects v2 is view-layer). Off by default.
   panel_sync:

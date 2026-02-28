@@ -55,7 +55,6 @@ def enforce_hub_env_config_security(hub: Path) -> None:
     secure_files = [
         hub_env_path(hub),
         hub_compose_path(hub),
-        hub / "config" / "postgres" / "pg_hba.conf",
         hub / "CONNECTION_INFO.md",
         hub / "README.md",
         hub / "FIREWALL_PLAN.md",
@@ -63,6 +62,10 @@ def enforce_hub_env_config_security(hub: Path) -> None:
     for p in secure_files:
         if p.exists():
             _chmod_best_effort(p, 0o600)
+    # postgres process inside container must be able to read this file.
+    pg_hba = hub / "config" / "postgres" / "pg_hba.conf"
+    if pg_hba.exists():
+        _chmod_best_effort(pg_hba, 0o644)
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
