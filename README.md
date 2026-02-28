@@ -18,6 +18,10 @@ cd team-os
 ./run.sh doctor
 ./run.sh stop
 
+# 必填：LLM 配置（未配置则 ./run.sh 启动会失败）
+export TEAMOS_LLM_BASE_URL="https://api.openai.com/v1"
+export TEAMOS_LLM_API_KEY="<your_api_key>"
+
 # 初始化 Workspace（所有 project:<id> 真相源必须落在 Workspace，不在 team-os/ 目录树内）
 ./teamos config init
 ./teamos workspace init

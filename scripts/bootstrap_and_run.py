@@ -346,6 +346,47 @@ def _redis_url_from_hub_env(env: dict[str, str]) -> str:
     return f"redis://:{p}@{h}:{pt}/0"
 
 
+def _mask_secret(v: str) -> str:
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    if len(s) <= 8:
+        return "*" * len(s)
+    return f"{s[:4]}***{s[-4:]}"
+
+
+def _llm_config() -> dict[str, Any]:
+    base = str(
+        os.getenv("TEAMOS_LLM_BASE_URL")
+        or os.getenv("OPENAI_BASE_URL")
+        or os.getenv("OPENAI_API_BASE")
+        or ""
+    ).strip()
+    key = str(
+        os.getenv("TEAMOS_LLM_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    ok = bool(base and key)
+    return {
+        "ok": ok,
+        "base_url": base,
+        "api_key_masked": _mask_secret(key),
+        "required": ["TEAMOS_LLM_BASE_URL(or OPENAI_BASE_URL/OPENAI_API_BASE)", "TEAMOS_LLM_API_KEY(or OPENAI_API_KEY)"],
+    }
+
+
+def _require_llm_config(runtime_root: Path) -> dict[str, Any]:
+    cfg = _llm_config()
+    if not bool(cfg.get("ok")):
+        raise BootstrapError(
+            "missing required LLM config: set TEAMOS_LLM_BASE_URL and TEAMOS_LLM_API_KEY "
+            "(or OPENAI_BASE_URL/OPENAI_API_BASE and OPENAI_API_KEY)"
+        )
+    _append_audit(runtime_root, f"llm config ready base_url={cfg.get('base_url')} api_key={cfg.get('api_key_masked')}")
+    return cfg
+
+
 def _wait_hub_healthy(repo: Path, workspace_root: Path, *, timeout_sec: int = 90) -> dict[str, Any]:
     deadline = time.time() + timeout_sec
     last: dict[str, Any] = {}
@@ -573,6 +614,7 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "repo_root": str(repo),
         "runtime_root": str(runtime_root),
         "workspace_root": str(workspace_root),
+        "llm": _llm_config(),
         "hub": hub_status,
         "control_plane": control,
         "self_improve": {
@@ -594,6 +636,10 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     # 2) runtime dirs
     _ensure_runtime_layout(runtime_root)
     _append_audit(runtime_root, "runtime layout ensured")
+
+    # 2.5) required LLM config (base_url + api_key)
+    llm_cfg = _require_llm_config(runtime_root)
+    _append_audit(runtime_root, "llm config check passed")
 
     # 3) hub init
     hub_init = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_init.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)], cwd=repo)
@@ -670,6 +716,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
         {
             "startup": {
                 "purity": purity,
+                "llm": llm_cfg,
                 "hub_init": hub_init,
                 "hub_up": hub_up,
                 "hub_health": hub_health,

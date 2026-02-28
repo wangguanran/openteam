@@ -74,7 +74,9 @@ class BootstrapAndRunTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with mock.patch.object(self.mod, "_check_repo_purity", return_value={"ok": True}), mock.patch.object(self.mod, "_run_json", return_value={"ok": True}), mock.patch.object(
+            with mock.patch.object(self.mod, "_check_repo_purity", return_value={"ok": True}), mock.patch.object(
+                self.mod, "_require_llm_config", return_value={"ok": True}
+            ), mock.patch.object(self.mod, "_run_json", return_value={"ok": True}), mock.patch.object(
                 self.mod, "_wait_hub_healthy", return_value={"ok": True, "postgres": {"tcp_open": True}, "redis": {"tcp_open": True}
                 }
             ), mock.patch.object(self.mod, "_ensure_python_dependencies", return_value={"ok": True}), mock.patch.object(
@@ -122,6 +124,11 @@ class BootstrapAndRunTests(unittest.TestCase):
             def fake_layout(_rt):
                 calls.append("layout")
                 real_layout(runtime_root)
+
+            def fake_llm(*args, **kwargs):
+                _ = args, kwargs
+                calls.append("llm")
+                return {"ok": True, "base_url": "x", "api_key_masked": "y"}
 
             def fake_run_json(cmd, **kwargs):
                 _ = kwargs
@@ -179,6 +186,8 @@ class BootstrapAndRunTests(unittest.TestCase):
 
             with mock.patch.object(self.mod, "_check_repo_purity", side_effect=fake_purity), mock.patch.object(
                 self.mod, "_ensure_runtime_layout", side_effect=fake_layout
+            ), mock.patch.object(
+                self.mod, "_require_llm_config", side_effect=fake_llm
             ), mock.patch.object(self.mod, "_run_json", side_effect=fake_run_json), mock.patch.object(
                 self.mod, "_wait_hub_healthy", side_effect=fake_hub_health
             ), mock.patch.object(self.mod, "_ensure_python_dependencies", side_effect=fake_deps), mock.patch.object(
@@ -198,6 +207,7 @@ class BootstrapAndRunTests(unittest.TestCase):
                 [
                     "purity",
                     "layout",
+                    "llm",
                     "hub_init",
                     "hub_up",
                     "hub_health",

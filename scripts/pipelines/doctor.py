@@ -143,6 +143,35 @@ def _self_improve_daemon_check(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def _llm_config_check() -> dict[str, Any]:
+    base = str(
+        os.getenv("TEAMOS_LLM_BASE_URL")
+        or os.getenv("OPENAI_BASE_URL")
+        or os.getenv("OPENAI_API_BASE")
+        or ""
+    ).strip()
+    key = str(
+        os.getenv("TEAMOS_LLM_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    ok = bool(base and key)
+    masked = ""
+    if key:
+        masked = ("*" * len(key)) if len(key) <= 8 else f"{key[:4]}***{key[-4:]}"
+    out = {
+        "ok": ok,
+        "base_url_set": bool(base),
+        "api_key_set": bool(key),
+        "base_url": base,
+        "api_key_masked": masked,
+        "required": ["TEAMOS_LLM_BASE_URL(or OPENAI_BASE_URL/OPENAI_API_BASE)", "TEAMOS_LLM_API_KEY(or OPENAI_API_KEY)"],
+    }
+    if not ok:
+        out["hint"] = "export TEAMOS_LLM_BASE_URL=... and TEAMOS_LLM_API_KEY=..."
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Team OS doctor (deterministic local checks)")
     add_default_args(ap)
@@ -189,6 +218,12 @@ def main(argv: list[str] | None = None) -> int:
         ok = False
     report["codex"] = {"ok": codex_ok, "message": codex_msg}
     report["gh"] = {"ok": gh_ok, "message": gh_msg}
+
+    # LLM config is mandatory for startup/runtime readiness.
+    llm = _llm_config_check()
+    report["llm_config"] = llm
+    if not bool(llm.get("ok")):
+        ok = False
 
     # Postgres DB (shared hub). Optional unless TEAMOS_DB_URL is set.
     db = _db_check(repo)
