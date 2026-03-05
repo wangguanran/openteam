@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from . import crewai_runtime
 from . import crew_tools
 from .state_store import team_os_root
 from . import redis_bus
@@ -14,6 +15,7 @@ class RunSpec:
     workstream_id: str
     objective: str
     flow: str
+    task_id: str = ""
 
 
 def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payload: dict[str, Any]) -> None:
@@ -35,18 +37,19 @@ def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payl
 
 def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any]:
     flow = crew_tools.normalize_flow(spec.flow)
+    task_id = str(spec.task_id or "").strip()
+    run_id_seed = f"run-{task_id}" if task_id else None
     try:
-        pipelines = crew_tools.flow_to_pipelines(flow)
-    except crew_tools.CrewToolsError as e:
+        crewai_info = crewai_runtime.require_crewai_importable()
+    except crewai_runtime.CrewAIRuntimeError as e:
         err_payload = {
             "run_id": "",
             "flow": flow,
+            "task_id": task_id,
             "error": str(e),
-            "supported_flows": crew_tools.supported_flows(),
-            "direct_pipeline_allowlist": crew_tools.direct_pipeline_allowlist(),
-            "write_mode": "delegated_pipeline_script_only",
+            "crewai": crewai_runtime.probe_crewai(),
         }
-        run_id = db.upsert_run(run_id=None, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="FAILED")
+        run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="FAILED")
         err_payload["run_id"] = run_id
         db.add_event(
             event_type="RUN_FAILED",
@@ -61,9 +64,48 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             spec=spec,
             payload=err_payload,
         )
-        return {"ok": False, "run_id": run_id, "flow": flow, "error": str(e), "supported_flows": crew_tools.supported_flows(), "direct_pipeline_allowlist": crew_tools.direct_pipeline_allowlist()}
+        return {"ok": False, "run_id": run_id, "flow": flow, "task_id": task_id, "error": str(e), "crewai": err_payload["crewai"]}
 
-    run_id = db.upsert_run(run_id=None, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
+    try:
+        pipelines = crew_tools.flow_to_pipelines(flow)
+    except crew_tools.CrewToolsError as e:
+        err_payload = {
+            "run_id": "",
+            "flow": flow,
+            "task_id": task_id,
+            "error": str(e),
+            "crewai": crewai_info,
+            "supported_flows": crew_tools.supported_flows(),
+            "direct_pipeline_allowlist": crew_tools.direct_pipeline_allowlist(),
+            "write_mode": "delegated_pipeline_script_only",
+        }
+        run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="FAILED")
+        err_payload["run_id"] = run_id
+        db.add_event(
+            event_type="RUN_FAILED",
+            actor=actor,
+            project_id=spec.project_id,
+            workstream_id=spec.workstream_id,
+            payload=err_payload,
+        )
+        _publish_redis_run_event(
+            event_type="RUN_FAILED",
+            actor=actor,
+            spec=spec,
+            payload=err_payload,
+        )
+        return {
+            "ok": False,
+            "run_id": run_id,
+            "flow": flow,
+            "task_id": task_id,
+            "error": str(e),
+            "crewai": crewai_info,
+            "supported_flows": crew_tools.supported_flows(),
+            "direct_pipeline_allowlist": crew_tools.direct_pipeline_allowlist(),
+        }
+
+    run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
     repo = team_os_root()
     ws_root = crew_tools.workspace_root()
     write_delegate = crew_tools.run_write_evidence(pipelines=pipelines, repo_root=repo)
@@ -75,6 +117,8 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         payload={
             "run_id": run_id,
             "flow": flow,
+            "task_id": task_id,
+            "crewai": crewai_info,
             "pipelines": pipelines,
             "write_delegate": write_delegate,
             "evidence": "truth-source writes are delegated to deterministic pipeline scripts",
@@ -87,6 +131,8 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         payload={
             "run_id": run_id,
             "flow": flow,
+            "task_id": task_id,
+            "crewai": crewai_info,
             "pipelines": pipelines,
             "write_delegate": write_delegate,
         },
@@ -144,6 +190,8 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         payload={
             "run_id": run_id,
             "flow": flow,
+            "task_id": task_id,
+            "crewai": crewai_info,
             "pipelines": pipelines,
             "steps": step_results,
             "write_delegate": write_delegate,
@@ -156,6 +204,8 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         payload={
             "run_id": run_id,
             "flow": flow,
+            "task_id": task_id,
+            "crewai": crewai_info,
             "pipelines": pipelines,
             "steps": step_results,
             "write_delegate": write_delegate,
@@ -171,9 +221,11 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         "ok": ok,
         "run_id": run_id,
         "flow": flow,
+        "task_id": task_id,
         # backward-compatible field (single-step flows)
         "pipeline": step_results[0]["pipeline"] if len(step_results) == 1 else "multi",
         "returncode": last_rc,
         "steps": step_results,
+        "crewai": crewai_info,
         "write_delegate": write_delegate,
     }

@@ -4,4 +4,4 @@ openai-agents
 PyYAML>=6.0.1
 temporalio>=1.7.0
 psycopg[binary]>=3.2.0
-
+crewai==1.10.0

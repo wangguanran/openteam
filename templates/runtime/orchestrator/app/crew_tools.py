@@ -17,14 +17,17 @@ _FLOW_PIPELINES: dict[str, list[str]] = {
     "standard": ["doctor"],
     "maintenance": ["doctor", "db_migrate"],
     "migration": ["db_migrate"],
+    "self_improve": ["self_improve"],
+    "self-improve": ["self_improve"],
 }
 
 # Backward-compatible direct pipeline mode is intentionally narrow.
-_RUN_DIRECT_PIPELINE_ALLOWLIST = frozenset({"doctor", "db_migrate"})
+_RUN_DIRECT_PIPELINE_ALLOWLIST = frozenset({"doctor", "db_migrate", "self_improve"})
 
 _PIPELINE_SCRIPTS: dict[str, str] = {
     "doctor": "doctor.py",
     "db_migrate": "db_migrate.py",
+    "self_improve": "self_improve_daemon.py",
     "task_create": "task_create.py",
 }
 
@@ -105,6 +108,9 @@ def pipeline_command(*, pipeline: str, repo_root: Path, workspace_root: Path, ex
     ]
     if extra_args:
         cmd.extend(str(x) for x in extra_args)
+    elif str(pipeline).strip() == "self_improve":
+        # Self-improve pipeline entrypoint requires an explicit subcommand.
+        cmd.extend(["run-once", "--scope", "teamos"])
     return cmd
 
 

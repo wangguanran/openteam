@@ -129,6 +129,9 @@ services:
       TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}
       TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC: ${TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC:-60}
       TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC: ${TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC:-30}
+      # Prefer local crewAI source checkout (host: ~/Codes/crewAI/lib/crewai/src).
+      TEAMOS_CREWAI_SRC_PATH: /opt/crewai-src
+      CREWAI_DISABLE_TELEMETRY: ${CREWAI_DISABLE_TELEMETRY:-1}
       # Optional override; default is /team-os/.team-os/state/runtime.db
       RUNTIME_DB_PATH: ${RUNTIME_DB_PATH:-}
     ports:
@@ -142,6 +145,8 @@ services:
       - ${HOME}/.teamos/workspace:/teamos-workspace:rw
       # OAuth: reuse host Codex login state (do not commit; local-only).
       - ${HOME}/.codex:/root/.codex:rw
+      # Local crewAI Python source checkout.
+      - ${HOME}/Codes/crewAI/lib/crewai/src:/opt/crewai-src:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=2).read()\""]
       interval: 10s

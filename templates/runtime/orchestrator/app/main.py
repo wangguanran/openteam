@@ -31,6 +31,7 @@ from .requirements_store import (
 from .runtime_db import RuntimeDB
 from . import cluster_manager
 from . import crewai_orchestrator
+from . import crewai_runtime
 from . import crew_tools
 from .state_store import (
     StateError,
@@ -757,7 +758,8 @@ class RecoveryResumeIn(BaseModel):
 def healthz(response: Response):
     team_os_path = os.getenv("TEAM_OS_REPO_PATH", "/team-os")
     checks = _team_os_checks(team_os_path)
-    ok = checks["exists"] and checks["roles_dir_exists"] and checks["crewai_orchestrator_exists"]
+    crewai_info = crewai_runtime.probe_crewai()
+    ok = checks["exists"] and checks["roles_dir_exists"] and checks["crewai_orchestrator_exists"] and bool(crewai_info.get("importable"))
     db = {"backend": ("postgres" if (os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
     try:
         # Minimal DB probe (no side effects).
@@ -767,7 +769,7 @@ def healthz(response: Response):
         db["error"] = str(e)[:200]
     if not ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"status": "ok" if ok else "degraded", "checks": checks, "db": db, "redis_bus": redis_bus.describe()}
+    return {"status": "ok" if ok else "degraded", "checks": checks, "crewai": crewai_info, "db": db, "redis_bus": redis_bus.describe()}
 
 
 @app.get("/v1/status")
@@ -782,6 +784,7 @@ def v1_status():
 
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
+    crewai_info = crewai_runtime.probe_crewai()
 
     pending = _pending_decisions()
 
@@ -795,6 +798,7 @@ def v1_status():
         "agents": agents,
         "tasks": tasks,
         "task_run_sync": task_run_sync,
+        "crewai": crewai_info,
         "pending_decisions": pending,
         "redis_bus": redis_bus.describe(),
     }
@@ -849,14 +853,29 @@ def v1_run_get(run_id: str):
 @app.post("/v1/runs/start")
 def v1_run_start(payload: RunStartIn):
     _require_leader_write()
+    project_id = str(payload.project_id or "teamos").strip() or "teamos"
+    workstream_id = str(payload.workstream_id or "general").strip() or "general"
+    task_id = str(payload.task_id or "").strip()
+    if task_id:
+        task_exists = any(
+            str(t.get("task_id") or "") == task_id and str(t.get("project_id") or "") == project_id
+            for t in _load_tasks_summary()
+        )
+        if not task_exists:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "task_not_found", "task_id": task_id, "project_id": project_id},
+            )
     flow = crew_tools.resolve_run_request_flow(flow=payload.flow, pipeline=payload.pipeline)
     spec = crewai_orchestrator.RunSpec(
-        project_id=str(payload.project_id or "teamos"),
-        workstream_id=str(payload.workstream_id or "general"),
+        project_id=project_id,
+        workstream_id=workstream_id,
         objective=str(payload.objective),
         flow=flow,
+        task_id=task_id,
     )
     out = crewai_orchestrator.run_once(db=DB, spec=spec, actor="crewai_orchestrator")
+    _mark_panel_dirty(project_id)
     return out
 
 

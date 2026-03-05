@@ -55,8 +55,21 @@ class CrewOrchestratorTests(unittest.TestCase):
     def test_flow_alias_maps_to_deterministic_pipeline_chain(self):
         self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor", "db_migrate"])
 
+    def test_self_improve_flow_maps_to_self_improve_pipeline(self):
+        self.assertEqual(crew_tools.flow_to_pipelines("self_improve"), ["self_improve"])
+
     def test_direct_pipeline_allowlist_accepts_supported_pipeline(self):
         self.assertEqual(crew_tools.flow_to_pipelines("pipeline:doctor"), ["doctor"])
+
+    def test_self_improve_pipeline_command_has_run_once_defaults(self):
+        cmd = crew_tools.pipeline_command(
+            pipeline="self_improve",
+            repo_root=Path("/tmp/team-os"),
+            workspace_root=Path("/tmp/ws"),
+        )
+        self.assertIn("run-once", cmd)
+        self.assertIn("--scope", cmd)
+        self.assertIn("teamos", cmd)
 
     def test_direct_pipeline_allowlist_rejects_unsupported_pipeline(self):
         with self.assertRaises(crew_tools.CrewToolsError):
@@ -70,7 +83,10 @@ class CrewOrchestratorTests(unittest.TestCase):
         db = _FakeDB()
         spec = RunSpec(project_id="teamos", workstream_id="general", objective="run checks", flow="standard")
 
-        with mock.patch("app.crewai_orchestrator.team_os_root", return_value=Path("/tmp/team-os")), mock.patch(
+        with mock.patch(
+            "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
+            return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
+        ), mock.patch("app.crewai_orchestrator.team_os_root", return_value=Path("/tmp/team-os")), mock.patch(
             "app.crewai_orchestrator.crew_tools.workspace_root", return_value=Path("/tmp/ws")
         ), mock.patch(
             "app.crewai_orchestrator.crew_tools.run_pipeline",
@@ -101,7 +117,11 @@ class CrewOrchestratorTests(unittest.TestCase):
     def test_run_once_rejects_unsupported_direct_pipeline_with_allowlist_context(self):
         db = _FakeDB()
         spec = RunSpec(project_id="teamos", workstream_id="general", objective="bad request", flow="pipeline:task_create")
-        out = run_once(db=db, spec=spec, actor="test")
+        with mock.patch(
+            "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
+            return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
+        ):
+            out = run_once(db=db, spec=spec, actor="test")
         self.assertFalse(out["ok"])
         self.assertIn("unsupported_direct_pipeline", out["error"])
         self.assertIn("doctor", out["direct_pipeline_allowlist"])
