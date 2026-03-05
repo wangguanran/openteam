@@ -241,6 +241,15 @@ def main(argv: list[str] | None = None) -> int:
         hz = _http_json(base + "/healthz", timeout_sec=5)
         st = _http_json(base + "/v1/status", timeout_sec=5)
         report["control_plane"].update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
+        trs = st.get("task_run_sync")
+        if isinstance(trs, dict):
+            report["control_plane"]["task_run_sync"] = trs
+            if not bool(trs.get("ok")):
+                ok = False
+        else:
+            # Runtime is expected to expose task/run consistency in /v1/status.
+            report["control_plane"]["task_run_sync"] = {"ok": False, "missing": True}
+            ok = False
         spec = _http_json(base + "/openapi.json", timeout_sec=5)
         paths = spec.get("paths") or {}
         required = [
@@ -291,6 +300,20 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 miss = cov.get("missing_paths") or []
                 print(f"control_plane_api: FAIL missing_paths={len(miss)} sample={(miss[:3])}")
+            trs = (cp.get("task_run_sync") or {}) if isinstance(cp.get("task_run_sync"), dict) else {}
+            if trs.get("ok"):
+                print("task_run_sync: OK")
+            else:
+                miss_runs = trs.get("missing_run_for_tasks") or []
+                orphans = trs.get("orphan_active_runs") or []
+                missing_field = bool(trs.get("missing"))
+                if missing_field:
+                    print("task_run_sync: FAIL missing_in_status=true")
+                else:
+                    print(
+                        "task_run_sync: FAIL "
+                        f"missing_run_for_tasks={len(miss_runs)} orphan_active_runs={len(orphans)}"
+                    )
         else:
             print(f"control_plane: FAIL {cp.get('error','')}")
         print(f"codex: {'OK' if codex_ok else 'FAIL'} {codex_msg}")

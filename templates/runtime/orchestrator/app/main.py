@@ -91,6 +91,111 @@ def _utc_now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_TASK_STATE_IN_PROGRESS = frozenset({"doing", "running", "work", "in_progress", "inprogress"})
+_RUN_STATE_ACTIVE = frozenset({"RUNNING", "PAUSED"})
+
+
+def _normalize_task_state(state: Any) -> str:
+    s = str(state or "").strip().lower()
+    if s in ("running", "work", "in_progress", "inprogress", "doing"):
+        return "doing"
+    return s
+
+
+def _normalize_run_state(state: Any) -> str:
+    return str(state or "").strip().upper()
+
+
+def _task_id_from_run_id(run_id: str) -> str:
+    rid = str(run_id or "").strip()
+    if not rid.startswith("run-"):
+        return ""
+    tail = rid[4:].strip()
+    if not tail:
+        return ""
+    for sep in ("::", "@"):
+        if sep in tail:
+            return tail.split(sep, 1)[0].strip()
+    return tail
+
+
+def _task_run_sync_summary(*, tasks: list[dict[str, Any]], runs: list[dict[str, Any]]) -> dict[str, Any]:
+    in_progress: list[dict[str, Any]] = []
+    task_keys: set[tuple[str, str, str]] = set()
+    for t in tasks:
+        state = _normalize_task_state(t.get("state"))
+        if state not in _TASK_STATE_IN_PROGRESS:
+            continue
+        project_id = str(t.get("project_id") or "").strip()
+        workstream_id = str(t.get("workstream_id") or "").strip()
+        task_id = str(t.get("task_id") or "").strip()
+        key = (project_id, workstream_id, task_id)
+        task_keys.add(key)
+        in_progress.append(
+            {
+                "task_id": task_id,
+                "project_id": project_id,
+                "workstream_id": workstream_id,
+                "state": state,
+            }
+        )
+
+    active_runs: list[dict[str, Any]] = []
+    mapped_run_keys: set[tuple[str, str, str]] = set()
+    unmapped_runs: list[dict[str, Any]] = []
+    for r in runs:
+        run_state = _normalize_run_state(r.get("state"))
+        if run_state not in _RUN_STATE_ACTIVE:
+            continue
+        run_id = str(r.get("run_id") or "").strip()
+        project_id = str(r.get("project_id") or "").strip()
+        workstream_id = str(r.get("workstream_id") or "").strip()
+        task_id = _task_id_from_run_id(run_id)
+        row = {
+            "run_id": run_id,
+            "project_id": project_id,
+            "workstream_id": workstream_id,
+            "state": run_state,
+            "task_id": task_id,
+        }
+        active_runs.append(row)
+        if task_id:
+            mapped_run_keys.add((project_id, workstream_id, task_id))
+        else:
+            unmapped_runs.append(
+                {
+                    "run_id": run_id,
+                    "project_id": project_id,
+                    "workstream_id": workstream_id,
+                    "state": run_state,
+                }
+            )
+
+    missing_runs: list[dict[str, Any]] = []
+    for t in in_progress:
+        key = (t["project_id"], t["workstream_id"], t["task_id"])
+        if key not in mapped_run_keys:
+            missing_runs.append(t)
+
+    orphan_runs: list[dict[str, Any]] = []
+    for r in active_runs:
+        task_id = str(r.get("task_id") or "")
+        if not task_id:
+            continue
+        key = (str(r.get("project_id") or ""), str(r.get("workstream_id") or ""), task_id)
+        if key not in task_keys:
+            orphan_runs.append(r)
+
+    return {
+        "ok": (not missing_runs and not orphan_runs),
+        "in_progress_task_count": len(in_progress),
+        "active_run_count": len(active_runs),
+        "missing_run_for_tasks": missing_runs[:50],
+        "orphan_active_runs": orphan_runs[:50],
+        "unmapped_active_runs": unmapped_runs[:50],
+    }
+
+
 def _hub_root() -> Path:
     return (runtime_root() / "hub").resolve()
 
@@ -612,6 +717,8 @@ class RunStartIn(BaseModel):
     flow: Optional[str] = None
     # backward-compatible with old payload shape
     pipeline: Optional[str] = None
+    # optional task binding; enables deterministic task/run consistency checks
+    task_id: Optional[str] = None
 
 
 class NodeRegisterIn(BaseModel):
@@ -674,6 +781,7 @@ def v1_status():
     agents = [a.__dict__ for a in DB.list_agents()]
 
     tasks = _load_tasks_summary()
+    task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
 
     pending = _pending_decisions()
 
@@ -686,6 +794,7 @@ def v1_status():
         "active_runs": runs,
         "agents": agents,
         "tasks": tasks,
+        "task_run_sync": task_run_sync,
         "pending_decisions": pending,
         "redis_bus": redis_bus.describe(),
     }
