@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from . import crewai_runtime
+from . import improvement_store
 from . import crewai_self_upgrade as planning
 from . import workspace_store
 from .github_issues_bus import GitHubAuthError, GitHubIssuesBusError, get_issue, update_issue
@@ -95,6 +96,10 @@ def _env_truthy(name: str, default: str = "0") -> bool:
     return planning._env_truthy(name, default)
 
 
+def _compat_file_mirror_enabled() -> bool:
+    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "0")
+
+
 def _runtime_root() -> Path:
     return planning._runtime_root()
 
@@ -104,6 +109,23 @@ def _worktrees_root() -> Path:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
+    if path.exists():
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            doc = raw if isinstance(raw, dict) else {}
+            if str(doc.get("id") or "").strip():
+                try:
+                    improvement_store.upsert_delivery_task(doc)
+                except Exception:
+                    pass
+            return doc
+        except Exception:
+            pass
+    task_id = str(path.stem or "").strip()
+    if task_id:
+        doc = improvement_store.get_delivery_task(task_id)
+        if isinstance(doc, dict):
+            return doc
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return raw if isinstance(raw, dict) else {}
@@ -112,8 +134,19 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
+    if str((payload or {}).get("id") or (payload or {}).get("task_id") or "").strip():
+        try:
+            improvement_store.upsert_delivery_task(dict(payload or {}))
+        except Exception:
+            pass
+    if not _compat_file_mirror_enabled():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def _fallback_ledger_path(*, project_id: str, task_id: str) -> Path:
+    return (_runtime_root() / "state" / "improvement_ledger" / (str(project_id or "teamos").strip() or "teamos") / f"{str(task_id or 'task').strip()}.yaml").resolve()
 
 
 def _task_scope(project_id: str) -> str:
@@ -1588,7 +1621,7 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
         raise
 
 
-def list_delivery_tasks(*, project_id: str = "", status: str = "") -> list[dict[str, Any]]:
+def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: str = "") -> list[dict[str, Any]]:
     project_ids: list[str]
     pid = str(project_id or "").strip()
     if pid:
@@ -1597,6 +1630,36 @@ def list_delivery_tasks(*, project_id: str = "", status: str = "") -> list[dict[
         project_ids = ["teamos"] + [p for p in workspace_store.list_projects() if p != "teamos"]
     status_filter = str(status or "").strip().lower()
     out: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    for current_pid in project_ids:
+        for doc in improvement_store.list_delivery_tasks(project_id=current_pid, target_id=str(target_id or "").strip(), status=status_filter):
+            if not _is_self_upgrade_task(doc):
+                continue
+            execution = _execution_state(doc)
+            task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            seen_task_ids.add(task_id)
+            artifacts = doc.get("artifacts") or {}
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            ledger_path = str(artifacts.get("ledger_path") or _fallback_ledger_path(project_id=str(doc.get("project_id") or current_pid), task_id=task_id))
+            out.append(
+                {
+                    "task_id": task_id,
+                    "title": str(doc.get("title") or ""),
+                    "project_id": str(doc.get("project_id") or current_pid),
+                    "workstream_id": str(doc.get("workstream_id") or "general"),
+                    "status": _current_status(doc),
+                    "owner_role": str(doc.get("owner_role") or ""),
+                    "stage": str(execution.get("stage") or ""),
+                    "attempt_count": int(execution.get("attempt_count") or 0),
+                    "worktree_path": str(execution.get("worktree_path") or ""),
+                    "pull_request_url": str(execution.get("pull_request_url") or ""),
+                    "ledger_path": ledger_path,
+                    "issue_url": _issue_url(doc),
+                }
+            )
     for current_pid in project_ids:
         task_dir = _task_ledger_dir(current_pid)
         if not task_dir.exists():
@@ -1605,13 +1668,16 @@ def list_delivery_tasks(*, project_id: str = "", status: str = "") -> list[dict[
             doc = _load_yaml(path)
             if not _is_self_upgrade_task(doc):
                 continue
+            task_id = str(doc.get("id") or path.stem)
+            if task_id in seen_task_ids:
+                continue
             st = _current_status(doc)
             if status_filter and st != status_filter:
                 continue
             execution = _execution_state(doc)
             out.append(
                 {
-                    "task_id": str(doc.get("id") or path.stem),
+                    "task_id": task_id,
                     "title": str(doc.get("title") or ""),
                     "project_id": str(doc.get("project_id") or current_pid),
                     "workstream_id": str(doc.get("workstream_id") or "general"),
@@ -1699,8 +1765,8 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
     return {"ok": True, "updated": updated, "moved": moved, "tasks": touched}
 
 
-def delivery_summary() -> dict[str, Any]:
-    tasks = list_delivery_tasks()
+def delivery_summary(*, project_id: str = "", target_id: str = "") -> dict[str, Any]:
+    tasks = list_delivery_tasks(project_id=project_id, target_id=target_id)
     return {
         "total": len(tasks),
         "queued": len([t for t in tasks if str(t.get("status") or "") == "todo"]),
@@ -1714,8 +1780,8 @@ def delivery_summary() -> dict[str, Any]:
     }
 
 
-def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", task_id: str = "", dry_run: bool = False, force: bool = False, max_tasks: Optional[int] = None) -> dict[str, Any]:
-    candidates = list_delivery_tasks(project_id=project_id)
+def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: str = "", task_id: str = "", dry_run: bool = False, force: bool = False, max_tasks: Optional[int] = None) -> dict[str, Any]:
+    candidates = list_delivery_tasks(project_id=project_id, target_id=target_id)
     wanted_task_id = str(task_id or "").strip()
     out: list[dict[str, Any]] = []
     scanned = 0
@@ -1736,4 +1802,10 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", task_id: st
         if not wanted_task_id and processed >= limit:
             break
     overall_ok = all(bool(item.get("ok")) or bool(item.get("skipped")) for item in out)
-    return {"ok": overall_ok, "scanned": scanned, "processed": processed, "tasks": out, "summary": delivery_summary()}
+    return {
+        "ok": overall_ok,
+        "scanned": scanned,
+        "processed": processed,
+        "tasks": out,
+        "summary": delivery_summary(project_id=project_id, target_id=target_id),
+    }

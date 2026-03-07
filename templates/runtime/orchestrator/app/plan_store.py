@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 import yaml
 
+from . import improvement_store
 from .state_store import runtime_state_root, teamos_plan_dir
 from .workspace_store import ensure_project_scaffold, plan_dir, project_state_dir
 
@@ -16,6 +17,7 @@ class PlanError(Exception):
 class Milestone:
     milestone_id: str
     title: str
+    target_id: str = ""
     start_date: str = ""  # YYYY-MM-DD
     target_date: str = ""  # YYYY-MM-DD
     workstreams: list[str] = field(default_factory=list)
@@ -62,29 +64,13 @@ def _runtime_milestones_path(project_id: str) -> Path:
 
 
 def _load_runtime_milestones_yaml(project_id: str) -> dict[str, Any]:
-    y = _runtime_milestones_path(project_id)
-    if not y.exists():
-        return {"schema_version": 1, "project_id": str(project_id), "milestones": []}
-    try:
-        data = yaml.safe_load(y.read_text(encoding="utf-8")) or {}
-    except Exception as e:
-        raise PlanError(f"invalid runtime milestone state: {y}: {e}") from e
-    if not isinstance(data, dict):
-        return {"schema_version": 1, "project_id": str(project_id), "milestones": []}
-    if not isinstance(data.get("milestones"), list):
-        data["milestones"] = []
-    return data
+    return {"schema_version": 1, "project_id": str(project_id), "milestones": improvement_store.list_milestones(project_id=str(project_id))}
 
 
 def _write_runtime_milestones_yaml(project_id: str, payload: dict[str, Any]) -> None:
-    y = _runtime_milestones_path(project_id)
-    y.parent.mkdir(parents=True, exist_ok=True)
-    doc = {
-        "schema_version": 1,
-        "project_id": str(project_id),
-        "milestones": list(payload.get("milestones") or []),
-    }
-    y.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    for raw in list(payload.get("milestones") or []):
+        if isinstance(raw, dict):
+            improvement_store.upsert_milestone({"project_id": str(project_id), **raw})
 
 
 def _coerce_milestone(raw: dict[str, Any]) -> Optional[Milestone]:
@@ -92,6 +78,7 @@ def _coerce_milestone(raw: dict[str, Any]) -> Optional[Milestone]:
         return Milestone(
             milestone_id=str(raw.get("milestone_id") or "").strip(),
             title=str(raw.get("title") or "").strip(),
+            target_id=str(raw.get("target_id") or "").strip(),
             start_date=str(raw.get("start_date") or "").strip(),
             target_date=str(raw.get("target_date") or "").strip(),
             workstreams=[str(x).strip() for x in (raw.get("workstreams") or []) if str(x).strip()],
@@ -147,23 +134,12 @@ def upsert_runtime_milestone(project_id: str, milestone: dict[str, Any]) -> Mile
     title = str(milestone.get("title") or "").strip()
     if not milestone_id or not title:
         raise PlanError("milestone_id and title are required")
-    data = _load_runtime_milestones_yaml(project_id)
-    existing = [x for x in (data.get("milestones") or []) if isinstance(x, dict)]
-    updated: list[dict[str, Any]] = []
-    replaced = False
-    for raw in existing:
-        if str(raw.get("milestone_id") or "").strip() == milestone_id:
-            merged = dict(raw)
-            merged.update(milestone)
-            updated.append(merged)
-            replaced = True
-        else:
-            updated.append(raw)
-    if not replaced:
-        updated.append(dict(milestone))
-    data["milestones"] = updated
-    _write_runtime_milestones_yaml(project_id, data)
-    out = _coerce_milestone(dict(milestone))
+    existing = next((x for x in improvement_store.list_milestones(project_id=str(project_id)) if str(x.get("milestone_id") or "").strip() == milestone_id), {})
+    payload = dict(existing or {})
+    payload.update(dict(milestone))
+    payload["project_id"] = str(project_id)
+    improvement_store.upsert_milestone(payload)
+    out = _coerce_milestone(payload)
     if out is None:
         raise PlanError(f"invalid milestone payload for milestone_id={milestone_id}")
     return out

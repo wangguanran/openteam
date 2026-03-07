@@ -161,6 +161,34 @@ class SQLiteRuntimeDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_state (
+                  namespace TEXT NOT NULL,
+                  state_key TEXT NOT NULL,
+                  value_json TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  PRIMARY KEY (namespace, state_key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_docs (
+                  namespace TEXT NOT NULL,
+                  doc_id TEXT NOT NULL,
+                  project_id TEXT NOT NULL,
+                  scope_id TEXT NOT NULL,
+                  state TEXT NOT NULL,
+                  category TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  value_json TEXT NOT NULL,
+                  PRIMARY KEY (namespace, doc_id)
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_docs_ns_scope ON runtime_docs(namespace, scope_id, state, category, updated_at)")
             conn.commit()
         finally:
             conn.close()
@@ -644,6 +672,208 @@ class SQLiteRuntimeDB:
         finally:
             conn.close()
 
+    # --- Generic runtime state/docs ---
+    def put_runtime_state(self, *, namespace: str, state_key: str, value: dict[str, Any]) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO runtime_state (namespace, state_key, value_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(namespace, state_key) DO UPDATE SET
+                  value_json=excluded.value_json,
+                  updated_at=excluded.updated_at
+                """,
+                (str(namespace), str(state_key), json.dumps(value, ensure_ascii=False), utc_now_iso()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_runtime_state(self, *, namespace: str, state_key: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT value_json, updated_at FROM runtime_state WHERE namespace = ? AND state_key = ?",
+                (str(namespace), str(state_key)),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                value = json.loads(str(row["value_json"] or "{}"))
+            except Exception:
+                value = {"_raw": row["value_json"]}
+            return {"namespace": str(namespace), "state_key": str(state_key), "value": value, "updated_at": str(row["updated_at"])}
+        finally:
+            conn.close()
+
+    def delete_runtime_state(self, *, namespace: str, state_key: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM runtime_state WHERE namespace = ? AND state_key = ?", (str(namespace), str(state_key)))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_runtime_state(self, *, namespace: str, prefix: str = "") -> list[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            if prefix:
+                rows = conn.execute(
+                    "SELECT state_key, value_json, updated_at FROM runtime_state WHERE namespace = ? AND state_key LIKE ? ORDER BY state_key ASC",
+                    (str(namespace), f"{str(prefix)}%"),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT state_key, value_json, updated_at FROM runtime_state WHERE namespace = ? ORDER BY state_key ASC",
+                    (str(namespace),),
+                ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    value = json.loads(str(row["value_json"] or "{}"))
+                except Exception:
+                    value = {"_raw": row["value_json"]}
+                out.append({"namespace": str(namespace), "state_key": str(row["state_key"]), "value": value, "updated_at": str(row["updated_at"])})
+            return out
+        finally:
+            conn.close()
+
+    def put_runtime_doc(
+        self,
+        *,
+        namespace: str,
+        doc_id: str,
+        project_id: str,
+        scope_id: str,
+        state: str,
+        category: str,
+        value: dict[str, Any],
+    ) -> None:
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO runtime_docs (namespace, doc_id, project_id, scope_id, state, category, created_at, updated_at, value_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(namespace, doc_id) DO UPDATE SET
+                  project_id=excluded.project_id,
+                  scope_id=excluded.scope_id,
+                  state=excluded.state,
+                  category=excluded.category,
+                  updated_at=excluded.updated_at,
+                  value_json=excluded.value_json
+                """,
+                (
+                    str(namespace),
+                    str(doc_id),
+                    str(project_id),
+                    str(scope_id),
+                    str(state),
+                    str(category),
+                    now,
+                    now,
+                    json.dumps(value, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_runtime_doc(self, *, namespace: str, doc_id: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT project_id, scope_id, state, category, created_at, updated_at, value_json
+                FROM runtime_docs WHERE namespace = ? AND doc_id = ?
+                """,
+                (str(namespace), str(doc_id)),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                value = json.loads(str(row["value_json"] or "{}"))
+            except Exception:
+                value = {"_raw": row["value_json"]}
+            return {
+                "namespace": str(namespace),
+                "doc_id": str(doc_id),
+                "project_id": str(row["project_id"]),
+                "scope_id": str(row["scope_id"]),
+                "state": str(row["state"]),
+                "category": str(row["category"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"]),
+                "value": value,
+            }
+        finally:
+            conn.close()
+
+    def delete_runtime_doc(self, *, namespace: str, doc_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM runtime_docs WHERE namespace = ? AND doc_id = ?", (str(namespace), str(doc_id)))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_runtime_docs(
+        self,
+        *,
+        namespace: str,
+        project_id: Optional[str] = None,
+        scope_id: Optional[str] = None,
+        state: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        clauses = ["namespace = ?"]
+        params: list[Any] = [str(namespace)]
+        if project_id is not None and str(project_id).strip():
+            clauses.append("project_id = ?")
+            params.append(str(project_id))
+        if scope_id is not None and str(scope_id).strip():
+            clauses.append("scope_id = ?")
+            params.append(str(scope_id))
+        if state is not None and str(state).strip():
+            clauses.append("state = ?")
+            params.append(str(state))
+        if category is not None and str(category).strip():
+            clauses.append("category = ?")
+            params.append(str(category))
+        params.append(max(1, min(int(limit), 5000)))
+        query = (
+            "SELECT doc_id, project_id, scope_id, state, category, created_at, updated_at, value_json "
+            f"FROM runtime_docs WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC LIMIT ?"
+        )
+        conn = self._connect()
+        try:
+            rows = conn.execute(query, params).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    value = json.loads(str(row["value_json"] or "{}"))
+                except Exception:
+                    value = {"_raw": row["value_json"]}
+                out.append(
+                    {
+                        "namespace": str(namespace),
+                        "doc_id": str(row["doc_id"]),
+                        "project_id": str(row["project_id"]),
+                        "scope_id": str(row["scope_id"]),
+                        "state": str(row["state"]),
+                        "category": str(row["category"]),
+                        "created_at": str(row["created_at"]),
+                        "updated_at": str(row["updated_at"]),
+                        "value": value,
+                    }
+                )
+            return out
+        finally:
+            conn.close()
+
 
 def _is_postgres_dsn(s: str) -> bool:
     s = (s or "").strip().lower()
@@ -752,6 +982,34 @@ class PostgresRuntimeDB:
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_state (
+                  namespace TEXT NOT NULL,
+                  state_key TEXT NOT NULL,
+                  value_json TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  PRIMARY KEY (namespace, state_key)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_docs (
+                  namespace TEXT NOT NULL,
+                  doc_id TEXT NOT NULL,
+                  project_id TEXT NOT NULL,
+                  scope_id TEXT NOT NULL,
+                  state TEXT NOT NULL,
+                  category TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  value_json TEXT NOT NULL,
+                  PRIMARY KEY (namespace, doc_id)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_runtime_docs_ns_scope ON runtime_docs(namespace, scope_id, state, category, updated_at)")
             conn.commit()
         finally:
             conn.close()
@@ -1209,6 +1467,208 @@ class PostgresRuntimeDB:
             except Exception:
                 data = {"_raw": row.get("value_json")}
             return {"key": str(row["key"]), "value": data, "updated_at": str(row["updated_at"])}
+        finally:
+            conn.close()
+
+    # --- Generic runtime state/docs ---
+    def put_runtime_state(self, *, namespace: str, state_key: str, value: dict[str, Any]) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO runtime_state (namespace, state_key, value_json, updated_at)
+                VALUES (%s,%s,%s,%s)
+                ON CONFLICT(namespace, state_key) DO UPDATE SET
+                  value_json=EXCLUDED.value_json,
+                  updated_at=EXCLUDED.updated_at
+                """,
+                (str(namespace), str(state_key), json.dumps(value, ensure_ascii=False), utc_now_iso()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_runtime_state(self, *, namespace: str, state_key: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT value_json, updated_at FROM runtime_state WHERE namespace=%s AND state_key=%s",
+                (str(namespace), str(state_key)),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                value = json.loads(str(row["value_json"] or "{}"))
+            except Exception:
+                value = {"_raw": row.get("value_json")}
+            return {"namespace": str(namespace), "state_key": str(state_key), "value": value, "updated_at": str(row["updated_at"])}
+        finally:
+            conn.close()
+
+    def delete_runtime_state(self, *, namespace: str, state_key: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM runtime_state WHERE namespace=%s AND state_key=%s", (str(namespace), str(state_key)))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_runtime_state(self, *, namespace: str, prefix: str = "") -> list[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            if prefix:
+                rows = conn.execute(
+                    "SELECT state_key, value_json, updated_at FROM runtime_state WHERE namespace=%s AND state_key LIKE %s ORDER BY state_key ASC",
+                    (str(namespace), f"{str(prefix)}%"),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT state_key, value_json, updated_at FROM runtime_state WHERE namespace=%s ORDER BY state_key ASC",
+                    (str(namespace),),
+                ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    value = json.loads(str(row["value_json"] or "{}"))
+                except Exception:
+                    value = {"_raw": row.get("value_json")}
+                out.append({"namespace": str(namespace), "state_key": str(row["state_key"]), "value": value, "updated_at": str(row["updated_at"])})
+            return out
+        finally:
+            conn.close()
+
+    def put_runtime_doc(
+        self,
+        *,
+        namespace: str,
+        doc_id: str,
+        project_id: str,
+        scope_id: str,
+        state: str,
+        category: str,
+        value: dict[str, Any],
+    ) -> None:
+        now = utc_now_iso()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO runtime_docs (namespace, doc_id, project_id, scope_id, state, category, created_at, updated_at, value_json)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(namespace, doc_id) DO UPDATE SET
+                  project_id=EXCLUDED.project_id,
+                  scope_id=EXCLUDED.scope_id,
+                  state=EXCLUDED.state,
+                  category=EXCLUDED.category,
+                  updated_at=EXCLUDED.updated_at,
+                  value_json=EXCLUDED.value_json
+                """,
+                (
+                    str(namespace),
+                    str(doc_id),
+                    str(project_id),
+                    str(scope_id),
+                    str(state),
+                    str(category),
+                    now,
+                    now,
+                    json.dumps(value, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_runtime_doc(self, *, namespace: str, doc_id: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT project_id, scope_id, state, category, created_at, updated_at, value_json
+                FROM runtime_docs WHERE namespace=%s AND doc_id=%s
+                """,
+                (str(namespace), str(doc_id)),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                value = json.loads(str(row["value_json"] or "{}"))
+            except Exception:
+                value = {"_raw": row.get("value_json")}
+            return {
+                "namespace": str(namespace),
+                "doc_id": str(doc_id),
+                "project_id": str(row["project_id"]),
+                "scope_id": str(row["scope_id"]),
+                "state": str(row["state"]),
+                "category": str(row["category"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"]),
+                "value": value,
+            }
+        finally:
+            conn.close()
+
+    def delete_runtime_doc(self, *, namespace: str, doc_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM runtime_docs WHERE namespace=%s AND doc_id=%s", (str(namespace), str(doc_id)))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_runtime_docs(
+        self,
+        *,
+        namespace: str,
+        project_id: Optional[str] = None,
+        scope_id: Optional[str] = None,
+        state: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        clauses = ["namespace = %s"]
+        params: list[Any] = [str(namespace)]
+        if project_id is not None and str(project_id).strip():
+            clauses.append("project_id = %s")
+            params.append(str(project_id))
+        if scope_id is not None and str(scope_id).strip():
+            clauses.append("scope_id = %s")
+            params.append(str(scope_id))
+        if state is not None and str(state).strip():
+            clauses.append("state = %s")
+            params.append(str(state))
+        if category is not None and str(category).strip():
+            clauses.append("category = %s")
+            params.append(str(category))
+        params.append(max(1, min(int(limit), 5000)))
+        query = (
+            "SELECT doc_id, project_id, scope_id, state, category, created_at, updated_at, value_json "
+            f"FROM runtime_docs WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC LIMIT %s"
+        )
+        conn = self._connect()
+        try:
+            rows = conn.execute(query, params).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    value = json.loads(str(row["value_json"] or "{}"))
+                except Exception:
+                    value = {"_raw": row.get("value_json")}
+                out.append(
+                    {
+                        "namespace": str(namespace),
+                        "doc_id": str(row["doc_id"]),
+                        "project_id": str(row["project_id"]),
+                        "scope_id": str(row["scope_id"]),
+                        "state": str(row["state"]),
+                        "category": str(row["category"]),
+                        "created_at": str(row["created_at"]),
+                        "updated_at": str(row["updated_at"]),
+                        "value": value,
+                    }
+                )
+            return out
         finally:
             conn.close()
 

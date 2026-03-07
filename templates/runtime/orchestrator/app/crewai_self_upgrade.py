@@ -17,6 +17,7 @@ from . import codex_llm
 from . import crewai_runtime
 from .github_issues_bus import GitHubIssuesBusError, ensure_issue, ensure_milestone, list_issue_comments, update_issue, upsert_comment_with_marker
 from .github_projects_client import GitHubAPIError, GitHubAuthError
+from . import improvement_store
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import upsert_runtime_milestone
@@ -536,18 +537,6 @@ def _panel_project_id(requested_project_id: str) -> str:
     return "teamos"
 
 
-def _state_path() -> Path:
-    return _runtime_root() / "state" / "self_upgrade_state.json"
-
-
-def _proposals_path() -> Path:
-    return _runtime_root() / "state" / "self_upgrade_proposals.json"
-
-
-def _reports_dir() -> Path:
-    return _runtime_root() / "state" / "self_upgrade" / "reports"
-
-
 def _runtime_root() -> Path:
     raw = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if raw:
@@ -583,83 +572,39 @@ def _normalize_worktree_hint(*, repo_root: Path, lane: str, title: str, raw_hint
     return str((_worktrees_root() / f"{_slug(repo_root.name)}-{_slug(lane)}-{_slug(title)[:24]}").resolve())
 
 
-def _read_state() -> dict[str, Any]:
-    p = _state_path()
-    if not p.exists():
-        return {}
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        return raw if isinstance(raw, dict) else {}
-    except Exception:
-        return {}
-
-
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_state(payload: dict[str, Any]) -> None:
-    _write_json(_state_path(), payload)
+def _read_state(target_id: str) -> dict[str, Any]:
+    return improvement_store.load_target_state(str(target_id or "").strip())
 
 
-def _read_proposals_state() -> dict[str, Any]:
-    p = _proposals_path()
-    if not p.exists():
-        return {"items": {}}
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {"items": {}}
-    if not isinstance(raw, dict):
-        return {"items": {}}
-    items = raw.get("items")
-    if not isinstance(items, dict):
-        raw["items"] = {}
-    return raw
-
-
-def _write_proposals_state(payload: dict[str, Any]) -> None:
-    if not isinstance(payload.get("items"), dict):
-        payload["items"] = {}
-    _write_json(_proposals_path(), payload)
-
-
-def _read_run_history(limit: int = 12) -> list[dict[str, Any]]:
-    state = _read_state()
+def _read_run_history(*, target_id: str, limit: int = 12) -> list[dict[str, Any]]:
+    state = _read_state(target_id)
     rows = state.get("history")
     if not isinstance(rows, list):
         return []
     out: list[dict[str, Any]] = []
     for row in rows[-max(1, int(limit)) :]:
         if isinstance(row, dict):
-            out.append(row)
+            out.append(dict(row))
     return out
 
 
-def _append_run_history(entry: dict[str, Any], *, keep: int = 30) -> None:
-    state = _read_state()
-    history = state.get("history")
-    rows = list(history) if isinstance(history, list) else []
-    rows.append(entry)
-    state["history"] = rows[-max(1, int(keep)) :]
-    _write_state(state)
+def _append_run_history(target_id: str, entry: dict[str, Any], *, keep: int = 30) -> None:
+    improvement_store.append_target_history(str(target_id or "").strip(), dict(entry or {}), keep=keep)
 
 
-def _merge_state_last_run(last_run: dict[str, Any], *, backoff_until: str = "") -> None:
-    state = _read_state()
-    state["last_run"] = last_run
-    if backoff_until:
-        state["backoff_until"] = backoff_until
-    else:
-        state.pop("backoff_until", None)
-    _write_state(state)
+def _merge_state_last_run(target_id: str, last_run: dict[str, Any], *, backoff_until: str = "") -> None:
+    improvement_store.merge_target_last_run(str(target_id or "").strip(), dict(last_run or {}), backoff_until=backoff_until)
 
 
-def _should_skip(*, repo_root: Path, force: bool) -> tuple[bool, str]:
+def _should_skip(*, target_id: str, repo_root: Path, force: bool) -> tuple[bool, str]:
     if force:
         return False, ""
-    state = _read_state()
+    state = _read_state(target_id)
     backoff_until = str(state.get("backoff_until") or "").strip()
     if not backoff_until:
         return False, ""
@@ -675,22 +620,18 @@ def _should_skip(*, repo_root: Path, force: bool) -> tuple[bool, str]:
     return False, ""
 
 
-def _target_repo_path(*, repo_path: str, project_id: str) -> Path:
-    raw = str(repo_path or "").strip()
-    if raw:
-        p = Path(raw).expanduser().resolve()
-        if not p.exists():
-            raise SelfUpgradeError(f"target repo path does not exist: {p}")
-        return p
-    pid = str(project_id or "").strip() or "teamos"
-    if pid != "teamos":
-        p = workspace_store.project_repo_dir(pid)
-        if p.exists() and any(p.iterdir()):
-            return p.resolve()
-    return team_os_root()
+def _resolve_target(*, target_id: str, repo_path: str, repo_url: str, repo_locator: str, project_id: str) -> dict[str, Any]:
+    target = improvement_store.ensure_target(
+        project_id=str(project_id or "teamos").strip() or "teamos",
+        target_id=str(target_id or "").strip(),
+        repo_path=str(repo_path or "").strip(),
+        repo_url=str(repo_url or "").strip(),
+        repo_locator=str(repo_locator or "").strip(),
+    )
+    return improvement_store.materialize_target_repo(target)
 
 
-def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "") -> dict[str, Any]:
+def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", target_id: str = "") -> dict[str, Any]:
     repo_root = repo_root.resolve()
     locator = str(explicit_repo_locator or "").strip()
     origin = _origin_url(repo_root)
@@ -762,7 +703,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "") ->
         "has_github_actions": bool(workflow_files),
         "readme_excerpt": readme,
         "current_version": _read_current_version(repo_root),
-        "recent_execution_metrics": _recent_execution_metrics(limit=8),
+        "recent_execution_metrics": _recent_execution_metrics(target_id=str(target_id or "").strip(), limit=8),
     }
 
 
@@ -1129,8 +1070,11 @@ def _default_work_items(*, repo_root: Path, finding: UpgradeFinding) -> list[Upg
     ]
 
 
-def _recent_execution_metrics(limit: int = 8) -> list[dict[str, Any]]:
-    return _read_run_history(limit=limit)
+def _recent_execution_metrics(*, target_id: str = "", limit: int = 8) -> list[dict[str, Any]]:
+    tid = str(target_id or "").strip()
+    if not tid:
+        return []
+    return _read_run_history(target_id=tid, limit=limit)
 
 
 def _planned_version(current_version: str, findings: list[UpgradeFinding]) -> str:
@@ -1471,15 +1415,78 @@ def _task_ledger_dir(project_id: str) -> Path:
     return workspace_store.ledger_tasks_dir(project_id)
 
 
+def _compat_file_mirror_enabled() -> bool:
+    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "0")
+
+
+def _is_self_upgrade_task_doc(doc: dict[str, Any]) -> bool:
+    orchestration = doc.get("orchestration") or {}
+    return isinstance(orchestration, dict) and str(orchestration.get("flow") or "").strip().lower() == "self_upgrade"
+
+
+def _iter_self_upgrade_task_docs(*, project_id: str, target_id: str = "") -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for doc in improvement_store.list_delivery_tasks(project_id=str(project_id or ""), target_id=str(target_id or "")):
+        if not isinstance(doc, dict) or not _is_self_upgrade_task_doc(doc):
+            continue
+        task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
+        if task_id:
+            seen.add(task_id)
+        out.append(doc)
+    d = _task_ledger_dir(project_id)
+    if not d.exists():
+        return out
+    for p in sorted(d.glob("*.yaml")):
+        doc = _load_yaml(p)
+        if not isinstance(doc, dict) or not _is_self_upgrade_task_doc(doc):
+            continue
+        task_id = str(doc.get("id") or doc.get("task_id") or p.stem).strip()
+        if task_id in seen:
+            continue
+        out.append(doc)
+    return out
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
+    if path.exists():
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            doc = raw if isinstance(raw, dict) else {}
+            if _is_self_upgrade_task_doc(doc):
+                try:
+                    improvement_store.upsert_delivery_task(doc)
+                except Exception:
+                    pass
+            return doc
+        except Exception:
+            pass
+    task_id = str(path.stem or "").strip()
+    if task_id:
+        doc = improvement_store.get_delivery_task(task_id)
+        if isinstance(doc, dict):
+            return doc
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return raw if isinstance(raw, dict) else {}
+        doc = raw if isinstance(raw, dict) else {}
+        if _is_self_upgrade_task_doc(doc):
+            try:
+                improvement_store.upsert_delivery_task(doc)
+            except Exception:
+                pass
+        return doc
     except Exception:
         return {}
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
+    if _is_self_upgrade_task_doc(payload or {}):
+        try:
+            improvement_store.upsert_delivery_task(dict(payload or {}))
+        except Exception:
+            pass
+    if not _compat_file_mirror_enabled():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
@@ -1729,8 +1736,8 @@ def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Op
                 "issue_url": issue_url,
             }
         )
-    for ledger_path in sorted(_task_ledger_dir(project_id).glob("*.yaml")):
-        _collect(_load_yaml(ledger_path))
+    for doc in _iter_self_upgrade_task_docs(project_id=project_id):
+        _collect(doc)
     extra_task_id = ""
     if isinstance(extra_doc, dict):
         extra_task_id = str(extra_doc.get("task_id") or "").strip()
@@ -1972,22 +1979,8 @@ def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, 
         return None
 
 
-def list_proposals(*, lane: str = "", status: str = "") -> list[dict[str, Any]]:
-    state = _read_proposals_state()
-    items = state.get("items") if isinstance(state.get("items"), dict) else {}
-    out: list[dict[str, Any]] = []
-    lane_filter = str(lane or "").strip().lower()
-    status_filter = str(status or "").strip().upper()
-    for proposal_id, raw in sorted(items.items()):
-        if not isinstance(raw, dict):
-            continue
-        doc = {"proposal_id": proposal_id, **raw}
-        if lane_filter and str(doc.get("lane") or "").strip().lower() != lane_filter:
-            continue
-        if status_filter and str(doc.get("status") or "").strip().upper() != status_filter:
-            continue
-        out.append(doc)
-    return sorted(out, key=lambda x: (str(x.get("updated_at") or ""), str(x.get("proposal_id") or "")), reverse=True)
+def list_proposals(*, target_id: str = "", project_id: str = "", lane: str = "", status: str = "") -> list[dict[str, Any]]:
+    return improvement_store.list_proposals(target_id=str(target_id or "").strip(), project_id=str(project_id or "").strip(), lane=lane, status=status)
 
 
 def decide_proposal(
@@ -2004,9 +1997,7 @@ def decide_proposal(
     act = str(action or "").strip().lower()
     if act not in ("approve", "reject", "hold"):
         raise SelfUpgradeError("action must be one of: approve, reject, hold")
-    state = _read_proposals_state()
-    items = state.get("items") if isinstance(state.get("items"), dict) else {}
-    doc = items.get(pid)
+    doc = improvement_store.get_proposal(pid)
     if not isinstance(doc, dict):
         raise SelfUpgradeError(f"proposal not found: {pid}")
     now = _utc_now_iso()
@@ -2032,9 +2023,8 @@ def decide_proposal(
     else:
         doc["status"] = "HOLD"
     doc["updated_at"] = now
-    items[pid] = doc
-    state["items"] = items
-    _write_proposals_state(state)
+    doc["proposal_id"] = pid
+    improvement_store.upsert_proposal(doc)
     return {"proposal_id": pid, **doc}
 
 
@@ -2050,9 +2040,7 @@ def _update_proposal_record(
     pid = str(proposal_id or "").strip()
     if not pid:
         raise SelfUpgradeError("proposal_id is required")
-    state_doc = _read_proposals_state()
-    items = state_doc.get("items") if isinstance(state_doc.get("items"), dict) else {}
-    doc = items.get(pid)
+    doc = improvement_store.get_proposal(pid)
     if not isinstance(doc, dict):
         raise SelfUpgradeError(f"proposal not found: {pid}")
     now = _utc_now_iso()
@@ -2082,9 +2070,8 @@ def _update_proposal_record(
         lane=str(doc.get("lane") or ""),
     )
     doc["updated_at"] = now
-    items[pid] = doc
-    state_doc["items"] = items
-    _write_proposals_state(state_doc)
+    doc["proposal_id"] = pid
+    improvement_store.upsert_proposal(doc)
     return {"proposal_id": pid, **doc}
 
 
@@ -2412,6 +2399,7 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
 
 def _upsert_proposal(
     *,
+    target_id: str,
     repo_root: Path,
     repo_locator: str,
     project_id: str,
@@ -2444,9 +2432,7 @@ def _upsert_proposal(
             }
         )
     proposal_id = _proposal_id_for_finding(repo_locator=repo_locator, repo_root=repo_root, finding=finding)
-    state = _read_proposals_state()
-    items = state.get("items") if isinstance(state.get("items"), dict) else {}
-    existing = items.get(proposal_id) if isinstance(items.get(proposal_id), dict) else {}
+    existing = improvement_store.get_proposal(proposal_id) or {}
     now = _utc_now_iso()
     status = str(existing.get("status") or "").strip().upper()
     if not status:
@@ -2461,6 +2447,7 @@ def _upsert_proposal(
         ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     doc = {
         "proposal_id": proposal_id,
+        "target_id": str(target_id or "").strip(),
         "lane": finding.lane,
         "kind": finding.kind,
         "module": str(existing.get("module") or finding.module or _normalize_module_name(paths=list(finding.files or []), workstream_id=finding.workstream_id, title=finding.title, summary=finding.summary, lane=finding.lane)),
@@ -2500,9 +2487,7 @@ def _upsert_proposal(
         "awaiting_user_reply": bool(existing.get("awaiting_user_reply", True)),
         "finding": finding.model_dump(),
     }
-    items[proposal_id] = doc
-    state["items"] = items
-    _write_proposals_state(state)
+    improvement_store.upsert_proposal(doc)
     return {"proposal_id": proposal_id, **doc}
 
 
@@ -2521,6 +2506,28 @@ def _proposal_due(doc: dict[str, Any]) -> bool:
 
 
 def _find_existing_task(*, project_id: str, title: str, repo_locator: str, repo_root: Path, finding_fingerprint: str = "", work_item_key: str = "") -> Optional[dict[str, Any]]:
+    for doc in improvement_store.list_delivery_tasks(project_id=project_id):
+        orchestration = doc.get("orchestration") or {}
+        if not isinstance(orchestration, dict):
+            orchestration = {}
+        if (
+            finding_fingerprint
+            and work_item_key
+            and str(orchestration.get("finding_fingerprint") or "").strip() == str(finding_fingerprint).strip()
+            and str(orchestration.get("work_item_key") or "").strip() == str(work_item_key).strip()
+        ):
+            ledger_path = str(((doc.get("artifacts") or {}) if isinstance(doc.get("artifacts"), dict) else {}).get("ledger_path") or "").strip()
+            return {"task_id": str(doc.get("id") or "").strip(), "ledger_path": ledger_path, "doc": doc}
+        if str(doc.get("title") or "").strip() != title:
+            continue
+        repo = doc.get("repo") or {}
+        if not isinstance(repo, dict):
+            repo = {}
+        locator_matches = str(repo.get("locator") or "").strip() == str(repo_locator or "").strip()
+        workdir_matches = str(repo.get("workdir") or "").strip() == str(repo_root)
+        if locator_matches or workdir_matches:
+            ledger_path = str(((doc.get("artifacts") or {}) if isinstance(doc.get("artifacts"), dict) else {}).get("ledger_path") or "").strip()
+            return {"task_id": str(doc.get("id") or "").strip(), "ledger_path": ledger_path, "doc": doc}
     d = _task_ledger_dir(project_id)
     if not d.exists():
         return None
@@ -2535,6 +2542,12 @@ def _find_existing_task(*, project_id: str, title: str, repo_locator: str, repo_
             and str(orchestration.get("finding_fingerprint") or "").strip() == str(finding_fingerprint).strip()
             and str(orchestration.get("work_item_key") or "").strip() == str(work_item_key).strip()
         ):
+            artifacts = doc.get("artifacts") or {}
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            artifacts["ledger_path"] = str(p)
+            doc["artifacts"] = artifacts
+            improvement_store.upsert_delivery_task(doc)
             return {"task_id": str(doc.get("id") or "").strip(), "ledger_path": str(p), "doc": doc}
         if str(doc.get("title") or "").strip() != title:
             continue
@@ -2544,12 +2557,19 @@ def _find_existing_task(*, project_id: str, title: str, repo_locator: str, repo_
         locator_matches = str(repo.get("locator") or "").strip() == str(repo_locator or "").strip()
         workdir_matches = str(repo.get("workdir") or "").strip() == str(repo_root)
         if locator_matches or workdir_matches:
+            artifacts = doc.get("artifacts") or {}
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            artifacts["ledger_path"] = str(p)
+            doc["artifacts"] = artifacts
+            improvement_store.upsert_delivery_task(doc)
             return {"task_id": str(doc.get("id") or "").strip(), "ledger_path": str(p), "doc": doc}
     return None
 
 
 def _ensure_task_record(
     *,
+    target_id: str,
     repo_root: Path,
     repo_locator: str,
     panel_project_id: str,
@@ -2683,6 +2703,16 @@ def _ensure_task_record(
     links["repo"] = repo_locator
     doc["repo"] = repo_doc
     doc["links"] = links
+    target_doc = improvement_store.ensure_target(project_id=panel_project_id, target_id=target_id, repo_path=str(repo_root), repo_locator=repo_locator)
+    doc["target"] = {
+        "target_id": str(target_doc.get("target_id") or target_id or ""),
+        "display_name": str(target_doc.get("display_name") or repo_locator or repo_root.name),
+    }
+    artifacts = doc.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    artifacts["ledger_path"] = str(ledger_path)
+    doc["artifacts"] = artifacts
     doc["status"] = "todo"
     doc["workstream_id"] = work_item.workstream_id or finding.workstream_id or str(doc.get("workstream_id") or "general")
     doc["updated_at"] = _utc_now_iso()
@@ -2758,14 +2788,21 @@ def _ensure_task_record(
         "documentation_role": str(documentation_policy.get("documentation_role") or ROLE_DOCUMENTATION_AGENT),
     }
     _write_yaml(ledger_path, doc)
+    improvement_store.upsert_delivery_task(doc)
     try:
         sync_out = sync_task_issue_from_doc(doc)
         if sync_out.get("ok") and str(sync_out.get("url") or "").strip():
             links["issue"] = str(sync_out.get("url") or "").strip()
             doc["links"] = links
         _write_yaml(ledger_path, doc)
+        improvement_store.upsert_delivery_task(doc)
     except Exception:
         pass
+    if (not _compat_file_mirror_enabled()) and ledger_path.exists():
+        try:
+            ledger_path.unlink()
+        except Exception:
+            pass
     return {"task_id": task_id, "ledger_path": str(ledger_path)}
 
 
@@ -3046,12 +3083,12 @@ def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos
                 stats["proposal_issues"] += 1
         except Exception:
             stats["errors"] += 1
-    for ledger_path in sorted(_task_ledger_dir(project_id).glob("*.yaml")):
+    for localized_doc in _iter_self_upgrade_task_docs(project_id=project_id):
         try:
-            doc = _load_yaml(ledger_path)
-            if not isinstance(doc, dict) or str(((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("flow") or "").strip().lower() != "self_upgrade":
+            if not isinstance(localized_doc, dict) or not _is_self_upgrade_task_doc(localized_doc):
                 continue
-            localized_doc = _localize_task_doc_to_zh(doc)
+            original_doc = dict(localized_doc)
+            localized_doc = _localize_task_doc_to_zh(localized_doc)
             finding, work_item = _finding_from_task_doc(localized_doc)
             if finding is not None and work_item is not None:
                 localized_doc["title"] = _task_title_for_work_item(finding, work_item)
@@ -3084,7 +3121,12 @@ def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos
                     execution_policy = dict(execution_policy)
                     execution_policy["module"] = work_item.module
                     localized_doc["execution_policy"] = execution_policy
-            if localized_doc != doc:
+            artifacts = localized_doc.get("artifacts") or {}
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            ledger_path_raw = str(artifacts.get("ledger_path") or "").strip()
+            ledger_path = Path(ledger_path_raw).expanduser().resolve() if ledger_path_raw else _task_ledger_dir(project_id) / f"{str(localized_doc.get('id') or localized_doc.get('task_id') or 'task').strip()}.yaml"
+            if localized_doc != original_doc:
                 _write_yaml(ledger_path, localized_doc)
             stats["tasks"] += 1
             sync_out = sync_task_issue_from_doc(localized_doc)
@@ -3177,6 +3219,7 @@ def _finish_agents(*, db, agent_ids: dict[str, str], state: str, current_action:
 
 def _record_from_materialized_item(
     *,
+    target_id: str,
     repo_root: Path,
     repo_locator: str,
     project_id: str,
@@ -3208,6 +3251,7 @@ def _record_from_materialized_item(
         }
     issue = _ensure_issue_record(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
     task = _ensure_task_record(
+        target_id=target_id,
         repo_root=repo_root,
         repo_locator=repo_locator,
         panel_project_id=project_id,
@@ -3239,24 +3283,28 @@ def _record_from_materialized_item(
 
 
 def _mark_proposal_materialized(proposal_id: str) -> None:
-    state = _read_proposals_state()
-    items = state.get("items") if isinstance(state.get("items"), dict) else {}
-    doc = items.get(proposal_id)
+    doc = improvement_store.get_proposal(proposal_id)
     if not isinstance(doc, dict):
         return
     doc["status"] = "MATERIALIZED"
     doc["materialized_at"] = _utc_now_iso()
     doc["updated_at"] = _utc_now_iso()
-    items[proposal_id] = doc
-    state["items"] = items
-    _write_proposals_state(state)
+    improvement_store.upsert_proposal(doc)
 
 
 def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
-    repo_root = _target_repo_path(repo_path=str(getattr(spec, "repo_path", "") or ""), project_id=str(getattr(spec, "project_id", "teamos") or "teamos"))
-    repo_context = collect_repo_context(repo_root=repo_root, explicit_repo_locator=str(getattr(spec, "repo_locator", "") or ""))
-    repo_locator = str(repo_context.get("repo_locator") or "").strip()
     project_id = _panel_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
+    target = _resolve_target(
+        target_id=str(getattr(spec, "target_id", "") or ""),
+        repo_path=str(getattr(spec, "repo_path", "") or ""),
+        repo_url=str(getattr(spec, "repo_url", "") or ""),
+        repo_locator=str(getattr(spec, "repo_locator", "") or ""),
+        project_id=project_id,
+    )
+    target_id = str(target.get("target_id") or "").strip() or "teamos"
+    repo_root = Path(str(target.get("repo_root") or team_os_root())).expanduser().resolve()
+    repo_context = collect_repo_context(repo_root=repo_root, explicit_repo_locator=str(target.get("repo_locator") or ""), target_id=target_id)
+    repo_locator = str(repo_context.get("repo_locator") or target.get("repo_locator") or "").strip()
     workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
     force = bool(getattr(spec, "force", False))
     dry_run = bool(getattr(spec, "dry_run", False))
@@ -3264,20 +3312,24 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     max_findings = max(1, min(int(os.getenv("TEAMOS_SELF_UPGRADE_MAX_FINDINGS", "3") or "3"), 10))
     run_started_at = _utc_now_iso()
 
-    should_skip, skip_reason = _should_skip(repo_root=repo_root, force=force)
+    should_skip, skip_reason = _should_skip(target_id=target_id, repo_root=repo_root, force=force)
     if should_skip:
         payload = {
             "ok": True,
             "skipped": True,
             "reason": skip_reason,
             "run_id": run_id,
+            "target_id": target_id,
             "repo_root": str(repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "trigger": trigger,
             "crewai": crewai_info,
         }
-        _merge_state_last_run({"ts": _utc_now_iso(), "repo_root": str(repo_root), "repo_locator": repo_locator, "status": "SKIPPED", "reason": skip_reason})
+        _merge_state_last_run(
+            target_id,
+            {"ts": _utc_now_iso(), "target_id": target_id, "repo_root": str(repo_root), "repo_locator": repo_locator, "status": "SKIPPED", "reason": skip_reason},
+        )
         db.add_event(
             event_type="SELF_UPGRADE_SKIPPED",
             actor=actor,
@@ -3295,6 +3347,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         workstream_id=workstream_id,
         payload={
             "run_id": run_id,
+            "target_id": target_id,
             "repo_root": str(repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
@@ -3317,8 +3370,10 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
                 _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=backoff_hours)
             ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         _merge_state_last_run(
+            target_id,
             {
                 "ts": _utc_now_iso(),
+                "target_id": target_id,
                 "repo_root": str(repo_root),
                 "repo_locator": repo_locator,
                 "status": "FAILED",
@@ -3327,9 +3382,11 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             backoff_until=backoff_until,
         )
         _append_run_history(
+            target_id,
             {
                 "ts": _utc_now_iso(),
                 "run_id": run_id,
+                "target_id": target_id,
                 "status": "FAILED",
                 "repo_root": str(repo_root),
                 "repo_locator": repo_locator,
@@ -3346,6 +3403,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         if finding.lane == "bug":
             for work_item in work_items:
                 record = _record_from_materialized_item(
+                    target_id=target_id,
                     repo_root=repo_root,
                     repo_locator=repo_locator,
                     project_id=project_id,
@@ -3365,6 +3423,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             continue
 
         proposal = _upsert_proposal(
+            target_id=target_id,
             repo_root=repo_root,
             repo_locator=repo_locator,
             project_id=project_id,
@@ -3385,6 +3444,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         if should_materialize:
             for work_item in work_items:
                 record = _record_from_materialized_item(
+                    target_id=target_id,
                     repo_root=repo_root,
                     repo_locator=repo_locator,
                     project_id=project_id,
@@ -3444,8 +3504,10 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     report = {
         "ts": _utc_now_iso(),
         "run_id": run_id,
+        "target_id": target_id,
         "actor": actor,
         "trigger": trigger,
+        "target": target,
         "repo_context": repo_context,
         "plan": plan.model_dump(),
         "records": records,
@@ -3454,25 +3516,28 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "crewai": crewai_info,
         "crew_debug": crew_debug,
     }
-    report_path = _reports_dir() / f"{_ts_compact_utc()}-{_slug(repo_root.name)}.json"
-    _write_json(report_path, report)
+    improvement_store.save_report(target_id=target_id, project_id=project_id, report=report)
     _merge_state_last_run(
+        target_id,
         {
             "ts": _utc_now_iso(),
             "run_id": run_id,
+            "target_id": target_id,
             "repo_root": str(repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "status": "DONE",
             "records": len(records),
             "pending_proposals": len(pending_proposals),
-            "report_path": str(report_path),
+            "report_id": run_id,
         },
     )
     _append_run_history(
+        target_id,
         {
             "ts": _utc_now_iso(),
             "run_id": run_id,
+            "target_id": target_id,
             "status": "DONE",
             "repo_root": str(repo_root),
             "repo_locator": repo_locator,
@@ -3488,18 +3553,20 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         workstream_id=workstream_id,
         payload={
             "run_id": run_id,
+            "target_id": target_id,
             "repo_root": str(repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "records": len(records),
             "pending_proposals": len(pending_proposals),
             "panel_sync": panel_sync,
-            "report_path": str(report_path),
+            "report_id": run_id,
         },
     )
     return {
         "ok": True,
         "run_id": run_id,
+        "target_id": target_id,
         "repo_root": str(repo_root),
         "repo_locator": repo_locator,
         "project_id": project_id,
@@ -3511,7 +3578,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "records": records,
         "pending_proposals": pending_proposals,
         "panel_sync": panel_sync,
-        "report_path": str(report_path),
+        "report_id": run_id,
         "crewai": crewai_info,
         "dry_run": dry_run,
         "write_delegate": {

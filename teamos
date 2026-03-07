@@ -1747,12 +1747,18 @@ def cmd_self_improve(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    target_repo = Path(str(getattr(args, "repo_path", "") or "").strip()).expanduser().resolve() if str(getattr(args, "repo_path", "") or "").strip() else repo_root
+    explicit_repo = str(getattr(args, "repo_path", "") or "").strip()
+    repo_url = str(getattr(args, "repo_url", "") or "").strip()
+    target_id = str(getattr(args, "target_id", "") or "").strip()
+    target_repo = Path(explicit_repo).expanduser().resolve() if explicit_repo else repo_root
+    include_repo_path = bool(explicit_repo) or (not target_id and not repo_url)
     payload = {
         "project_id": _default_project_id(prof, args),
         "workstream_id": str(getattr(args, "workstream", "") or "general").strip() or "general",
         "objective": "CLI-triggered CrewAI self-upgrade",
-        "repo_path": str(target_repo),
+        "target_id": target_id or None,
+        "repo_path": str(target_repo) if include_repo_path else "",
+        "repo_url": repo_url or None,
         "repo_locator": str(getattr(args, "repo_locator", "") or "").strip(),
         "dry_run": bool(args.dry_run),
         "force": bool(args.force),
@@ -1784,8 +1790,14 @@ def cmd_self_improve(args: argparse.Namespace) -> None:
 def cmd_self_upgrade_proposals(args: argparse.Namespace) -> None:
     base, _prof = _base_url(args)
     query: dict[str, str] = {}
+    target_id = _norm(getattr(args, "target_id", "") or "")
+    project_id = _norm(getattr(args, "project_id", "") or "")
     lane = _norm(getattr(args, "lane", "") or "")
     status = _norm(getattr(args, "status", "") or "")
+    if target_id:
+        query["target_id"] = target_id
+    if project_id:
+        query["project_id"] = project_id
     if lane:
         query["lane"] = lane
     if status:
@@ -1859,6 +1871,7 @@ def cmd_self_upgrade_delivery(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
     payload = {
         "project_id": _default_project_id(prof, args),
+        "target_id": str(getattr(args, "target_id", "") or "").strip() or None,
         "task_id": str(getattr(args, "task_id", "") or "").strip() or None,
         "dry_run": bool(getattr(args, "dry_run", False)),
         "force": bool(getattr(args, "force", False)),
@@ -1883,9 +1896,12 @@ def cmd_self_upgrade_delivery_tasks(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
     query: dict[str, str] = {}
     project_id = _default_project_id(prof, args)
+    target_id = _norm(getattr(args, "target_id", "") or "")
     status = _norm(getattr(args, "status", "") or "")
     if project_id:
         query["project_id"] = project_id
+    if target_id:
+        query["target_id"] = target_id
     if status:
         query["status"] = status
     url = base + "/v1/self_upgrade/delivery/tasks"
@@ -1917,6 +1933,70 @@ def cmd_self_upgrade_delivery_tasks(args: argparse.Namespace) -> None:
             ]
         )
     print(_fmt_table(["task_id", "status", "stage", "owner_role", "attempts", "pull_request", "title"], rows))
+
+
+def cmd_improvement_targets(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    query: dict[str, str] = {}
+    project_id = str(getattr(args, "project_id", "") or _default_project_id(prof, args)).strip()
+    if project_id:
+        query["project_id"] = project_id
+    if bool(getattr(args, "enabled_only", False)):
+        query["enabled_only"] = "1"
+    url = base + "/v1/improvement/targets"
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    out = _http_json("GET", url)
+    targets = list(out.get("targets") or [])
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"targets_total={len(targets)}")
+    if not targets:
+        print("(none)")
+        return
+    rows: list[list[str]] = []
+    for t in targets:
+        rows.append(
+            [
+                str(t.get("target_id") or ""),
+                str(t.get("project_id") or ""),
+                "enabled" if bool(t.get("enabled")) else "disabled",
+                str(t.get("repo_locator") or "")[:48],
+                str(t.get("repo_root") or "")[:56],
+                str(t.get("display_name") or "")[:40],
+            ]
+        )
+    print(_fmt_table(["target_id", "project_id", "state", "repo_locator", "repo_root", "display_name"], rows))
+
+
+def cmd_improvement_target_add(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    repo_path = str(getattr(args, "repo_path", "") or "").strip()
+    payload = {
+        "target_id": str(getattr(args, "target_id", "") or "").strip() or None,
+        "project_id": _default_project_id(prof, args),
+        "display_name": str(getattr(args, "display_name", "") or "").strip() or None,
+        "repo_path": str(Path(repo_path).expanduser().resolve()) if repo_path else None,
+        "repo_url": str(getattr(args, "repo_url", "") or "").strip() or None,
+        "repo_locator": str(getattr(args, "repo_locator", "") or "").strip() or None,
+        "default_branch": str(getattr(args, "default_branch", "") or "").strip() or None,
+        "enabled": not bool(getattr(args, "disable", False)),
+        "auto_discovery": bool(getattr(args, "auto_discovery", False)),
+        "auto_delivery": bool(getattr(args, "auto_delivery", False)),
+        "ship_enabled": bool(getattr(args, "ship_enabled", False)),
+        "workstream_id": str(getattr(args, "workstream", "") or "general").strip() or "general",
+    }
+    out = _http_json("POST", base + "/v1/improvement/targets", payload)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    target = out.get("target") or {}
+    print(f"ok={bool(out.get('ok'))}")
+    print(f"target_id={target.get('target_id','')}")
+    print(f"project_id={target.get('project_id','')}")
+    print(f"repo_locator={target.get('repo_locator','')}")
+    print(f"repo_root={target.get('repo_root','')}")
 
 
 def cmd_openclaw_status(args: argparse.Namespace) -> None:
@@ -2980,7 +3060,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         parser.add_argument("--local", action="store_true", help="deprecated compatibility flag; local pipeline mode has been removed")
         parser.add_argument("--auto", action="store_true", help="internal compatibility flag for auto triggers")
         parser.add_argument("--quiet", action="store_true", help="suppress normal output")
+        parser.add_argument("--target-id", default="", help="registered improvement target id")
         parser.add_argument("--repo-path", default="", help="target repository path (defaults to current Team OS repo)")
+        parser.add_argument("--repo-url", default="", help="target repository URL (used when the target must be cloned into workspace)")
         parser.add_argument("--repo-locator", default="", help="override GitHub repo locator owner/name")
         parser.set_defaults(fn=cmd_self_improve)
 
@@ -2991,12 +3073,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     _configure_self_upgrade_parser(si)
 
     sup = sp.add_parser("self-upgrade-proposals", help="List self-upgrade feature/process proposals managed by the runtime")
+    sup.add_argument("--target-id", default="", help="filter by improvement target id")
+    sup.add_argument("--project-id", default="", help="filter by project id")
     sup.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
     sup.add_argument("--status", default="", help="filter by status: PENDING_CONFIRMATION|APPROVED|COLLECTING|HOLD|REJECTED|MATERIALIZED")
     sup.add_argument("--json", action="store_true", help="print raw JSON")
     sup.set_defaults(fn=cmd_self_upgrade_proposals)
 
     sip = sp.add_parser("self-improve-proposals", help="Compatibility alias for `self-upgrade-proposals`")
+    sip.add_argument("--target-id", default="", help="filter by improvement target id")
+    sip.add_argument("--project-id", default="", help="filter by project id")
     sip.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
     sip.add_argument("--status", default="", help="filter by status: PENDING_CONFIRMATION|APPROVED|COLLECTING|HOLD|REJECTED|MATERIALIZED")
     sip.add_argument("--json", action="store_true", help="print raw JSON")
@@ -3029,6 +3115,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sis.set_defaults(fn=cmd_self_upgrade_discussions_sync)
 
     sudr = sp.add_parser("self-upgrade-delivery", help="Run the self-upgrade delivery executor for queued tasks")
+    sudr.add_argument("--target-id", default="", help="limit to a specific improvement target")
     sudr.add_argument("--task-id", default="", help="resume or force a specific task id")
     sudr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
     sudr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
@@ -3037,6 +3124,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sudr.set_defaults(fn=cmd_self_upgrade_delivery)
 
     sidr = sp.add_parser("self-improve-delivery", help="Compatibility alias for `self-upgrade-delivery`")
+    sidr.add_argument("--target-id", default="", help="limit to a specific improvement target")
     sidr.add_argument("--task-id", default="", help="resume or force a specific task id")
     sidr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
     sidr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
@@ -3045,14 +3133,37 @@ def main(argv: Optional[list[str]] = None) -> int:
     sidr.set_defaults(fn=cmd_self_upgrade_delivery)
 
     sudt = sp.add_parser("self-upgrade-delivery-tasks", help="List self-upgrade delivery tasks and their execution state")
+    sudt.add_argument("--target-id", default="", help="filter by improvement target id")
     sudt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
     sudt.add_argument("--json", action="store_true", help="print raw JSON")
     sudt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
 
     sidt = sp.add_parser("self-improve-delivery-tasks", help="Compatibility alias for `self-upgrade-delivery-tasks`")
+    sidt.add_argument("--target-id", default="", help="filter by improvement target id")
     sidt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
     sidt.add_argument("--json", action="store_true", help="print raw JSON")
     sidt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
+
+    tgt = sp.add_parser("improvement-targets", help="List registered improvement targets")
+    tgt.add_argument("--project-id", default="", help="filter by project id")
+    tgt.add_argument("--enabled-only", action="store_true", help="show enabled targets only")
+    tgt.add_argument("--json", action="store_true", help="print raw JSON")
+    tgt.set_defaults(fn=cmd_improvement_targets)
+
+    tga = sp.add_parser("improvement-target-add", help="Register or update an improvement target")
+    tga.add_argument("--target-id", default="", help="explicit target id")
+    tga.add_argument("--display-name", default="", help="human readable target name")
+    tga.add_argument("--repo-path", default="", help="local repository path")
+    tga.add_argument("--repo-url", default="", help="remote repository URL")
+    tga.add_argument("--repo-locator", default="", help="GitHub repo locator owner/name")
+    tga.add_argument("--default-branch", default="", help="default branch override")
+    tga.add_argument("--disable", action="store_true", help="register target but mark disabled")
+    tga.add_argument("--auto-discovery", action="store_true", help="enable automatic discovery loop for this target")
+    tga.add_argument("--auto-delivery", action="store_true", help="enable automatic delivery loop for this target")
+    tga.add_argument("--ship-enabled", action="store_true", help="allow release/ship actions for this target")
+    tga.add_argument("--workstream", default="general", help="default workstream id")
+    tga.add_argument("--json", action="store_true", help="print raw JSON")
+    tga.set_defaults(fn=cmd_improvement_target_add)
 
     ocs = sp.add_parser("openclaw-status", help="Show Team OS OpenClaw reporting status and detection")
     ocs.add_argument("--json", action="store_true", help="print raw JSON")

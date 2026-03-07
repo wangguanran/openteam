@@ -17,7 +17,9 @@ class RunSpec:
     objective: str
     flow: str
     task_id: str = ""
+    target_id: str = ""
     repo_path: str = ""
+    repo_url: str = ""
     repo_locator: str = ""
     dry_run: bool = False
     force: bool = False

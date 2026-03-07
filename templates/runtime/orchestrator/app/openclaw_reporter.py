@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import yaml
 
+from . import runtime_state_store
 from .state_store import runtime_state_root, team_os_root
 
 
@@ -159,7 +160,7 @@ def _normalize_config(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_config() -> dict[str, Any]:
-    return _normalize_config(_read_yaml(_config_path()))
+    return _normalize_config(runtime_state_store.get_state("openclaw", "config", default=_read_yaml(_config_path())))
 
 
 def save_config(patch: dict[str, Any]) -> dict[str, Any]:
@@ -171,12 +172,12 @@ def save_config(patch: dict[str, Any]) -> dict[str, Any]:
         next_cfg[key] = value
     next_cfg["updated_at"] = _utc_now_iso()
     next_cfg = _normalize_config(next_cfg)
-    _write_yaml(_config_path(), next_cfg)
+    runtime_state_store.put_state("openclaw", "config", next_cfg)
     return next_cfg
 
 
 def load_state() -> dict[str, Any]:
-    raw = _read_json(_state_path())
+    raw = runtime_state_store.get_state("openclaw", "state", default=_read_json(_state_path()))
     state = {
         "cursor": int(raw.get("cursor") or 0),
         "last_run_at": str(raw.get("last_run_at") or ""),
@@ -192,7 +193,7 @@ def save_state(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_state()
     current.update(patch or {})
     current["updated_at"] = _utc_now_iso()
-    _write_json(_state_path(), current)
+    runtime_state_store.put_state("openclaw", "state", current)
     return current
 
 

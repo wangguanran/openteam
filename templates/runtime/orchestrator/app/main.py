@@ -33,6 +33,7 @@ from . import crewai_orchestrator
 from . import crewai_self_upgrade
 from . import crewai_self_upgrade_delivery
 from . import crewai_runtime
+from . import improvement_store
 from . import openclaw_reporter
 from . import crew_tools
 from .state_store import (
@@ -560,13 +561,24 @@ def _mark_panel_dirty(project_id: Optional[str] = None) -> None:
                 _PANEL_DIRTY.add(pid)
 
 
+def _enabled_improvement_targets(*, auto_mode: str) -> list[dict[str, Any]]:
+    targets = improvement_store.list_targets(enabled_only=True)
+    if not targets:
+        return [improvement_store.ensure_target(project_id="teamos")]
+    flag_name = "auto_delivery" if auto_mode == "delivery" else "auto_discovery"
+    selected = [t for t in targets if bool(t.get(flag_name)) or str(t.get("target_id") or "").strip() == "teamos"]
+    return selected or [improvement_store.ensure_target(project_id="teamos")]
+
+
 def _run_self_upgrade_iteration(
     *,
     actor: str,
     project_id: str = "teamos",
     workstream_id: str = "general",
     objective: str = "",
+    target_id: str = "",
     repo_path: str = "",
+    repo_url: str = "",
     repo_locator: str = "",
     dry_run: bool = False,
     force: bool = False,
@@ -599,7 +611,9 @@ def _run_self_upgrade_iteration(
             workstream_id=workstream_id,
             objective=objective or "Run CrewAI self-upgrade for the target repository",
             flow="self_upgrade",
+            target_id=target_id,
             repo_path=repo_path,
+            repo_url=repo_url,
             repo_locator=repo_locator,
             dry_run=dry_run,
             force=force,
@@ -626,6 +640,7 @@ def _run_self_upgrade_delivery_iteration(
     *,
     actor: str,
     project_id: str = "teamos",
+    target_id: str = "",
     task_id: str = "",
     dry_run: bool = False,
     force: bool = False,
@@ -665,6 +680,7 @@ def _run_self_upgrade_delivery_iteration(
             db=DB,
             actor=actor,
             project_id=current_project_id,
+            target_id=str(target_id or "").strip(),
             task_id=str(task_id or "").strip(),
             dry_run=bool(dry_run),
             force=bool(force),
@@ -852,16 +868,19 @@ def _startup_background_threads() -> None:
             time.sleep(4)
             if not _leader_write_allowed():
                 return
-            _ = _run_self_upgrade_iteration(
-                actor="control-plane.startup",
-                project_id="teamos",
-                workstream_id="general",
-                objective="Startup self-upgrade for the current repository",
-                repo_path=str(team_os_root()),
-                dry_run=False,
-                force=False,
-                trigger="startup_auto",
-            )
+            for target in _enabled_improvement_targets(auto_mode="discovery"):
+                _ = _run_self_upgrade_iteration(
+                    actor="control-plane.startup",
+                    project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
+                    workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
+                    objective=f"Startup improvement sweep for target {str(target.get('display_name') or target.get('target_id') or 'target')}",
+                    target_id=str(target.get("target_id") or "").strip(),
+                    repo_path=str(target.get("repo_root") or "").strip(),
+                    repo_locator=str(target.get("repo_locator") or "").strip(),
+                    dry_run=False,
+                    force=False,
+                    trigger="startup_auto",
+                )
         except Exception as e:
             try:
                 DB.add_event(
@@ -889,16 +908,19 @@ def _startup_background_threads() -> None:
                     if not _leader_write_allowed():
                         time.sleep(interval_sec)
                         continue
-                    _ = _run_self_upgrade_iteration(
-                        actor="control-plane.loop",
-                        project_id="teamos",
-                        workstream_id="general",
-                        objective="Continuous self-upgrade sweep for the current repository",
-                        repo_path=str(team_os_root()),
-                        dry_run=False,
-                        force=False,
-                        trigger="continuous_loop",
-                    )
+                    for target in _enabled_improvement_targets(auto_mode="discovery"):
+                        _ = _run_self_upgrade_iteration(
+                            actor="control-plane.loop",
+                            project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
+                            workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
+                            objective=f"Continuous improvement sweep for target {str(target.get('display_name') or target.get('target_id') or 'target')}",
+                            target_id=str(target.get("target_id") or "").strip(),
+                            repo_path=str(target.get("repo_root") or "").strip(),
+                            repo_locator=str(target.get("repo_locator") or "").strip(),
+                            dry_run=False,
+                            force=False,
+                            trigger="continuous_loop",
+                        )
                 except Exception as e:
                     try:
                         DB.add_event(
@@ -961,13 +983,15 @@ def _startup_background_threads() -> None:
                     if not _leader_write_allowed():
                         time.sleep(interval_sec)
                         continue
-                    _ = _run_self_upgrade_delivery_iteration(
-                        actor="control-plane.delivery-loop",
-                        project_id="teamos",
-                        dry_run=False,
-                        force=False,
-                        max_tasks=max_tasks,
-                    )
+                    for target in _enabled_improvement_targets(auto_mode="delivery"):
+                        _ = _run_self_upgrade_delivery_iteration(
+                            actor="control-plane.delivery-loop",
+                            project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
+                            target_id=str(target.get("target_id") or "").strip(),
+                            dry_run=False,
+                            force=False,
+                            max_tasks=max_tasks,
+                        )
                 except Exception as e:
                     try:
                         DB.add_event(
@@ -1114,7 +1138,9 @@ class SelfUpgradeIn(BaseModel):
     trigger: str = "api"  # api|cli_auto|manual
     project_id: str = "teamos"
     workstream_id: str = "general"
+    target_id: Optional[str] = None
     repo_path: Optional[str] = None
+    repo_url: Optional[str] = None
     repo_locator: Optional[str] = None
     objective: Optional[str] = None
 
@@ -1126,6 +1152,7 @@ class SelfUpgradeDeliveryIn(BaseModel):
     dry_run: bool = False
     force: bool = False
     project_id: str = "teamos"
+    target_id: Optional[str] = None
     task_id: Optional[str] = None
     max_tasks: Optional[int] = Field(default=None, ge=1, le=20)
 
@@ -1177,11 +1204,28 @@ class RunStartIn(BaseModel):
     pipeline: Optional[str] = None
     # optional task binding; enables deterministic task/run consistency checks
     task_id: Optional[str] = None
+    target_id: Optional[str] = None
     repo_path: Optional[str] = None
+    repo_url: Optional[str] = None
     repo_locator: Optional[str] = None
     dry_run: bool = False
     force: bool = False
     trigger: Optional[str] = None
+
+
+class ImprovementTargetIn(BaseModel):
+    target_id: Optional[str] = None
+    project_id: str = "teamos"
+    display_name: Optional[str] = None
+    repo_path: Optional[str] = None
+    repo_url: Optional[str] = None
+    repo_locator: Optional[str] = None
+    default_branch: Optional[str] = None
+    enabled: bool = True
+    auto_discovery: bool = False
+    auto_delivery: bool = False
+    ship_enabled: bool = False
+    workstream_id: str = "general"
 
 
 class NodeRegisterIn(BaseModel):
@@ -1240,6 +1284,9 @@ def v1_status():
     focus = load_focus()
     ws_root = str(_workspace_root())
     active_projects = _active_projects_summary()
+    targets = improvement_store.list_targets()
+    default_target = improvement_store.ensure_target(project_id="teamos")
+    default_target_id = str(default_target.get("target_id") or "teamos")
 
     runs = [r.__dict__ for r in DB.list_runs()]
     agents = [a.__dict__ for a in DB.list_agents()]
@@ -1247,11 +1294,34 @@ def v1_status():
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = crewai_runtime.probe_crewai()
-    self_upgrade_state = crewai_self_upgrade._read_state()
+    self_upgrade_state = crewai_self_upgrade._read_state(default_target_id)
     proposals = crewai_self_upgrade.list_proposals()
     delivery_tasks = crewai_self_upgrade_delivery.list_delivery_tasks()
     delivery_summary = crewai_self_upgrade_delivery.delivery_summary()
     milestones = [m.__dict__ for m in list_milestones("teamos")]
+    target_summaries: list[dict[str, Any]] = []
+    for target in targets:
+        tid = str(target.get("target_id") or "").strip()
+        if not tid:
+            continue
+        target_proposals = crewai_self_upgrade.list_proposals(target_id=tid, project_id=str(target.get("project_id") or ""))
+        target_tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=str(target.get("project_id") or ""), target_id=tid)
+        target_summaries.append(
+            {
+                "target_id": tid,
+                "project_id": str(target.get("project_id") or ""),
+                "display_name": str(target.get("display_name") or ""),
+                "repo_locator": str(target.get("repo_locator") or ""),
+                "last_run": crewai_self_upgrade._read_state(tid).get("last_run") if isinstance(crewai_self_upgrade._read_state(tid).get("last_run"), dict) else {},
+                "proposal_counts": {
+                    "total": len(target_proposals),
+                    "pending": len([p for p in target_proposals if str(p.get("status") or "").strip().upper() not in ("REJECTED", "MATERIALIZED")]),
+                },
+                "delivery_counts": crewai_self_upgrade_delivery.delivery_summary(project_id=str(target.get("project_id") or ""), target_id=tid),
+                "milestones": len([m for m in milestones if str(m.get("target_id") or "").strip() == tid]),
+                "active_tasks": len([t for t in target_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release", "merge_conflict")]),
+            }
+        )
     openclaw_status = openclaw_reporter.detect_openclaw(probe_health=False)
     openclaw_status["state"] = openclaw_reporter.load_state()
     pending_proposals = [
@@ -1273,7 +1343,10 @@ def v1_status():
         "tasks": tasks,
         "task_run_sync": task_run_sync,
         "crewai": crewai_info,
+        "improvement_targets": targets,
+        "improvement_target_summaries": target_summaries,
         "self_upgrade": {
+            "default_target_id": default_target_id,
             "last_run": self_upgrade_state.get("last_run") if isinstance(self_upgrade_state.get("last_run"), dict) else {},
             "backoff_until": str(self_upgrade_state.get("backoff_until") or ""),
             "proposal_counts": {
@@ -1372,7 +1445,9 @@ def v1_run_start(payload: RunStartIn):
         objective=str(payload.objective),
         flow=flow,
         task_id=task_id,
+        target_id=str(payload.target_id or "").strip(),
         repo_path=str(payload.repo_path or "").strip(),
+        repo_url=str(payload.repo_url or "").strip(),
         repo_locator=str(payload.repo_locator or "").strip(),
         dry_run=bool(payload.dry_run),
         force=bool(payload.force),
@@ -2279,7 +2354,9 @@ def v1_self_upgrade_run(payload: SelfUpgradeIn):
         project_id=project_id,
         workstream_id=workstream_id,
         objective=str(payload.objective or "Run CrewAI self-upgrade for the target repository").strip(),
+        target_id=str(payload.target_id or "").strip(),
         repo_path=str(payload.repo_path or "").strip(),
+        repo_url=str(payload.repo_url or "").strip(),
         repo_locator=str(payload.repo_locator or "").strip(),
         dry_run=bool(payload.dry_run),
         force=bool(payload.force),
@@ -2287,12 +2364,34 @@ def v1_self_upgrade_run(payload: SelfUpgradeIn):
     )
 
 
+@app.get("/v1/improvement/targets")
+def v1_improvement_targets(project_id: str = Query(default=""), enabled_only: bool = False):
+    targets = improvement_store.list_targets(project_id=str(project_id or "").strip(), enabled_only=bool(enabled_only))
+    return {"total": len(targets), "targets": targets}
+
+
+@app.post("/v1/improvement/targets")
+def v1_improvement_targets_upsert(payload: ImprovementTargetIn):
+    _require_leader_write()
+    target = improvement_store.upsert_target(payload.model_dump(exclude_none=True))
+    DB.add_event(
+        event_type="IMPROVEMENT_TARGET_UPSERTED",
+        actor="improvement_target_api",
+        project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
+        workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
+        payload={"target": target},
+    )
+    return {"ok": True, "target": target}
+
+
 @app.get("/v1/self_upgrade/proposals")
 def v1_self_upgrade_proposals(
+    target_id: str = Query(default=""),
+    project_id: str = Query(default=""),
     lane: str = Query(default=""),
     status: str = Query(default=""),
 ):
-    proposals = crewai_self_upgrade.list_proposals(lane=lane, status=status)
+    proposals = crewai_self_upgrade.list_proposals(target_id=target_id, project_id=project_id, lane=lane, status=status)
     return {"total": len(proposals), "proposals": proposals}
 
 
@@ -2332,9 +2431,12 @@ def v1_self_upgrade_discussions_sync():
 @app.get("/v1/self_upgrade/milestones")
 def v1_self_upgrade_milestones(
     project_id: str = Query(default="teamos"),
+    target_id: str = Query(default=""),
     state: str = Query(default=""),
 ):
     items = [m.__dict__ for m in list_milestones(str(project_id or "teamos").strip() or "teamos")]
+    if target_id:
+        items = [m for m in items if str(m.get("target_id") or "").strip() == str(target_id).strip()]
     state_filter = str(state or "").strip().lower()
     if state_filter:
         items = [m for m in items if str(m.get("state") or "").strip().lower() == state_filter]
@@ -2390,10 +2492,15 @@ def v1_openclaw_sweep(payload: OpenClawSweepIn):
 @app.get("/v1/self_upgrade/delivery/tasks")
 def v1_self_upgrade_delivery_tasks(
     project_id: str = Query(default=""),
+    target_id: str = Query(default=""),
     status: str = Query(default=""),
 ):
-    tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=project_id, status=status)
-    return {"total": len(tasks), "tasks": tasks, "summary": crewai_self_upgrade_delivery.delivery_summary()}
+    tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=project_id, target_id=target_id, status=status)
+    return {
+        "total": len(tasks),
+        "tasks": tasks,
+        "summary": crewai_self_upgrade_delivery.delivery_summary(project_id=project_id, target_id=target_id),
+    }
 
 
 @app.post("/v1/self_upgrade/delivery/run")
@@ -2402,6 +2509,7 @@ def v1_self_upgrade_delivery_run(payload: SelfUpgradeDeliveryIn):
     out = _run_self_upgrade_delivery_iteration(
         actor="self_upgrade_delivery_api",
         project_id=str(payload.project_id or "teamos").strip() or "teamos",
+        target_id=str(payload.target_id or "").strip(),
         task_id=str(payload.task_id or "").strip(),
         dry_run=bool(payload.dry_run),
         force=bool(payload.force),

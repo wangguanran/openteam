@@ -57,6 +57,7 @@ def ensure_workspace_scaffold(root: Optional[Path] = None) -> Path:
     """
     r = (root or workspace_root()).resolve()
     (r / "projects").mkdir(parents=True, exist_ok=True)
+    (r / "targets").mkdir(parents=True, exist_ok=True)
     (r / "shared" / "cache").mkdir(parents=True, exist_ok=True)
     (r / "shared" / "tmp").mkdir(parents=True, exist_ok=True)
     (r / "config").mkdir(parents=True, exist_ok=True)
@@ -99,6 +100,20 @@ def project_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
 
 def project_repo_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
     return project_dir(project_id, root=root) / "repo"
+
+
+def targets_dir(*, root: Optional[Path] = None) -> Path:
+    r = (root or workspace_root()).resolve()
+    return (r / "targets").resolve()
+
+
+def target_dir(target_id: str, *, root: Optional[Path] = None) -> Path:
+    tid = _safe_project_id(target_id)
+    return (targets_dir(root=root) / tid).resolve()
+
+
+def target_repo_dir(target_id: str, *, root: Optional[Path] = None) -> Path:
+    return target_dir(target_id, root=root) / "repo"
 
 
 def project_state_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
@@ -177,6 +192,15 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
         md.write_text(f"# PLAN ({pid})\n\n- TODO\n", encoding="utf-8")
 
     return {"workspace_root": str(r), "project_id": pid, "project_dir": str(pdir), "state_dir": str(s)}
+
+
+def ensure_target_scaffold(target_id: str, *, root: Optional[Path] = None) -> dict[str, Any]:
+    r = ensure_workspace_scaffold(root)
+    tid = _safe_project_id(target_id)
+    tdir = target_dir(tid, root=r)
+    (tdir / "repo").mkdir(parents=True, exist_ok=True)
+    (tdir / "state").mkdir(parents=True, exist_ok=True)
+    return {"workspace_root": str(r), "target_id": tid, "target_dir": str(tdir), "repo_dir": str((tdir / "repo").resolve())}
 
 
 def list_projects(*, root: Optional[Path] = None) -> list[str]:
