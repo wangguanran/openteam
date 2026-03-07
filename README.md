@@ -40,9 +40,9 @@ teamos
 # 启动后会提示：输入会落盘为 Raw，不要输入密码/密钥
 # 控制命令：/help /status /exit
 
-# 检查 self-upgrade 已触发并落盘
-cat ../team-os-runtime/state/self_upgrade_state.json | head -n 40
-ls ../team-os-runtime/state/self_upgrade/reports/
+# 检查 self-upgrade 已触发并写入 runtime 状态库
+./teamos status | grep '^self_upgrade\.'
+curl -fsS http://127.0.0.1:8787/v1/status | jq '.self_upgrade'
 
 # 查看 feature/process proposals，并决定哪些进入执行
 ./teamos self-upgrade-proposals

@@ -307,6 +307,7 @@ _SELF_UPGRADE_STALE_AGENT_ROLES = frozenset(
         crewai_self_upgrade.ROLE_REVIEW_AGENT,
         crewai_self_upgrade.ROLE_QA_AGENT,
         crewai_self_upgrade.ROLE_PROCESS_OPTIMIZATION_ANALYST,
+        crewai_self_upgrade.ROLE_CODE_QUALITY_ANALYST,
         "Scheduler-Agent",
         "Release-Agent",
         "Process-Metrics-Agent",
@@ -561,13 +562,39 @@ def _mark_panel_dirty(project_id: Optional[str] = None) -> None:
                 _PANEL_DIRTY.add(pid)
 
 
+def _target_repo_configured(target: dict[str, Any]) -> bool:
+    repo_url = str(target.get("repo_url") or "").strip()
+    if repo_url:
+        return True
+    repo_root = str(target.get("repo_root") or "").strip()
+    if not repo_root:
+        return False
+    marker = Path(repo_root).expanduser() / ".git"
+    return marker.is_dir() or marker.is_file()
+
+
+def _default_local_improvement_target() -> Optional[dict[str, Any]]:
+    repo_root = Path(os.getenv("TEAM_OS_REPO_PATH") or str(team_os_root())).expanduser().resolve()
+    marker = repo_root / ".git"
+    if not repo_root.exists() or not (marker.is_dir() or marker.is_file()):
+        return None
+    return improvement_store.ensure_target(project_id="teamos", repo_path=str(repo_root))
+
+
 def _enabled_improvement_targets(*, auto_mode: str) -> list[dict[str, Any]]:
     targets = improvement_store.list_targets(enabled_only=True)
-    if not targets:
-        return [improvement_store.ensure_target(project_id="teamos")]
+    selected: list[dict[str, Any]] = []
     flag_name = "auto_delivery" if auto_mode == "delivery" else "auto_discovery"
-    selected = [t for t in targets if bool(t.get(flag_name)) or str(t.get("target_id") or "").strip() == "teamos"]
-    return selected or [improvement_store.ensure_target(project_id="teamos")]
+    for target in targets:
+        if not bool(target.get(flag_name)):
+            continue
+        if not _target_repo_configured(target):
+            continue
+        selected.append(target)
+    if not targets:
+        default_target = _default_local_improvement_target()
+        return [default_target] if default_target else []
+    return selected
 
 
 def _run_self_upgrade_iteration(
@@ -1285,8 +1312,8 @@ def v1_status():
     ws_root = str(_workspace_root())
     active_projects = _active_projects_summary()
     targets = improvement_store.list_targets()
-    default_target = improvement_store.ensure_target(project_id="teamos")
-    default_target_id = str(default_target.get("target_id") or "teamos")
+    default_target = _default_local_improvement_target()
+    default_target_id = str((default_target or {}).get("target_id") or "")
 
     runs = [r.__dict__ for r in DB.list_runs()]
     agents = [a.__dict__ for a in DB.list_agents()]
@@ -1294,7 +1321,7 @@ def v1_status():
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = crewai_runtime.probe_crewai()
-    self_upgrade_state = crewai_self_upgrade._read_state(default_target_id)
+    self_upgrade_state = crewai_self_upgrade._read_state(default_target_id) if default_target_id else {}
     proposals = crewai_self_upgrade.list_proposals()
     delivery_tasks = crewai_self_upgrade_delivery.list_delivery_tasks()
     delivery_summary = crewai_self_upgrade_delivery.delivery_summary()
@@ -1355,6 +1382,7 @@ def v1_status():
                 "feature": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "feature"]),
                 "bug": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "bug"]),
                 "process": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "process"]),
+                "quality": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "quality"]),
             },
             "pending_proposals": pending_proposals[:20],
             "delivery": {
@@ -2805,12 +2833,12 @@ def _pending_decisions() -> list[dict[str, Any]]:
         if t.get("need_pm_decision"):
             decisions.append({"type": "TASK_NEED_PM_DECISION", "task_id": t.get("task_id"), "title": t.get("title")})
 
-    # 3) Self-upgrade feature proposals waiting for user input.
+    # 3) Self-upgrade proposals waiting for user input.
     try:
         for p in crewai_self_upgrade.list_proposals():
             status = str(p.get("status") or "").strip().upper()
             lane = str(p.get("lane") or "").strip().lower()
-            if lane != "feature" or status not in ("PENDING_CONFIRMATION", "HOLD"):
+            if lane not in ("feature", "quality") or status not in ("PENDING_CONFIRMATION", "HOLD"):
                 continue
             decisions.append(
                 {

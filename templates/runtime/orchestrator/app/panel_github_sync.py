@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import yaml
 
+from . import improvement_store
 from .github_projects_client import (
     ADD_DRAFT_ISSUE_MUTATION,
     CREATE_FIELD_MUTATION,
@@ -77,6 +78,8 @@ def _issue_style_type(kind: str = "", lane: str = "") -> str:
     raw = _lower(lane or kind)
     if raw in ("bug", "ci", "regression"):
         return "Bug"
+    if raw in ("quality", "code_quality", "cleanup", "refactor"):
+        return "Quality"
     if raw in ("process", "ops", "maintenance"):
         return "Process"
     return "Feature"
@@ -99,7 +102,7 @@ def _panel_item_title(raw_title: str, *, kind: str = "", lane: str = "", module:
     title = _norm(raw_title)
     if not title:
         return "[Feature][General] 未命名事项"
-    if re.match(r"^\[(Bug|Feature|Process)\]\[[^\]]+\]\s+\S+", title):
+    if re.match(r"^\[(Bug|Feature|Process|Quality)\]\[[^\]]+\]\s+\S+", title):
         return title
     mod = _norm(module) or "General"
     return f"[{_issue_style_type(kind=kind, lane=lane)}][{mod}] {title}"
@@ -158,28 +161,17 @@ def _load_requirements(project_id: str) -> list[dict[str, Any]]:
 
 
 def _load_self_upgrade_feature_proposals(project_id: str) -> list[dict[str, Any]]:
-    path = runtime_state_root() / "self_upgrade_proposals.json"
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    items = data.get("items") if isinstance(data, dict) else {}
-    if not isinstance(items, dict):
-        return []
     out: list[dict[str, Any]] = []
-    for proposal_id, raw in items.items():
-        doc = raw if isinstance(raw, dict) else {}
-        if str(doc.get("project_id") or "teamos").strip() != str(project_id):
+    for doc in improvement_store.list_proposals(project_id=str(project_id or "")):
+        if not isinstance(doc, dict):
             continue
         lane = str(doc.get("lane") or "").strip().lower()
-        if lane not in ("feature", "process"):
+        if lane not in ("feature", "process", "quality"):
             continue
         status = str(doc.get("status") or "").strip().upper()
         if status in ("REJECTED", "MATERIALIZED"):
             continue
-        out.append({"proposal_id": proposal_id, **doc})
+        out.append({"proposal_id": str(doc.get("proposal_id") or ""), **doc})
     return sorted(out, key=lambda x: (str(x.get("updated_at") or ""), str(x.get("proposal_id") or "")), reverse=True)
 
 

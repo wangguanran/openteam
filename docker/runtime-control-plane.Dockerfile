@@ -19,8 +19,10 @@ ARG TEAMOS_OPENCLAW_VERSION=2026.3.2
 ARG TEAMOS_NPM_REGISTRY=https://registry.npmmirror.com
 ARG TEAMOS_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG TEAMOS_PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    TEAM_OS_REPO_PATH=/team-os \
     PIP_INDEX_URL=${TEAMOS_PIP_INDEX_URL} \
     PIP_TRUSTED_HOST=${TEAMOS_PIP_TRUSTED_HOST} \
     HTTP_PROXY=${HTTP_PROXY} \
@@ -63,7 +65,7 @@ RUN set -eux; \
     npm install -g "openclaw@${TEAMOS_OPENCLAW_VERSION}"; \
     openclaw --help >/dev/null
 
-COPY requirements.txt /app/requirements.txt
+COPY templates/runtime/orchestrator/requirements.txt /app/requirements.txt
 RUN python - <<'PY' > /tmp/requirements-base.txt
 from pathlib import Path
 
@@ -90,7 +92,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements-base.txt \
     && pip install --no-cache-dir /tmp/crewai-src/lib/crewai \
     && rm -rf /tmp/crewai-src
 
-COPY app /app/app
+COPY templates/runtime/orchestrator/app /app/app
+COPY . /team-os
 
 EXPOSE 8787
 

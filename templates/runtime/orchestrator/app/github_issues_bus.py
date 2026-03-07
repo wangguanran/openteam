@@ -61,6 +61,7 @@ _LABEL_DEFAULTS: dict[str, tuple[str, str]] = {
     "type:feature": ("1d76db", "Feature work item"),
     "type:bug": ("d73a4a", "Bug fix work item"),
     "type:process": ("6f42c1", "Process improvement item"),
+    "type:quality": ("0052cc", "Code quality improvement item"),
     "stage:proposal": ("fbca04", "Pending proposal discussion"),
     "stage:queued": ("cfd3d7", "Queued for implementation"),
     "stage:audit": ("fbca04", "Issue audit in progress"),

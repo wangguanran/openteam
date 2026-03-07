@@ -28,6 +28,12 @@ class PanelGitHubSyncTests(unittest.TestCase):
             "[Process][Self-Upgrade] 增加提案闭环",
         )
 
+    def test_panel_item_title_formats_quality_titles(self):
+        self.assertEqual(
+            panel_github_sync._panel_item_title("删除未引用的旧适配文件", kind="CODE_QUALITY", lane="quality", module="Runtime"),
+            "[Quality][Runtime] 删除未引用的旧适配文件",
+        )
+
     def test_panel_milestone_title_uses_release_issue_style(self):
         self.assertEqual(
             panel_github_sync._panel_item_title("跟踪 v0.1.1 版本发布", kind="PROCESS", lane="process", module="Release"),

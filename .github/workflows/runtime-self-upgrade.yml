@@ -35,4 +35,7 @@ jobs:
             tests.test_crewai_runtime \
             tests.test_crewai_orchestrator \
             tests.test_crewai_self_upgrade \
+            tests.test_panel_github_sync \
+            tests.test_improvement_store \
+            tests.test_openclaw_reporter \
             tests.test_bootstrap_and_run

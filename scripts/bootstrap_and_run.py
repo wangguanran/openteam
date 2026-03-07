@@ -572,18 +572,20 @@ def _ensure_crewai_ready(base_url: str) -> dict[str, Any]:
 
 
 def _self_upgrade_state_path(runtime_root: Path) -> Path:
-    return runtime_root / "state" / "self_upgrade_state.json"
+    return runtime_root / "state" / "deprecated-self_upgrade_state.json"
 
 
-def _read_self_upgrade_state(runtime_root: Path) -> dict[str, Any]:
-    p = _self_upgrade_state_path(runtime_root)
-    if not p.exists():
+def _read_self_upgrade_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
+    _ = runtime_root
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
         return {}
     try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        return raw if isinstance(raw, dict) else {}
+        status = _http_json("GET", url + "/v1/status", None, timeout_sec=5)
     except Exception:
         return {}
+    su = status.get("self_upgrade") if isinstance(status, dict) else {}
+    return dict(su) if isinstance(su, dict) else {}
 
 
 def _run_self_upgrade_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
@@ -647,8 +649,7 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
     except Exception as e:
         hub_status = {"ok": False, "error": str(e)[:300]}
 
-    su_state_path = _self_upgrade_state_path(runtime_root)
-    su_state = _read_self_upgrade_state(runtime_root)
+    su_state = _read_self_upgrade_state(runtime_root, base_url=base_url)
     su_last = (su_state.get("last_run") or {}) if isinstance(su_state.get("last_run"), dict) else {}
 
     return {
@@ -661,7 +662,7 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "control_plane": control,
         "self_upgrade": {
             "last_run": su_last,
-            "state_path": str(su_state_path),
+            "state_backend": "control_plane_status",
         },
     }
 
@@ -734,7 +735,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     _append_audit(runtime_root, "self-upgrade bootstrap run executed")
 
     # hard check: last_run must exist after bootstrap
-    st = _read_self_upgrade_state(runtime_root)
+    st = _read_self_upgrade_state(runtime_root, base_url=base_url)
     last_run = (st.get("last_run") or {}) if isinstance(st, dict) else {}
     if not str(last_run.get("ts") or "").strip():
         raise BootstrapError("self-upgrade bootstrap not persisted: missing last_run.ts")

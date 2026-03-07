@@ -97,9 +97,11 @@ ROLE_ISSUE_DISCUSSION_AGENT = "Issue-Discussion-Agent"
 ROLE_ISSUE_AUDIT_AGENT = "Issue-Audit-Agent"
 ROLE_DOCUMENTATION_AGENT = "Documentation-Agent"
 ROLE_MILESTONE_MANAGER = "Milestone-Manager-Agent"
+ROLE_CODE_QUALITY_ANALYST = "Code-Quality-Analyst"
 ROLE_FEATURE_CODING_AGENT = "Feature-Coding-Agent"
 ROLE_BUGFIX_CODING_AGENT = "Bugfix-Coding-Agent"
 ROLE_PROCESS_OPTIMIZATION_AGENT = "Process-Optimization-Agent"
+ROLE_CODE_QUALITY_AGENT = "Code-Quality-Agent"
 
 ROLE_DISPLAY_ZH = {
     ROLE_PRODUCT_MANAGER: "产品经理",
@@ -112,9 +114,11 @@ ROLE_DISPLAY_ZH = {
     ROLE_ISSUE_AUDIT_AGENT: "问题审计 Agent",
     ROLE_DOCUMENTATION_AGENT: "文档同步 Agent",
     ROLE_MILESTONE_MANAGER: "里程碑经理 Agent",
+    ROLE_CODE_QUALITY_ANALYST: "代码质量分析 Agent",
     ROLE_FEATURE_CODING_AGENT: "功能编码 Agent",
     ROLE_BUGFIX_CODING_AGENT: "缺陷修复 Agent",
     ROLE_PROCESS_OPTIMIZATION_AGENT: "流程优化编码 Agent",
+    ROLE_CODE_QUALITY_AGENT: "代码质量治理 Agent",
 }
 
 MODULE_ALIASES = {
@@ -136,6 +140,7 @@ MODULE_ALIASES = {
     "requirements": "Requirements",
     "observability": "Observability",
     "security": "Security",
+    "quality": "Quality",
 }
 
 MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
@@ -309,8 +314,12 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
     }
 
 
+def _lane_requires_user_confirmation(lane: str) -> bool:
+    return str(lane or "").strip().lower() in ("feature", "quality")
+
+
 def _issue_type_token(lane: str) -> str:
-    return {"feature": "Feature", "bug": "Bug", "process": "Process"}.get(str(lane or "").strip().lower(), "Task")
+    return {"feature": "Feature", "bug": "Bug", "process": "Process", "quality": "Quality"}.get(str(lane or "").strip().lower(), "Task")
 
 
 def _version_label(version_bump: str) -> str:
@@ -345,6 +354,8 @@ def _milestone_id_for_title(title: str) -> str:
 def _release_line_for_finding(finding: UpgradeFinding) -> str:
     lane = str(finding.lane or "").strip().lower()
     version_bump = str(finding.version_bump or "").strip().lower()
+    if lane == "quality":
+        return "none"
     if lane == "bug" or version_bump == "patch":
         return "patch"
     if version_bump == "major":
@@ -519,6 +530,73 @@ def _sample_files(root: Path, pattern: str, *, limit: int = 20) -> list[str]:
     return out
 
 
+_SOURCE_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".sh"}
+_SOURCE_SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".idea",
+    ".vscode",
+}
+
+
+def _walk_source_files(root: Path, *, limit: int = 400) -> list[Path]:
+    out: list[Path] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in sorted(dirnames) if d not in _SOURCE_SKIP_DIRS]
+            base = Path(dirpath)
+            for name in sorted(filenames):
+                path = base / name
+                if path.suffix.lower() not in _SOURCE_EXTENSIONS:
+                    continue
+                out.append(path)
+                if len(out) >= limit:
+                    return out
+    except Exception:
+        return out
+    return out
+
+
+def _source_inventory(root: Path) -> dict[str, Any]:
+    files = _walk_source_files(root, limit=400)
+    sample = [str(p.relative_to(root)) for p in files[:40]]
+    largest = [
+        {"path": str(p.relative_to(root)), "bytes": int(p.stat().st_size)}
+        for p in sorted(files, key=lambda x: x.stat().st_size if x.exists() else 0, reverse=True)[:12]
+    ]
+    basename_map: dict[str, list[str]] = {}
+    for path in files:
+        basename_map.setdefault(path.name.lower(), []).append(str(path.relative_to(root)))
+    duplicates = [
+        {"basename": basename, "paths": paths[:6]}
+        for basename, paths in sorted(basename_map.items())
+        if len(paths) > 1
+    ][:12]
+    stale_candidates: list[str] = []
+    for path in files:
+        rel = str(path.relative_to(root))
+        rel_lower = rel.lower()
+        if any(token in rel_lower for token in ("/legacy/", "/deprecated/", "/archive/", "/old/", ".bak", ".old", "copy.py", "copy.ts", "copy.js")):
+            stale_candidates.append(rel)
+        if len(stale_candidates) >= 20:
+            break
+    return {
+        "source_files_sample": sample,
+        "largest_source_files": largest,
+        "duplicate_basename_candidates": duplicates,
+        "stale_file_candidates": stale_candidates,
+    }
+
+
 def _safe_project_id(raw: str) -> str:
     base = _slug(raw, default="project").replace("-", "_")
     if not base:
@@ -686,6 +764,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
                 break
     except Exception:
         pass
+    source_inventory = _source_inventory(repo_root)
 
     return {
         "repo_root": str(repo_root),
@@ -704,6 +783,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
         "readme_excerpt": readme,
         "current_version": _read_current_version(repo_root),
         "recent_execution_metrics": _recent_execution_metrics(target_id=str(target_id or "").strip(), limit=8),
+        **source_inventory,
     }
 
 
@@ -1010,6 +1090,8 @@ def _lane_default_version_bump(lane: str) -> str:
         return "minor"
     if ln == "bug":
         return "patch"
+    if ln == "quality":
+        return "none"
     return "none"
 
 
@@ -1017,6 +1099,8 @@ def _lane_default_cooldown_hours(lane: str, *, requires_user_confirmation: bool)
     ln = str(lane or "bug").strip().lower()
     if ln == "feature":
         return int(os.getenv("TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS", "1") or "1")
+    if ln == "quality":
+        return int(os.getenv("TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS", "1") or "1")
     if ln == "process":
         return int(os.getenv("TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS", "24") or "24")
     return 0
@@ -1029,6 +1113,8 @@ def _lane_default_baseline_action(lane: str, version_bump: str) -> str:
         return "new_baseline" if vb in ("major", "minor") else "feature_followup"
     if ln == "bug":
         return "patch_release"
+    if ln == "quality":
+        return "quality_improvement"
     return "process_improvement"
 
 
@@ -1038,6 +1124,8 @@ def _coding_owner_role(lane: str) -> str:
         return ROLE_FEATURE_CODING_AGENT
     if ln == "bug":
         return ROLE_BUGFIX_CODING_AGENT
+    if ln == "quality":
+        return ROLE_CODE_QUALITY_AGENT
     return ROLE_PROCESS_OPTIMIZATION_AGENT
 
 
@@ -1151,13 +1239,20 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         raw_kind = str(finding.kind or "").strip().upper()
         if raw_kind in ("FEATURE", "OPTIMIZATION"):
             kind = "FEATURE"
+        elif raw_kind in ("CODE_QUALITY", "QUALITY", "REFACTOR", "CLEANUP"):
+            kind = "CODE_QUALITY"
         elif raw_kind in ("BUG",):
             kind = "BUG"
         else:
             kind = "PROCESS"
         lane = str(getattr(finding, "lane", "") or "").strip().lower()
-        if lane not in ("feature", "bug", "process"):
-            lane = {"FEATURE": "feature", "BUG": "bug", "PROCESS": "process"}.get(kind, "bug")
+        if lane not in ("feature", "bug", "process", "quality"):
+            lane = {
+                "FEATURE": "feature",
+                "BUG": "bug",
+                "PROCESS": "process",
+                "CODE_QUALITY": "quality",
+            }.get(kind, "bug")
         impact = str(finding.impact or "MED").strip().upper()
         if impact not in ("LOW", "MED", "HIGH"):
             impact = "MED"
@@ -1165,7 +1260,10 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         version_bump = str(getattr(finding, "version_bump", "") or "").strip().lower()
         if version_bump not in ("major", "minor", "patch", "none"):
             version_bump = _lane_default_version_bump(lane)
-        requires_user_confirmation = bool(getattr(finding, "requires_user_confirmation", False) or lane == "feature")
+        requires_user_confirmation = bool(
+            getattr(finding, "requires_user_confirmation", False)
+            or _lane_requires_user_confirmation(lane)
+        )
         cooldown_hours = int(getattr(finding, "cooldown_hours", 0) or _lane_default_cooldown_hours(lane, requires_user_confirmation=requires_user_confirmation))
         target_version = str(getattr(finding, "target_version", "") or "").strip() or _bump_version(current_version, version_bump)
         if version_bump == "none":
@@ -1228,7 +1326,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
             cooldown_hours=max(0, cooldown_hours),
             work_items=work_items,
         )
-        if not finding_obj.work_items and finding_obj.lane in ("feature", "bug"):
+        if not finding_obj.work_items and finding_obj.lane in ("feature", "bug", "quality"):
             finding_obj.work_items = _default_work_items(repo_root=repo_root, finding=finding_obj)
         findings.append(finding_obj)
     return UpgradePlan(
@@ -1295,6 +1393,14 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         allow_delegation=False,
         verbose=verbose,
     )
+    code_quality_analyst = Agent(
+        role=ROLE_CODE_QUALITY_ANALYST,
+        goal="Identify code quality improvements grounded in repository structure, duplicated logic, large files, stale files, and weak reuse boundaries.",
+        backstory="You think like a staff engineer doing code health stewardship. You look for dead code, cleanup opportunities, safer deletions, and refactors that increase reuse without changing product scope.",
+        llm=llm,
+        allow_delegation=False,
+        verbose=verbose,
+    )
 
     feature_task = Task(
         name="product_feature_scan",
@@ -1333,18 +1439,34 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         agent=process_analyst,
         markdown=True,
     )
+    quality_task = Task(
+        name="code_quality_scan",
+        description=(
+            "Review the repository context as a code quality analyst.\n"
+            f"Return at most {int(max_findings)} code quality candidates.\n"
+            "Focus on duplicated logic, unnecessary files, dead/stale code candidates, oversized modules, and reuse/refactor opportunities.\n"
+            "Only propose work when the quality gain is concrete and the change can be broken into small, scoped items.\n"
+            "Use only the supplied context.\n\n"
+            f"Repository context:\n{repo_blob}"
+        ),
+        expected_output="A shortlist of code quality findings with evidence, cleanup value, and safe refactor boundaries.",
+        agent=code_quality_analyst,
+        markdown=True,
+    )
     plan_task = Task(
         name="draft_execution_backlog",
         description=(
-            "Transform the feature scan, bug scan, and process scan into an actionable upgrade backlog.\n"
+            "Transform the feature scan, bug scan, code quality scan, and process scan into an actionable upgrade backlog.\n"
             "Output JSON matching UpgradePlan.\n"
             "Rules:\n"
             "- Features use lane=feature, kind=FEATURE, require user confirmation, and use version_bump=major or minor.\n"
             "- Bugs use lane=bug, kind=BUG, no user confirmation, and use version_bump=patch.\n"
+            "- Code quality improvements use lane=quality, kind=CODE_QUALITY, require user confirmation, default to version_bump=none, and focus on cleanup/refactor/reuse/deletion work.\n"
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
             "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
-            "- Every feature or bug finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
+            "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
             "- Each work item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding.\n"
+            "- Quality work items should prefer deleting dead files, consolidating duplicate code, extracting shared logic, or narrowing oversized modules. Do not propose cosmetic-only cleanup.\n"
             "- Coding work items must be issue-scoped only; no extra optimization outside the listed paths.\n"
             "- 所有面向用户的自然语言字段必须使用简体中文，包括 title、summary、rationale、acceptance、work_items.title、work_items.summary。\n"
             "- 保留 role id、路径、命令、状态枚举、版本号、URL、worktree_hint 为原样。\n"
@@ -1352,7 +1474,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         ),
         expected_output="A structured JSON upgrade plan.",
         agent=issue_drafter,
-        context=[feature_task, bug_task, process_task],
+        context=[feature_task, bug_task, quality_task, process_task],
         output_json=UpgradePlan,
     )
     review_task = Task(
@@ -1361,32 +1483,33 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
             "Review the draft upgrade plan.\n"
             "Reject large or fuzzy work items. Ensure every coding work item has clear path scope, task-linked commit discipline, and explicit downstream review/QA roles.\n"
             "Reject any finding that spans multiple modules or uses an unstable module name.\n"
+            "For quality items, reject vague refactors or cleanup that is not backed by concrete evidence from the repository context.\n"
             "Keep all user-facing natural language fields in Simplified Chinese.\n"
             f"Keep no more than {int(max_findings)} findings in the final output."
         ),
         expected_output="A validated structured JSON upgrade plan ready for issue/task recording.",
         agent=review_agent,
-        context=[feature_task, bug_task, process_task, plan_task],
+        context=[feature_task, bug_task, quality_task, process_task, plan_task],
         output_json=UpgradePlan,
     )
     qa_task = Task(
         name="qa_acceptance_gate",
         description=(
             "Finalize the plan from a QA and release perspective.\n"
-            "Make sure each work item has explicit tests and acceptance. Features must wait for user confirmation. Bugs can flow immediately.\n"
+            "Make sure each work item has explicit tests and acceptance. Features and quality items must wait for user confirmation. Bugs can flow immediately.\n"
             "Preserve the single-module rule so downstream issue titles can follow [Type][Module] xxx.\n"
             "Keep all user-facing natural language fields in Simplified Chinese.\n"
             "No item should be closeable without review and QA acceptance."
         ),
         expected_output="A final structured JSON upgrade plan ready for runtime materialization.",
         agent=qa_agent,
-        context=[feature_task, bug_task, process_task, plan_task, review_task],
+        context=[feature_task, bug_task, quality_task, process_task, plan_task, review_task],
         output_json=UpgradePlan,
     )
 
     crew = Crew(
-        agents=[product_manager, test_manager, issue_drafter, review_agent, qa_agent, process_analyst],
-        tasks=[feature_task, bug_task, process_task, plan_task, review_task, qa_task],
+        agents=[product_manager, test_manager, issue_drafter, review_agent, qa_agent, process_analyst, code_quality_analyst],
+        tasks=[feature_task, bug_task, quality_task, process_task, plan_task, review_task, qa_task],
         process=Process.sequential,
         verbose=verbose,
     )
@@ -1571,7 +1694,7 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
     labels = [
         "teamos",
         "source:self-upgrade",
-        f"type:{lane if lane in ('feature', 'bug', 'process') else 'feature'}",
+        f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'feature'}",
         f"module:{_module_slug(module)}",
         "stage:proposal",
         _proposal_status_label(str(doc.get("status") or "")),
@@ -1616,7 +1739,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
     labels = [
         "teamos",
         "source:self-upgrade",
-        f"type:{lane if lane in ('feature', 'bug', 'process') else 'bug'}",
+        f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'bug'}",
         f"module:{_module_slug(module)}",
         _task_issue_stage_label(doc),
         _version_label(str(finding.version_bump or "")),
@@ -1624,7 +1747,9 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
     milestone_doc = doc.get("self_upgrade_milestone") or {}
     if not isinstance(milestone_doc, dict):
         milestone_doc = {}
-    milestone_title = str(milestone_doc.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
+    milestone_title = ""
+    if lane in ("feature", "bug"):
+        milestone_title = str(milestone_doc.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
     if milestone_title:
         labels.append(f"milestone:{_module_slug(milestone_title)}")
     return sorted({str(x).strip() for x in labels if str(x).strip()})
@@ -1675,16 +1800,18 @@ def _task_issue_milestone_lines(doc: dict[str, Any], *, finding: UpgradeFinding)
     milestone = doc.get("self_upgrade_milestone") or {}
     if not isinstance(milestone, dict):
         milestone = {}
-    milestone_title = str(milestone.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
+    milestone_title = ""
+    if str(finding.lane or "").strip().lower() in ("feature", "bug"):
+        milestone_title = str(milestone.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
     lines = [
         f"- 里程碑角色: {role_display_zh(str(milestone.get('manager_role') or ROLE_MILESTONE_MANAGER))} ({str(milestone.get('manager_role') or ROLE_MILESTONE_MANAGER)})",
         f"- 发布线: {str(milestone.get('release_line') or _release_line_for_finding(finding) or '(无)')}",
         f"- 当前状态: {str(milestone.get('state') or 'draft')}",
         f"- 目标版本: {str(milestone.get('target_version') or finding.target_version or '')}",
-        f"- GitHub Milestone: {milestone_title or '(无)'}",
+        f"- GitHub Milestone: {milestone_title or '(不适用)'}",
     ]
     if int(milestone.get("github_milestone_number") or 0) > 0:
-        lines[-1] = f"- GitHub Milestone: {milestone_title or '(无)'} (#{int(milestone.get('github_milestone_number') or 0)})"
+        lines[-1] = f"- GitHub Milestone: {milestone_title or '(不适用)'} (#{int(milestone.get('github_milestone_number') or 0)})"
     if str(milestone.get("release_issue_url") or "").strip():
         issue_number = int(milestone.get("release_issue_number") or 0)
         issue_text = f"#{issue_number}" if issue_number > 0 else str(milestone.get("release_issue_url") or "").strip()
@@ -2076,7 +2203,7 @@ def _update_proposal_record(
 
 
 def _proposal_issue_title(doc: dict[str, Any]) -> str:
-    title = str(doc.get("title") or "未命名功能提案").strip()
+    title = str(doc.get("title") or "未命名改进提案").strip()
     module = _proposal_module(doc)
     lane = str(doc.get("lane") or "feature").strip().lower() or "feature"
     return f"[{_issue_type_token(lane)}][{module}] {title}".strip()
@@ -2084,14 +2211,16 @@ def _proposal_issue_title(doc: dict[str, Any]) -> str:
 
 def _proposal_issue_body(doc: dict[str, Any]) -> str:
     module = _proposal_module(doc)
+    lane = str(doc.get("lane") or "feature").strip().lower() or "feature"
     milestone_title = ""
-    if str(doc.get("status") or "").strip().upper() == "MATERIALIZED":
+    if lane in ("feature", "bug") and str(doc.get("status") or "").strip().upper() == "MATERIALIZED":
         milestone_title = _milestone_title_for_target_version(str(doc.get("target_version") or ""))
     lines = [
         _proposal_issue_marker(doc),
-        "# 功能提案讨论",
+        "# 改进提案讨论",
         "",
         f"- 提案 ID: {doc.get('proposal_id') or ''}",
+        f"- 类型: {_issue_type_token(lane)}",
         f"- Module: {module}",
         f"- 仓库定位: {doc.get('repo_locator') or ''}",
         f"- 当前状态: {doc.get('status') or ''}",
@@ -2259,20 +2388,20 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
     }
     agent = Agent(
         role=ROLE_ISSUE_DISCUSSION_AGENT,
-        goal="Respond to feature proposal questions, clarify scope, and update the proposal without starting development until the user confirms.",
-        backstory="You act like the PM-side feature discussion owner. You answer questions, tighten the feature shape, and only approve development when the user is explicit.",
+        goal="Respond to improvement proposal questions, clarify scope, and update the proposal without starting development until the user confirms.",
+        backstory="You act like the PM-side proposal discussion owner. You answer questions, tighten the proposal, and only approve development when the user is explicit.",
         llm=llm,
         allow_delegation=False,
         verbose=verbose,
     )
     task = Task(
-        name="reply_to_feature_proposal_discussion",
+        name="reply_to_improvement_proposal_discussion",
         description=(
             "Read the proposal and the latest user comments.\n"
             "Return JSON matching ProposalDiscussionResponse.\n"
             "Rules:\n"
             "- If the user is only asking questions or suggesting changes, keep action=pending or hold.\n"
-            "- Only set action=approve when the user explicitly confirms the feature should proceed.\n"
+            "- Only set action=approve when the user explicitly confirms the proposal should proceed.\n"
             "- You may refine title, summary, version_bump, or module if the user feedback clearly changes the scope.\n"
             "- module must stay a single stable value such as Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Keep the reply concise and directly answer the user's latest questions.\n"
@@ -2297,7 +2426,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
 
 
 def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discussion_loop", verbose: bool = False) -> dict[str, Any]:
-    proposals = list_proposals(lane="feature")
+    proposals = [p for p in list_proposals() if str(p.get("lane") or "").strip().lower() in ("feature", "quality")]
     stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0}
     for proposal in proposals:
         status = str(proposal.get("status") or "").strip().upper()
@@ -3198,6 +3327,14 @@ def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str) -
             state="RUNNING",
             current_action="analyzing process telemetry",
         ),
+        ROLE_CODE_QUALITY_ANALYST: db.register_agent(
+            role_id=ROLE_CODE_QUALITY_ANALYST,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            task_id=task_id,
+            state="RUNNING",
+            current_action="reviewing code quality and cleanup opportunities",
+        ),
         ROLE_MILESTONE_MANAGER: db.register_agent(
             role_id=ROLE_MILESTONE_MANAGER,
             project_id=project_id,
@@ -3399,6 +3536,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     pending_proposals: list[dict[str, Any]] = []
     current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     for finding in plan.findings:
+        requires_confirmation = _lane_requires_user_confirmation(finding.lane) or bool(finding.requires_user_confirmation)
         work_items = list(finding.work_items or []) or _default_work_items(repo_root=repo_root, finding=finding)
         if finding.lane == "bug":
             for work_item in work_items:
@@ -3430,13 +3568,13 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             finding=finding,
             current_version=current_version,
         )
-        if finding.lane == "feature":
+        if requires_confirmation:
             proposal = _ensure_proposal_discussion_issue(proposal)
         proposal_id = str(proposal.get("proposal_id") or "")
         status = str(proposal.get("status") or "").strip().upper()
         due = _proposal_due(proposal)
         should_materialize = False
-        if finding.lane == "feature":
+        if requires_confirmation:
             should_materialize = status == "APPROVED" and due
         else:
             should_materialize = status not in ("REJECTED", "HOLD", "MATERIALIZED") and due

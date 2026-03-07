@@ -137,6 +137,8 @@ class BootstrapAndRunTests(unittest.TestCase):
                 self.mod, "_ensure_crewai_ready", return_value={"ok": True}
             ), mock.patch.object(
                 self.mod, "_run_self_upgrade_bootstrap", return_value={"ok": True}
+            ), mock.patch.object(
+                self.mod, "_read_self_upgrade_state", return_value={}
             ), mock.patch.object(self.mod, "_resume_tasks", return_value={"ok": True, "resumed": []}), mock.patch.object(
                 self.mod, "_status_snapshot", return_value={"ok": True}
             ), mock.patch.dict(os.environ, dict(os.environ), clear=True):
@@ -216,9 +218,6 @@ class BootstrapAndRunTests(unittest.TestCase):
             def fake_su_boot(*args, **kwargs):
                 _ = args, kwargs
                 calls.append("su_boot")
-                st = runtime_root / "state" / "self_upgrade_state.json"
-                st.parent.mkdir(parents=True, exist_ok=True)
-                st.write_text(json.dumps({"last_run": {"ts": "2026-02-28T00:00:00Z"}}, ensure_ascii=False), encoding="utf-8")
                 return {"ok": True, "applied_count": 0}
 
             def fake_resume(*args, **kwargs):
@@ -243,6 +242,8 @@ class BootstrapAndRunTests(unittest.TestCase):
                 self.mod, "_ensure_crewai_ready", side_effect=fake_crewai
             ), mock.patch.object(
                 self.mod, "_run_self_upgrade_bootstrap", side_effect=fake_su_boot
+            ), mock.patch.object(
+                self.mod, "_read_self_upgrade_state", return_value={"last_run": {"ts": "2026-02-28T00:00:00Z", "status": "DONE"}}
             ), mock.patch.object(self.mod, "_resume_tasks", side_effect=fake_resume), mock.patch.object(
                 self.mod, "_status_snapshot", side_effect=fake_snapshot
             ), mock.patch.dict(os.environ, dict(os.environ), clear=True):

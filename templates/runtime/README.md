@@ -56,6 +56,37 @@ cd team-os-runtime
 make down
 ```
 
+## 镜像化启动（推荐给新机器）
+
+如果只想指定数据库并直接拉镜像启动，不需要本地构建：
+
+```bash
+cd ../team-os
+./scripts/runtime_up_image.sh \
+  --db-url 'postgresql://user:password@host:5432/team_os'
+```
+
+默认会：
+
+- 初始化 `../team-os-runtime-image`
+- 生成/更新 `.env`
+- 写入 `TEAMOS_DB_URL`
+- 拉取 `ghcr.io/wangguanran/teamos-control-plane:main`
+- 启动 `docker-compose.image.yml`
+
+构建期和运行期网络是分离的：
+
+- 镜像构建默认不走代理
+- Node/npm/PyPI/apt 构建源默认指向国内镜像
+- runtime 容器联网单独由 `TEAMOS_RUNTIME_HTTP_PROXY` 等变量控制
+
+镜像化 runtime 默认：
+
+- 持久真相源使用 `TEAMOS_DB_URL`
+- 本地只保留 Docker volume 中的临时 workspace / cache / state
+- 继续复用宿主机 `${HOME}/.codex` 和 `${HOME}/.openclaw`
+- 不会隐式把镜像内 `/team-os` 快照当作默认 target 扫描；新部署会先空转等待 target 注册
+
 ## 日志与健康检查
 
 ```bash
@@ -68,6 +99,21 @@ Control Plane health：
 ```bash
 curl -fsS http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/healthz
 curl -fsS http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/status
+```
+
+注册一个 improvement target：
+
+```bash
+curl -fsS -X POST http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/improvement/targets \
+  -H 'content-type: application/json' \
+  -d '{
+    "project_id": "demo",
+    "target_id": "demo-team-os",
+    "display_name": "Demo Team OS",
+    "repo_url": "https://github.com/wangguanran/team-os.git",
+    "repo_locator": "wangguanran/team-os",
+    "workstream_id": "general"
+  }'
 ```
 
 Temporal UI：
@@ -85,9 +131,13 @@ curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
 ## Makefile
 
 - `make up` / `make down`
+- `make up-image` / `make down-image`
 - `make pull`
+- `make pull-image`
 - `make ps`
+- `make ps-image`
 - `make logs`
+- `make logs-image`
 - `make doctor`
 
 ## teamos CLI（在 team-os 仓库）

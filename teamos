@@ -949,17 +949,19 @@ def _runtime_root_for_repo(repo_root: Path) -> Path:
     return (repo_root.parent / "team-os-runtime").resolve()
 
 
-def _read_last_self_upgrade_run(repo_root: Path) -> dict[str, Any]:
-    state_path = _runtime_root_for_repo(repo_root) / "state" / "self_upgrade_state.json"
-    if not state_path.exists():
+def _read_last_self_upgrade_run(repo_root: Path, *, base_url: str = "") -> dict[str, Any]:
+    _ = repo_root
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
         return {}
     try:
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
+        status = _http_json("GET", url + "/v1/status")
     except Exception:
         return {}
-    if not isinstance(raw, dict):
+    su = status.get("self_upgrade") if isinstance(status, dict) else {}
+    if not isinstance(su, dict):
         return {}
-    last = raw.get("last_run")
+    last = su.get("last_run")
     return last if isinstance(last, dict) else {}
 
 
@@ -1026,7 +1028,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"focus.updated_at={focus.get('updated_at','')}")
     repo_root = _find_team_os_repo_root()
     if repo_root:
-        su = _read_last_self_upgrade_run(repo_root) or {}
+        su = _read_last_self_upgrade_run(repo_root, base_url=base) or {}
         if su.get("ts"):
             print(f"self_upgrade.last_run_at={su.get('ts')}")
             print(f"self_upgrade.status={su.get('status','')}")
@@ -2119,7 +2121,8 @@ def cmd_daemon_status(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    last = _read_last_self_upgrade_run(repo_root)
+    base, _ = _base_url(args)
+    last = _read_last_self_upgrade_run(repo_root, base_url=base)
     payload = {
         "legacy_self_improve_daemon": "removed",
         "runtime_state_root": str(_runtime_root_for_repo(repo_root) / "state"),

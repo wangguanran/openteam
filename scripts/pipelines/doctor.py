@@ -110,27 +110,16 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
 
 def _self_upgrade_check(repo_root: Path) -> dict[str, Any]:
     """
-    Best-effort local check for runtime-managed CrewAI self-upgrade state.
-    This is informational only and should not fail doctor by itself.
+    Best-effort runtime-state check for self-upgrade.
+    Persistent state now lives in the runtime DB / control-plane status, not local JSON files.
     """
     runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(repo_root.parent / "team-os-runtime")
     state_root = runtime_state_root(override=runtime_override)
-    state_path = state_root / "self_upgrade_state.json"
-    last_run: dict[str, Any] = {}
-    if state_path.exists():
-        try:
-            raw = json.loads(state_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict) and isinstance(raw.get("last_run"), dict):
-                last_run = raw.get("last_run") or {}
-        except Exception:
-            last_run = {}
-
     return {
         "ok": True,
         "runtime_state_root": str(state_root),
-        "state_path": str(state_path),
-        "state_exists": state_path.exists(),
-        "last_run": last_run,
+        "state_backend": "postgres" if str(os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite_or_runtime_db",
+        "last_run": {},
     }
 
 
@@ -232,6 +221,9 @@ def main(argv: list[str] | None = None) -> int:
         hz = _http_json(base + "/healthz", timeout_sec=5)
         st = _http_json(base + "/v1/status", timeout_sec=5)
         report["control_plane"].update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
+        if isinstance(st.get("self_upgrade"), dict):
+            report["self_upgrade"]["last_run"] = dict((st.get("self_upgrade") or {}).get("last_run") or {})
+            report["self_upgrade"]["control_plane_summary"] = st.get("self_upgrade") or {}
         trs = st.get("task_run_sync")
         if isinstance(trs, dict):
             report["control_plane"]["task_run_sync"] = trs
@@ -316,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             last = su.get("last_run") if isinstance(su.get("last_run"), dict) else {}
             print(
                 "self_upgrade: "
-                f"state_exists={str(bool(su.get('state_exists'))).lower()} "
+                f"backend={str(su.get('state_backend') or '').strip() or 'unknown'} "
                 f"status={str(last.get('status') or '').strip() or 'UNKNOWN'} "
                 f"ts={str(last.get('ts') or '').strip()}"
             )

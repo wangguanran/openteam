@@ -990,7 +990,7 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
 def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditResult) -> DeliveryAuditResult:
     lane = str(_task_lane(task_doc) or "bug").strip().lower() or "bug"
     classification = str(result.classification or lane).strip().lower()
-    if classification not in ("bug", "feature", "process"):
+    if classification not in ("bug", "feature", "process", "quality"):
         classification = lane
     closure = str(result.closure or ("ready" if result.approved else "needs_clarification")).strip().lower()
     if closure not in ("ready", "needs_clarification", "split_required", "duplicate", "misclassified", "rejected", "pending"):
@@ -1065,7 +1065,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
         description=(
             "Audit this self-upgrade execution issue before scheduling.\n"
             "Rules:\n"
-            "- Confirm whether the issue is really a bug, feature, or process item.\n"
+            "- Confirm whether the issue is really a bug, feature, quality, or process item.\n"
             "- Confirm whether the issue description is closed-loop enough to execute now.\n"
             "- If the issue is vague, duplicated, misclassified, or not worth doing, reject it.\n"
             "- Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.\n"

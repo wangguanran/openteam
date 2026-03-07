@@ -1,0 +1,15 @@
+.DS_Store
+.git
+.github/.DS_Store
+.team-os
+team-os-runtime
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.swp
+**/*.tmp
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/node_modules

@@ -18,7 +18,7 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 os.environ.setdefault("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "0")
 
-from app import crewai_self_upgrade, plan_store  # noqa: E402
+from app import crewai_self_upgrade, improvement_store, plan_store  # noqa: E402
 
 
 class _FakeDB:
@@ -126,52 +126,52 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 task_id="",
             )
 
-            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
-                "app.crewai_self_upgrade.kickoff_upgrade_plan",
-                return_value=(plan, {"task_outputs": [], "token_usage": {}}),
-            ), mock.patch(
-                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
-                return_value={"ok": True, "dry_run": True, "stats": {"created": 1}},
-            ), mock.patch(
-                "app.crewai_self_upgrade._ensure_issue_record",
-                side_effect=AssertionError("dry_run should not create issues"),
-            ), mock.patch(
-                "app.crewai_self_upgrade._ensure_task_record",
-                side_effect=AssertionError("dry_run should not create tasks"),
-            ):
-                out = crewai_self_upgrade.run_self_upgrade(
-                    db=db,
-                    spec=spec,
-                    actor="test",
-                    run_id="run-1",
-                    crewai_info={"importable": True},
-                )
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                with mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    return_value=(plan, {"task_outputs": [], "token_usage": {}}),
+                ), mock.patch(
+                    "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                    return_value={"ok": True, "dry_run": True, "stats": {"created": 1}},
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_issue_record",
+                    side_effect=AssertionError("dry_run should not create issues"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_task_record",
+                    side_effect=AssertionError("dry_run should not create tasks"),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-1",
+                        crewai_info={"importable": True},
+                    )
 
-            self.assertTrue(out["ok"])
-            self.assertTrue(out["dry_run"])
-            self.assertEqual(out["records"][0]["task_id"], "")
-            self.assertEqual(out["records"][0]["issue_url"], "")
-            self.assertTrue((runtime_root / "state" / "self_upgrade_state.json").exists())
+                self.assertTrue(out["ok"])
+                self.assertTrue(out["dry_run"])
+                self.assertEqual(out["records"][0]["task_id"], "")
+                self.assertEqual(out["records"][0]["issue_url"], "")
+                state = crewai_self_upgrade._read_state(out["target_id"])
+                self.assertEqual((state.get("last_run") or {}).get("status"), "DONE")
 
     def test_decide_proposal_updates_version_metadata(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"
             with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
-                crewai_self_upgrade._write_proposals_state(
+                improvement_store.upsert_proposal(
                     {
-                        "items": {
-                            "su-feature-demo": {
-                                "project_id": "teamos",
-                                "lane": "feature",
-                                "title": "Improve onboarding",
-                                "summary": "Ship a new onboarding dashboard.",
-                                "status": "PENDING_CONFIRMATION",
-                                "current_version": "1.2.3",
-                                "version_bump": "minor",
-                                "target_version": "1.3.0",
-                                "baseline_action": "new_baseline",
-                            }
-                        }
+                        "proposal_id": "su-feature-demo",
+                        "project_id": "teamos",
+                        "target_id": "teamos",
+                        "lane": "feature",
+                        "title": "Improve onboarding",
+                        "summary": "Ship a new onboarding dashboard.",
+                        "status": "PENDING_CONFIRMATION",
+                        "current_version": "1.2.3",
+                        "version_bump": "minor",
+                        "target_version": "1.3.0",
+                        "baseline_action": "new_baseline",
                     }
                 )
                 out = crewai_self_upgrade.decide_proposal(
@@ -264,37 +264,38 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 task_id="",
             )
 
-            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
-                "app.crewai_self_upgrade.kickoff_upgrade_plan",
-                return_value=(plan, {"task_outputs": [], "token_usage": {}}),
-            ), mock.patch(
-                "app.crewai_self_upgrade._ensure_proposal_discussion_issue",
-                side_effect=lambda proposal: {**proposal, "discussion_issue_number": 12, "discussion_issue_url": "https://example.com/issues/12"},
-            ), mock.patch(
-                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
-                return_value={"ok": True, "dry_run": False, "stats": {"updated": 0}},
-            ), mock.patch(
-                "app.crewai_self_upgrade._ensure_issue_record",
-                side_effect=AssertionError("feature proposals must not materialize before approval"),
-            ), mock.patch(
-                "app.crewai_self_upgrade._ensure_task_record",
-                side_effect=AssertionError("feature proposals must not materialize before approval"),
-            ):
-                out = crewai_self_upgrade.run_self_upgrade(
-                    db=db,
-                    spec=spec,
-                    actor="test",
-                    run_id="run-feature-pending",
-                    crewai_info={"importable": True},
-                )
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                with mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    return_value=(plan, {"task_outputs": [], "token_usage": {}}),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_proposal_discussion_issue",
+                    side_effect=lambda proposal: {**proposal, "discussion_issue_number": 12, "discussion_issue_url": "https://example.com/issues/12"},
+                ), mock.patch(
+                    "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                    return_value={"ok": True, "dry_run": False, "stats": {"updated": 0}},
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_issue_record",
+                    side_effect=AssertionError("feature proposals must not materialize before approval"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_task_record",
+                    side_effect=AssertionError("feature proposals must not materialize before approval"),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-feature-pending",
+                        crewai_info={"importable": True},
+                    )
 
-            self.assertTrue(out["ok"])
-            self.assertEqual(out["records"], [])
-            self.assertEqual(len(out["pending_proposals"]), 1)
-            self.assertEqual(out["pending_proposals"][0]["status"], "PENDING_CONFIRMATION")
-            self.assertEqual(out["pending_proposals"][0]["discussion_issue_url"], "https://example.com/issues/12")
-            proposals = json.loads((runtime_root / "state" / "self_upgrade_proposals.json").read_text(encoding="utf-8"))
-            self.assertEqual(len((proposals.get("items") or {}).keys()), 1)
+                self.assertTrue(out["ok"])
+                self.assertEqual(out["records"], [])
+                self.assertEqual(len(out["pending_proposals"]), 1)
+                self.assertEqual(out["pending_proposals"][0]["status"], "PENDING_CONFIRMATION")
+                self.assertEqual(out["pending_proposals"][0]["discussion_issue_url"], "https://example.com/issues/12")
+                proposals = improvement_store.list_proposals(target_id=out["target_id"])
+                self.assertEqual(len(proposals), 1)
 
     def test_run_self_upgrade_approved_feature_materializes_after_cooldown(self):
         db = _FakeDB()
@@ -345,6 +346,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
                 proposal = crewai_self_upgrade._upsert_proposal(
+                    target_id="teamos",
                     repo_root=repo,
                     repo_locator="foo/bar",
                     project_id="teamos",
@@ -352,9 +354,10 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                     current_version="0.1.0",
                 )
                 crewai_self_upgrade.decide_proposal(proposal_id=str(proposal["proposal_id"]), action="approve")
-                state = crewai_self_upgrade._read_proposals_state()
-                state["items"][proposal["proposal_id"]]["cooldown_until"] = "2026-01-01T00:00:00Z"
-                crewai_self_upgrade._write_proposals_state(state)
+                current = improvement_store.get_proposal(str(proposal["proposal_id"]))
+                assert current is not None
+                current["cooldown_until"] = "2026-01-01T00:00:00Z"
+                improvement_store.upsert_proposal(current)
 
                 with mock.patch(
                     "app.crewai_self_upgrade.kickoff_upgrade_plan",
@@ -377,39 +380,36 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                         crewai_info={"importable": True},
                     )
 
-                updated = crewai_self_upgrade._read_proposals_state()["items"][proposal["proposal_id"]]
+                updated = improvement_store.get_proposal(str(proposal["proposal_id"]))
 
             self.assertTrue(out["ok"])
             self.assertEqual(len(out["records"]), 1)
             self.assertEqual(out["records"][0]["task_id"], "TEAMOS-1234")
-            self.assertEqual(updated["status"], "MATERIALIZED")
+            self.assertEqual((updated or {})["status"], "MATERIALIZED")
 
     def test_reconcile_feature_discussions_approves_from_issue_comment(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"
             with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
-                crewai_self_upgrade._write_proposals_state(
+                improvement_store.upsert_proposal(
                     {
-                        "items": {
-                            "su-feature-demo": {
-                                "proposal_id": "su-feature-demo",
-                                "project_id": "teamos",
-                                "lane": "feature",
-                                "title": "Improve onboarding",
-                                "summary": "Ship a new onboarding dashboard.",
-                                "status": "PENDING_CONFIRMATION",
-                                "current_version": "1.2.3",
-                                "version_bump": "minor",
-                                "target_version": "1.3.0",
-                                "baseline_action": "new_baseline",
-                                "repo_locator": "foo/bar",
-                                "workstream_id": "general",
-                                "discussion_issue_number": 12,
-                                "discussion_issue_url": "https://example.com/issues/12",
-                                "discussion_last_comment_id": 0,
-                            }
-                        }
+                        "proposal_id": "su-feature-demo",
+                        "project_id": "teamos",
+                        "target_id": "teamos",
+                        "lane": "feature",
+                        "title": "Improve onboarding",
+                        "summary": "Ship a new onboarding dashboard.",
+                        "status": "PENDING_CONFIRMATION",
+                        "current_version": "1.2.3",
+                        "version_bump": "minor",
+                        "target_version": "1.3.0",
+                        "baseline_action": "new_baseline",
+                        "repo_locator": "foo/bar",
+                        "workstream_id": "general",
+                        "discussion_issue_number": 12,
+                        "discussion_issue_url": "https://example.com/issues/12",
+                        "discussion_last_comment_id": 0,
                     }
                 )
                 comment = SimpleNamespace(
@@ -434,13 +434,13 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 ):
                     out = crewai_self_upgrade.reconcile_feature_discussions(db=db, actor="test")
 
-                updated = crewai_self_upgrade._read_proposals_state()["items"]["su-feature-demo"]
+                updated = improvement_store.get_proposal("su-feature-demo")
 
             self.assertEqual(out["updated"], 1)
             self.assertEqual(out["replied"], 1)
-            self.assertEqual(updated["status"], "APPROVED")
-            self.assertEqual(updated["discussion_last_comment_id"], 101)
-            self.assertFalse(updated["awaiting_user_reply"])
+            self.assertEqual((updated or {})["status"], "APPROVED")
+            self.assertEqual((updated or {})["discussion_last_comment_id"], 101)
+            self.assertFalse((updated or {})["awaiting_user_reply"])
 
     def test_proposal_issue_template_is_chinese(self):
         doc = {
@@ -468,7 +468,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         labels = crewai_self_upgrade._proposal_issue_labels(doc)
 
         self.assertEqual(title, "[Feature][Runtime] 运行时启动预检")
-        self.assertIn("# 功能提案讨论", body)
+        self.assertIn("# 改进提案讨论", body)
         self.assertIn("## 如何回复", body)
         self.assertIn("功能编码 Agent", body)
         self.assertIn("- Module: Runtime", body)
@@ -484,6 +484,46 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 "version:minor",
             ],
         )
+
+    def test_quality_lane_uses_quality_titles_and_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                finding = crewai_self_upgrade.UpgradeFinding(
+                    kind="CODE_QUALITY",
+                    lane="quality",
+                    title="删除未引用的旧启动适配层",
+                    summary="清理当前已经没有调用路径的旧适配文件，并抽取公共启动检查逻辑。",
+                    module="Runtime",
+                    rationale="旧适配层已经和当前入口脱节，继续保留会增加维护成本。",
+                    impact="MED",
+                    workstream_id="general",
+                    files=["templates/runtime/orchestrator/app/main.py", "templates/runtime/orchestrator/app/legacy_startup.py"],
+                    version_bump="none",
+                    target_version="0.1.0",
+                )
+                normalized = crewai_self_upgrade._coerce_plan(
+                    SimpleNamespace(to_dict=lambda: crewai_self_upgrade.UpgradePlan(summary="quality", findings=[finding]).model_dump()),
+                    max_findings=3,
+                    repo_root=Path("/tmp/team-os"),
+                    current_version="0.1.0",
+                )
+                proposal = crewai_self_upgrade._upsert_proposal(
+                    target_id="teamos",
+                    repo_root=Path("/tmp/team-os"),
+                    repo_locator="foo/bar",
+                    project_id="teamos",
+                    finding=normalized.findings[0],
+                    current_version="0.1.0",
+                )
+
+            self.assertEqual(normalized.findings[0].kind, "CODE_QUALITY")
+            self.assertEqual(normalized.findings[0].lane, "quality")
+            self.assertTrue(normalized.findings[0].requires_user_confirmation)
+            self.assertEqual(normalized.findings[0].version_bump, "none")
+            self.assertEqual(normalized.findings[0].work_items[0].owner_role, crewai_self_upgrade.ROLE_CODE_QUALITY_AGENT)
+            self.assertEqual(crewai_self_upgrade._proposal_issue_title(proposal), "[Quality][Runtime] 删除未引用的旧启动适配层")
+            self.assertIn("type:quality", crewai_self_upgrade._proposal_issue_labels(proposal))
 
     def test_task_issue_template_is_chinese(self):
         finding = crewai_self_upgrade.UpgradeFinding(

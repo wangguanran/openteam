@@ -1,0 +1,126 @@
+name: Runtime Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/runtime-image.yml"
+      - ".dockerignore"
+      - "docker/runtime-control-plane.Dockerfile"
+      - "templates/runtime/**"
+      - "roles/**"
+      - "workflows/**"
+      - "scripts/**"
+      - "teamos"
+      - "AGENTS.md"
+      - "README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/runtime-image.yml"
+      - ".dockerignore"
+      - "docker/runtime-control-plane.Dockerfile"
+      - "templates/runtime/**"
+      - "roles/**"
+      - "workflows/**"
+      - "scripts/**"
+      - "teamos"
+      - "AGENTS.md"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/teamos-control-plane
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r templates/runtime/orchestrator/requirements.txt
+
+      - name: Run runtime unit tests
+        env:
+          TEAMOS_SELF_UPGRADE_AUTO: "0"
+        run: |
+          python -m unittest \
+            tests.test_crewai_runtime \
+            tests.test_crewai_orchestrator \
+            tests.test_crewai_self_upgrade \
+            tests.test_panel_github_sync \
+            tests.test_improvement_store \
+            tests.test_openclaw_reporter \
+            tests.test_bootstrap_and_run
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build and push runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/runtime-control-plane.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
+            TEAMOS_CREWAI_GIT_REF=main
+            TEAMOS_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
+            TEAMOS_NPM_REGISTRY=https://registry.npmmirror.com
+            TEAMOS_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
+            TEAMOS_APT_SECURITY_MIRROR_URL=https://mirrors.ustc.edu.cn/debian-security
+            TEAMOS_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+            TEAMOS_PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
