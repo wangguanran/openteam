@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from pydantic import BaseModel
+
 
 def _add_template_app_to_syspath() -> None:
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -31,6 +33,27 @@ class CodexLLMTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIn("auth.json", msg)
+
+    def test_codex_exec_structured_writes_schema_and_returns_json(self):
+        class DemoSchema(BaseModel):
+            ok: bool
+
+        captured: dict[str, str] = {}
+
+        def _fake_exec_json(*, prompt: str, schema_path: str, timeout_sec: int = 90, model: str | None = None):
+            captured["prompt"] = prompt
+            captured["schema_path"] = schema_path
+            captured["model"] = model or ""
+            schema_text = Path(schema_path).read_text(encoding="utf-8")
+            self.assertIn('"title": "DemoSchema"', schema_text)
+            return codex_llm.CodexResult(data={"ok": True}, raw_text='{"ok":true}')
+
+        with mock.patch("app.codex_llm.codex_exec_json", side_effect=_fake_exec_json):
+            out = codex_llm.codex_exec_structured(prompt="demo", schema=DemoSchema.model_json_schema(), model="openai-codex/gpt-5.3-codex")
+
+        self.assertEqual(out.data, {"ok": True})
+        self.assertEqual(captured["prompt"], "demo")
+        self.assertEqual(captured["model"], "openai-codex/gpt-5.3-codex")
 
 
 if __name__ == "__main__":

@@ -15,10 +15,14 @@ from pydantic import BaseModel, Field
 from . import crewai_runtime
 from . import crewai_self_upgrade as planning
 from . import workspace_store
-from .github_issues_bus import GitHubAuthError, GitHubIssuesBusError, update_issue
+from .github_issues_bus import GitHubAuthError, GitHubIssuesBusError, get_issue, update_issue
 
 
 class DeliveryError(RuntimeError):
+    pass
+
+
+class DeliveryMergeConflictError(DeliveryError):
     pass
 
 
@@ -40,6 +44,25 @@ class DeliveryQAResult(BaseModel):
     summary: str = ""
     commands: list[str] = Field(default_factory=list)
     failures: list[str] = Field(default_factory=list)
+
+
+class DeliveryAuditResult(BaseModel):
+    approved: bool = False
+    classification: str = "bug"
+    closure: str = "pending"
+    worth_doing: bool = True
+    docs_required: bool = False
+    module: str = ""
+    summary: str = ""
+    feedback: list[str] = Field(default_factory=list)
+
+
+class DeliveryDocumentationResult(BaseModel):
+    approved: bool = False
+    updated: bool = False
+    summary: str = ""
+    changed_files: list[str] = Field(default_factory=list)
+    followups: list[str] = Field(default_factory=list)
 
 
 _SAFE_TEST_PREFIXES = (
@@ -277,6 +300,39 @@ def _issue_url(doc: dict[str, Any]) -> str:
     return str(links.get("issue") or "").strip()
 
 
+def _documentation_policy(doc: dict[str, Any]) -> dict[str, Any]:
+    raw = doc.get("documentation_policy")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _issue_snapshot(doc: dict[str, Any]) -> dict[str, Any]:
+    repo = doc.get("repo") or {}
+    if not isinstance(repo, dict):
+        repo = {}
+    issue_url = _issue_url(doc)
+    issue_number = 0
+    match = re.search(r"/issues/(\d+)(?:$|[?#])", issue_url)
+    if match:
+        try:
+            issue_number = int(match.group(1))
+        except Exception:
+            issue_number = 0
+    if issue_number <= 0 or not str(repo.get("locator") or "").strip():
+        return {"number": 0, "url": issue_url, "title": "", "body": "", "state": "", "labels": []}
+    try:
+        issue = get_issue(str(repo.get("locator") or "").strip(), issue_number)
+        return {
+            "number": int(issue.number),
+            "url": str(issue.url or issue_url),
+            "title": str(issue.title or ""),
+            "body": str(issue.body or ""),
+            "state": str(issue.state or ""),
+            "labels": list(issue.labels or []),
+        }
+    except (GitHubAuthError, GitHubIssuesBusError):
+        return {"number": issue_number, "url": issue_url, "title": "", "body": "", "state": "", "labels": []}
+
+
 def _append_markdown(logs_dir: Path, filename: str, heading: str, lines: list[str]) -> None:
     logs_dir.mkdir(parents=True, exist_ok=True)
     path = logs_dir / filename
@@ -426,6 +482,26 @@ def _close_issue_if_possible(doc: dict[str, Any]) -> str:
         return issue_url
 
 
+def _looks_like_merge_conflict(detail: str) -> bool:
+    text = str(detail or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "non-fast-forward",
+        "failed to push some refs",
+        "fetch first",
+        "[rejected]",
+        "unmerged files",
+        "fix conflicts",
+        "merge conflict",
+        "merge conflicts",
+        "conflict (content)",
+        "could not apply",
+        "rebase in progress",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _update_task_state(
     ledger_path: Path,
     doc: dict[str, Any],
@@ -469,6 +545,17 @@ def _update_task_state(
             roles.append(owner_role)
         doc["roles_involved"] = roles
     _write_yaml(ledger_path, doc)
+    try:
+        sync_out = planning.sync_task_issue_from_doc(doc)
+        if sync_out.get("ok") and str(sync_out.get("url") or "").strip():
+            links = doc.get("links") or {}
+            if not isinstance(links, dict):
+                links = {}
+            links["issue"] = str(sync_out.get("url") or "").strip()
+            doc["links"] = links
+            _write_yaml(ledger_path, doc)
+    except Exception:
+        pass
     return doc
 
 
@@ -745,8 +832,9 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
         ensure_ascii=False,
         indent=2,
     )
+    lane = planning._task_lane(task_doc) if hasattr(planning, "_task_lane") else str((((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("lane")) or "bug")
     agent = Agent(
-        role=str(task_doc.get("owner_role") or "Coding-Agent"),
+        role=str(task_doc.get("owner_role") or planning._coding_owner_role(lane)),
         goal="Implement the approved self-upgrade task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         llm=llm,
@@ -795,7 +883,7 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
         indent=2,
     )
     agent = Agent(
-        role=str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("review_role")) or "Review-Agent"),
+        role=str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT),
         goal="Review the current task diff and reject anything outside scope, under-tested, or inconsistent with the task contract.",
         backstory="You are a strict code reviewer. You care about scope discipline, testability, and acceptance coverage.",
         llm=llm,
@@ -842,7 +930,7 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
         indent=2,
     )
     agent = Agent(
-        role=str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("qa_role")) or "QA-Agent"),
+        role=str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT),
         goal="Run the declared validation commands and confirm the task meets its acceptance criteria before release.",
         backstory="You are the QA gate. If tests fail or acceptance is weak, you block release and send the task back.",
         llm=llm,
@@ -866,6 +954,148 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
     return DeliveryQAResult.model_validate(out.model_dump())
 
 
+def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditResult) -> DeliveryAuditResult:
+    lane = str(_task_lane(task_doc) or "bug").strip().lower() or "bug"
+    classification = str(result.classification or lane).strip().lower()
+    if classification not in ("bug", "feature", "process"):
+        classification = lane
+    closure = str(result.closure or ("ready" if result.approved else "needs_clarification")).strip().lower()
+    if closure not in ("ready", "needs_clarification", "split_required", "duplicate", "misclassified", "rejected", "pending"):
+        closure = "ready" if result.approved else "needs_clarification"
+    approved = bool(result.approved)
+    worth_doing = bool(result.worth_doing)
+    feedback = [str(x).strip() for x in (result.feedback or []) if str(x).strip()]
+    if classification != lane and closure == "ready":
+        closure = "misclassified"
+        approved = False
+        feedback.append(f"当前 issue 更像 {_task_lane(task_doc)} 之外的 `{classification}`，需要先重新分类。")
+    if not worth_doing and closure == "ready":
+        closure = "rejected"
+        approved = False
+        feedback.append("审计认为该问题当前不值得进入开发。")
+    if closure != "ready":
+        approved = False
+    if not feedback and not approved:
+        feedback.append("Issue 审计未通过，需要补充描述或重新分类。")
+    return DeliveryAuditResult(
+        approved=approved,
+        classification=classification,
+        closure=closure,
+        worth_doing=worth_doing,
+        docs_required=bool(result.docs_required),
+        module=str(result.module or "").strip(),
+        summary=str(result.summary or "").strip(),
+        feedback=feedback,
+    )
+
+
+def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryAuditResult:
+    crewai_runtime.require_crewai_importable()
+    from crewai import Agent
+
+    allowed_paths = _allowed_paths(task_doc)
+    tests_allowlist = _tests_allowlist(task_doc)
+    tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
+    llm = planning._crewai_llm()
+    issue_snapshot = _issue_snapshot(task_doc)
+    doc_policy = _documentation_policy(task_doc)
+    blob = json.dumps(
+        {
+            "task_id": task_doc.get("id") or "",
+            "title": task_doc.get("title") or "",
+            "current_lane": _task_lane(task_doc),
+            "module": str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("module")) or ""),
+            "summary": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("rationale") or "",
+            "allowed_paths": allowed_paths,
+            "tests": tests_allowlist,
+            "acceptance": _acceptance_items(task_doc),
+            "documentation_policy": doc_policy,
+            "issue": issue_snapshot,
+            "git_status": _git_status_text(worktree_root),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    agent = Agent(
+        role=planning.ROLE_ISSUE_AUDIT_AGENT,
+        goal="Audit the issue before scheduling any coding work, confirm the classification, and reject work that is not closed-loop enough to execute.",
+        backstory="You are the delivery audit gate. You stop vague, duplicate, misclassified, or low-value issues before the scheduler dispatches engineering work.",
+        llm=llm,
+        tools=tools["read"],
+        allow_delegation=False,
+        verbose=verbose,
+    )
+    out = _kickoff_task_output(
+        agent=agent,
+        name="audit_self_upgrade_issue",
+        description=(
+            "Audit this self-upgrade execution issue before scheduling.\n"
+            "Rules:\n"
+            "- Confirm whether the issue is really a bug, feature, or process item.\n"
+            "- Confirm whether the issue description is closed-loop enough to execute now.\n"
+            "- If the issue is vague, duplicated, misclassified, or not worth doing, reject it.\n"
+            "- Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.\n"
+            "- docs_required should be true when README/runbook/changelog/operator docs need to be updated.\n"
+            "- Keep summary and feedback in 简体中文.\n\n"
+            f"Task context:\n{blob}"
+        ),
+        expected_output="A structured JSON audit decision.",
+        model_cls=DeliveryAuditResult,
+        verbose=verbose,
+    )
+    return _normalize_audit_result(task_doc=task_doc, result=DeliveryAuditResult.model_validate(out.model_dump()))
+
+
+def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryDocumentationResult:
+    crewai_runtime.require_crewai_importable()
+    from crewai import Agent
+
+    policy = _documentation_policy(task_doc)
+    docs_paths = [str(x).strip() for x in (policy.get("allowed_paths") or []) if str(x).strip()]
+    llm = planning._crewai_llm()
+    tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=docs_paths, tests_allowlist=[])
+    blob = json.dumps(
+        {
+            "task_id": task_doc.get("id") or "",
+            "title": task_doc.get("title") or "",
+            "summary": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("rationale") or "",
+            "issue_url": _issue_url(task_doc),
+            "documentation_policy": policy,
+            "git_status": _git_status_text(worktree_root),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    agent = Agent(
+        role=str(policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT),
+        goal="Update the repository documentation, operator runbooks, and release notes required by the validated issue before release.",
+        backstory="You are the documentation gate. You only edit approved documentation paths, keep language precise, and ensure the written docs match the actual delivered behavior.",
+        llm=llm,
+        tools=tools["write"],
+        allow_delegation=False,
+        verbose=verbose,
+    )
+    out = _kickoff_task_output(
+        agent=agent,
+        name="document_self_upgrade_task",
+        description=(
+            "Update documentation for this self-upgrade task.\n"
+            "Rules:\n"
+            "- Edit only documentation paths listed in documentation_policy.allowed_paths.\n"
+            "- Keep user-facing natural language in 简体中文.\n"
+            "- If no documentation change is required, set approved=true and updated=false with a clear summary.\n"
+            "- If documentation is required but you cannot complete it, set approved=false and explain why.\n\n"
+            f"Task context:\n{blob}"
+        ),
+        expected_output="A structured JSON documentation decision.",
+        model_cls=DeliveryDocumentationResult,
+        verbose=verbose,
+    )
+    return DeliveryDocumentationResult.model_validate(out.model_dump())
+
+
 def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root: Path) -> dict[str, Any]:
     task_id = str(task_doc.get("id") or ledger_path.stem).strip()
     allowed_paths = _allowed_paths(task_doc)
@@ -881,6 +1111,8 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
     add_out = _run(add_cmd, cwd=worktree_root, timeout_sec=60)
     if int(add_out.get("returncode", 1)) != 0:
         detail = str(add_out.get("stderr") or add_out.get("stdout") or "").strip()[:500]
+        if _looks_like_merge_conflict(detail):
+            raise DeliveryMergeConflictError(f"git add failed: {detail}")
         raise DeliveryError(f"git add failed: {detail}")
     staged = _run(["git", "-C", str(worktree_root), "diff", "--cached", "--name-only"], cwd=worktree_root, timeout_sec=30)
     staged_files = [str(x).strip() for x in str(staged.get("stdout") or "").splitlines() if str(x).strip()]
@@ -889,6 +1121,8 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
     commit_out = _run(["git", "-C", str(worktree_root), "commit", "-m", commit_message], cwd=worktree_root, timeout_sec=120)
     if int(commit_out.get("returncode", 1)) != 0:
         detail = str(commit_out.get("stderr") or commit_out.get("stdout") or "").strip()[:500]
+        if _looks_like_merge_conflict(detail):
+            raise DeliveryMergeConflictError(f"git commit failed: {detail}")
         raise DeliveryError(f"git commit failed: {detail}")
     sha_out = _run(["git", "-C", str(worktree_root), "rev-parse", "HEAD"], cwd=worktree_root, timeout_sec=30)
     commit_sha = str(sha_out.get("stdout") or "").strip()
@@ -899,6 +1133,8 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
     push_out = _run(["git", "-C", str(worktree_root), "push", "-u", "origin", branch_name], cwd=worktree_root, timeout_sec=180)
     if int(push_out.get("returncode", 1)) != 0:
         detail = str(push_out.get("stderr") or push_out.get("stdout") or "").strip()[:500]
+        if _looks_like_merge_conflict(detail):
+            raise DeliveryMergeConflictError(f"git push failed: {detail}")
         raise DeliveryError(f"git push failed: {detail}")
     pr_url = ""
     gh_auth = _run(["gh", "auth", "status", "-h", "github.com"], cwd=worktree_root, timeout_sec=30)
@@ -936,14 +1172,18 @@ def _register_delivery_agents(*, db: Any, task_doc: dict[str, Any]) -> dict[str,
     execution_policy = task_doc.get("execution_policy") or {}
     if not isinstance(execution_policy, dict):
         execution_policy = {}
-    owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or "Coding-Agent").strip() or "Coding-Agent"
-    review_role = str(execution_policy.get("review_role") or "Review-Agent").strip() or "Review-Agent"
-    qa_role = str(execution_policy.get("qa_role") or "QA-Agent").strip() or "QA-Agent"
+    lane = _task_lane(task_doc)
+    owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or planning._coding_owner_role(lane)).strip() or planning._coding_owner_role(lane)
+    review_role = str(execution_policy.get("review_role") or planning.ROLE_REVIEW_AGENT).strip() or planning.ROLE_REVIEW_AGENT
+    qa_role = str(execution_policy.get("qa_role") or planning.ROLE_QA_AGENT).strip() or planning.ROLE_QA_AGENT
+    documentation_role = str(execution_policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT).strip() or planning.ROLE_DOCUMENTATION_AGENT
     return {
         "Scheduler-Agent": db.register_agent(role_id="Scheduler-Agent", project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="RUNNING", current_action="dispatching self-upgrade task"),
+        planning.ROLE_ISSUE_AUDIT_AGENT: db.register_agent(role_id=planning.ROLE_ISSUE_AUDIT_AGENT, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for issue audit"),
         owner_role: db.register_agent(role_id=owner_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for coding"),
         review_role: db.register_agent(role_id=review_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for review"),
         qa_role: db.register_agent(role_id=qa_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for QA"),
+        documentation_role: db.register_agent(role_id=documentation_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for docs sync"),
         "Release-Agent": db.register_agent(role_id="Release-Agent", project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for release"),
         "Process-Metrics-Agent": db.register_agent(role_id="Process-Metrics-Agent", project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="RUNNING", current_action="collecting delivery telemetry"),
     }
@@ -980,6 +1220,18 @@ def _emit_event(db: Any, *, event_type: str, actor: str, task_doc: dict[str, Any
         pass
 
 
+def _resume_feedback(doc: dict[str, Any]) -> list[str]:
+    execution = _execution_state(doc)
+    feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
+    status = _current_status(doc)
+    last_error = str(execution.get("last_error") or "").strip()
+    if status == "merge_conflict" and last_error:
+        note = f"Resolve merge conflict before release: {last_error}"
+        if note not in feedback:
+            feedback.append(note)
+    return feedback
+
+
 def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[str, Any], dry_run: bool = False, force: bool = False) -> dict[str, Any]:
     task_id = str(doc.get("id") or ledger_path.stem).strip()
     source_repo_root = _source_repo_root(doc)
@@ -987,28 +1239,157 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
     status = _current_status(doc)
     if status in ("closed",) and not force:
         return {"ok": True, "task_id": task_id, "skipped": True, "reason": "task_already_closed"}
-    if status == "blocked" and not force:
+    if status in ("blocked", "needs_clarification") and not force:
         return {"ok": True, "task_id": task_id, "skipped": True, "reason": "task_blocked"}
 
     project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     workstream_id = str(doc.get("workstream_id") or "general").strip() or "general"
-    owner_role = str(doc.get("owner_role") or "Coding-Agent").strip() or "Coding-Agent"
-    review_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role")) or "Review-Agent")
-    qa_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("qa_role")) or "QA-Agent")
+    lane = _task_lane(doc)
+    owner_role = str(doc.get("owner_role") or planning._coding_owner_role(lane)).strip() or planning._coding_owner_role(lane)
+    review_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
+    qa_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
+    documentation_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("documentation_role")) or planning.ROLE_DOCUMENTATION_AGENT)
     verbose = _env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0")
     max_attempts = max(1, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS", "2") or "2"))
     ship_enabled = _env_truthy("TEAMOS_SELF_UPGRADE_SHIP_ENABLED", "1")
 
     doc, worktree_root, _ = _ensure_task_worktree(ledger_path, doc)
     agent_ids = _register_delivery_agents(db=db, task_doc=doc)
-    _update_task_state(ledger_path, doc, status="doing", stage="coding", owner_role=owner_role, extra_execution={"last_error": "", "last_feedback": []})
+    prior_status = status
     _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
     _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
     _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
+    audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+    if force or str(audit_doc.get("status") or "").strip().lower() != "approved":
+        doc = _update_task_state(
+            ledger_path,
+            doc,
+            status="doing",
+            stage="audit",
+            owner_role=owner_role,
+            extra_execution={"active_role": planning.ROLE_ISSUE_AUDIT_AGENT},
+        )
+        _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="RUNNING", action="auditing issue before scheduling")
+        audit_result = _run_issue_audit_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+        doc = _load_yaml(ledger_path)
+        audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+        audit_doc.update(
+            {
+                "status": "approved" if audit_result.approved else audit_result.closure,
+                "classification": audit_result.classification,
+                "module": str(audit_result.module or audit_doc.get("module") or ""),
+                "worth_doing": bool(audit_result.worth_doing),
+                "closure": audit_result.closure,
+                "docs_required": bool(audit_result.docs_required),
+                "summary": str(audit_result.summary or "").strip(),
+                "feedback": [str(x).strip() for x in (audit_result.feedback or []) if str(x).strip()],
+                "audit_role": planning.ROLE_ISSUE_AUDIT_AGENT,
+                "updated_at": _utc_now_iso(),
+                "approved_at": _utc_now_iso() if audit_result.approved else str(audit_doc.get("approved_at") or ""),
+                "issue_title_snapshot": str((_issue_snapshot(doc).get("title") or "")),
+            }
+        )
+        doc["self_upgrade_audit"] = audit_doc
+        doc_policy = _documentation_policy(doc)
+        doc_policy.update(
+            {
+                "required": bool(audit_result.docs_required or doc_policy.get("required")),
+                "status": str(doc_policy.get("status") or ("pending" if bool(audit_result.docs_required or doc_policy.get("required")) else "not_required")),
+                "documentation_role": str(doc_policy.get("documentation_role") or documentation_role or planning.ROLE_DOCUMENTATION_AGENT),
+                "updated_at": _utc_now_iso(),
+            }
+        )
+        if not bool(doc_policy.get("required")):
+            doc_policy["status"] = "not_required"
+        doc["documentation_policy"] = doc_policy
+        if audit_result.approved:
+            doc = _update_task_state(
+                ledger_path,
+                doc,
+                status="doing",
+                stage="audit",
+                owner_role=owner_role,
+                extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
+            )
+            _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="DONE", action="issue audit approved")
+            _append_markdown(logs_dir, "02_plan.md", "Issue Audit", [audit_result.summary or "Issue 审计通过。", *[f"feedback: {x}" for x in audit_result.feedback]])
+            _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
+            _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
+        else:
+            blocked_status = "needs_clarification" if audit_result.closure in ("needs_clarification", "split_required", "duplicate", "misclassified", "pending") else "blocked"
+            doc = _update_task_state(
+                ledger_path,
+                doc,
+                status=blocked_status,
+                stage="needs_clarification" if blocked_status == "needs_clarification" else "audit",
+                owner_role=owner_role,
+                extra_execution={"active_role": planning.ROLE_ISSUE_AUDIT_AGENT, "last_error": str(audit_result.summary or audit_result.closure or "issue audit failed"), "last_feedback": audit_result.feedback},
+            )
+            _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="FAILED", action=f"issue audit {audit_result.closure}")
+            _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery waiting for issue clarification")
+            _append_markdown(logs_dir, "02_plan.md", "Issue Audit Blocked", [audit_result.summary or audit_result.closure, *[f"feedback: {x}" for x in audit_result.feedback]])
+            _append_metric(
+                logs_dir,
+                event_type="SELF_UPGRADE_ISSUE_AUDIT_BLOCKED",
+                actor=actor,
+                task_id=task_id,
+                project_id=project_id,
+                workstream_id=workstream_id,
+                message=f"issue audit blocked delivery: {audit_result.closure}",
+                payload=audit_result.model_dump(),
+                severity="WARN",
+            )
+            _emit_event(
+                db,
+                event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_BLOCKED",
+                actor=actor,
+                task_doc=doc,
+                payload={"task_id": task_id, **audit_result.model_dump()},
+            )
+            return {"ok": False, "task_id": task_id, "status": blocked_status, "feedback": audit_result.feedback, "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
 
-    feedback: list[str] = []
+    _update_task_state(
+        ledger_path,
+        doc,
+        status="doing",
+        stage="coding",
+        owner_role=owner_role,
+        extra_execution={"last_error": "" if status != "merge_conflict" else str((_execution_state(doc).get("last_error") or "")).strip(), "last_feedback": _resume_feedback(doc)},
+    )
+    if prior_status == "merge_conflict":
+        _append_markdown(logs_dir, "03_work.md", "Merge Conflict Recovery", ["Scheduler-Agent reassigned the task back to coding after a release-time merge conflict."])
+        _append_metric(
+            logs_dir,
+            event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
+            actor=actor,
+            task_id=task_id,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            message="merge conflict recovery resumed in coding stage",
+            payload={"task_id": task_id, "worktree": str(worktree_root)},
+        )
+        _emit_event(
+            db,
+            event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
+            actor=actor,
+            task_doc=doc,
+            payload={"task_id": task_id, "worktree": str(worktree_root)},
+        )
+
+    feedback: list[str] = _resume_feedback(doc)
+    last_audit = DeliveryAuditResult(
+        approved=True,
+        classification=str((audit_doc or {}).get("classification") or lane),
+        closure=str((audit_doc or {}).get("closure") or "ready"),
+        worth_doing=bool((audit_doc or {}).get("worth_doing", True)),
+        docs_required=bool((audit_doc or {}).get("docs_required", _documentation_policy(doc).get("required"))),
+        module=str((audit_doc or {}).get("module") or ""),
+        summary=str((audit_doc or {}).get("summary") or ""),
+        feedback=[str(x).strip() for x in ((audit_doc or {}).get("feedback") or []) if str(x).strip()],
+    )
     last_review = DeliveryReviewResult(approved=False)
     last_qa = DeliveryQAResult(approved=False)
+    last_docs = DeliveryDocumentationResult(approved=not bool(_documentation_policy(doc).get("required")), updated=False, summary="")
     try:
         for attempt in range(1, max_attempts + 1):
             doc = _load_yaml(ledger_path)
@@ -1052,12 +1433,119 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
                 continue
 
             doc = _load_yaml(ledger_path)
+            documentation_policy = _documentation_policy(doc)
+            docs_required = bool(documentation_policy.get("required"))
+            if docs_required:
+                doc = _update_task_state(ledger_path, doc, status="doing", stage="docs", owner_role=owner_role, extra_execution={"active_role": documentation_role})
+                _set_agent_state(db, agent_ids, documentation_role, state="RUNNING", action=f"updating documentation for attempt {attempt}")
+                last_docs = _run_documentation_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+                docs_paths = [str(x).strip() for x in (documentation_policy.get("allowed_paths") or []) if str(x).strip()]
+                if not last_docs.changed_files:
+                    changed_doc_files = [path for path in _changed_files(worktree_root) if _is_allowed_path(path, docs_paths)]
+                    if changed_doc_files:
+                        last_docs.changed_files = changed_doc_files[:50]
+                doc = _load_yaml(ledger_path)
+                documentation_policy = _documentation_policy(doc)
+                documentation_policy.update(
+                    {
+                        "status": "done" if last_docs.approved else "blocked",
+                        "required": True,
+                        "updated_at": _utc_now_iso(),
+                        "completed_at": _utc_now_iso() if last_docs.approved else str(documentation_policy.get("completed_at") or ""),
+                        "summary": str(last_docs.summary or "").strip(),
+                        "changed_files": [str(x).strip() for x in (last_docs.changed_files or []) if str(x).strip()],
+                        "followups": [str(x).strip() for x in (last_docs.followups or []) if str(x).strip()],
+                    }
+                )
+                doc["documentation_policy"] = documentation_policy
+                doc = _update_task_state(
+                    ledger_path,
+                    doc,
+                    status="doing" if last_docs.approved else "blocked",
+                    stage="docs" if not last_docs.approved else "docs",
+                    owner_role=owner_role,
+                    extra_execution={"active_role": documentation_role, "last_feedback": list(last_docs.followups or []), "last_error": "" if last_docs.approved else str(last_docs.summary or "documentation update blocked")},
+                )
+                _append_markdown(logs_dir, "05_release.md", f"Documentation Attempt {attempt}", [last_docs.summary or "(no summary)", *[f"changed_file: {x}" for x in last_docs.changed_files], *[f"followup: {x}" for x in last_docs.followups]])
+                _append_metric(logs_dir, event_type="SELF_UPGRADE_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}", payload=last_docs.model_dump())
+                _set_agent_state(db, agent_ids, documentation_role, state="DONE" if last_docs.approved else "FAILED", action=f"documentation attempt {attempt} {'approved' if last_docs.approved else 'blocked'}")
+                if not last_docs.approved:
+                    feedback = list(last_docs.followups or ([last_docs.summary] if last_docs.summary else ["documentation update blocked"]))
+                    break
+            else:
+                doc = _load_yaml(ledger_path)
+                documentation_policy = _documentation_policy(doc)
+                if documentation_policy:
+                    documentation_policy.update({"status": "not_required", "updated_at": _utc_now_iso()})
+                    doc["documentation_policy"] = documentation_policy
+                    doc = _update_task_state(ledger_path, doc, status="doing", stage="docs", owner_role=owner_role, extra_execution={"active_role": documentation_role})
+                _set_agent_state(db, agent_ids, documentation_role, state="DONE", action="documentation not required")
+
+            doc = _load_yaml(ledger_path)
             doc = _update_task_state(ledger_path, doc, status="release", stage="release", owner_role=owner_role, extra_execution={"active_role": "Release-Agent"})
             _set_agent_state(db, agent_ids, "Release-Agent", state="RUNNING", action="shipping validated task")
             if dry_run or not ship_enabled:
                 release_result = {"branch": _execution_state(doc).get("branch_name") or "", "base_branch": _execution_state(doc).get("base_branch") or "main", "commit_sha": "", "pull_request_url": "", "issue_url": _issue_url(doc), "staged_files": _changed_files(worktree_root)}
             else:
-                release_result = _release_task(task_doc=doc, ledger_path=ledger_path, worktree_root=worktree_root)
+                try:
+                    release_result = _release_task(task_doc=doc, ledger_path=ledger_path, worktree_root=worktree_root)
+                except DeliveryMergeConflictError as e:
+                    conflict_error = str(e)[:500]
+                    feedback = [conflict_error]
+                    doc = _load_yaml(ledger_path)
+                    execution = _execution_state(doc)
+                    merge_conflict_count = int(execution.get("merge_conflict_count") or 0) + 1
+                    doc = _update_task_state(
+                        ledger_path,
+                        doc,
+                        status="merge_conflict",
+                        stage="merge_conflict",
+                        owner_role=owner_role,
+                        extra_execution={
+                            "active_role": "Scheduler-Agent",
+                            "last_feedback": feedback,
+                            "last_error": conflict_error,
+                            "last_merge_conflict_at": _utc_now_iso(),
+                            "merge_conflict_count": merge_conflict_count,
+                        },
+                    )
+                    _set_agent_state(db, agent_ids, "Release-Agent", state="FAILED", action="merge conflict detected during release")
+                    _set_agent_state(db, agent_ids, "Scheduler-Agent", state="RUNNING", action="re-dispatching merge conflict back to coding")
+                    _append_markdown(logs_dir, "05_release.md", f"Merge Conflict Attempt {attempt}", [conflict_error])
+                    _append_metric(
+                        logs_dir,
+                        event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT",
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        message=f"merge conflict during release attempt {attempt}",
+                        payload={"error": conflict_error, "attempt": attempt, "owner_role": owner_role},
+                        severity="WARN",
+                    )
+                    _emit_event(
+                        db,
+                        event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT",
+                        actor=actor,
+                        task_doc=doc,
+                        payload={"task_id": task_id, "error": conflict_error, "attempt": attempt, "owner_role": owner_role},
+                    )
+                    if attempt >= max_attempts:
+                        break
+                    doc = _load_yaml(ledger_path)
+                    doc = _update_task_state(
+                        ledger_path,
+                        doc,
+                        status="doing",
+                        stage="coding",
+                        owner_role=owner_role,
+                        extra_execution={
+                            "active_role": owner_role,
+                            "last_feedback": feedback,
+                            "last_error": conflict_error,
+                        },
+                    )
+                    continue
             doc = _load_yaml(ledger_path)
             doc = _update_task_state(
                 ledger_path,
@@ -1071,6 +1559,8 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
                     "pull_request_url": str(release_result.get("pull_request_url") or ""),
                     "closed_at": _utc_now_iso(),
                     "issue_url": str(release_result.get("issue_url") or ""),
+                    "last_error": "",
+                    "last_feedback": [],
                 },
             )
             _set_agent_state(db, agent_ids, "Release-Agent", state="DONE", action="task released")
@@ -1085,7 +1575,7 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
         doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": blocked_reason})
         _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery blocked")
         _append_markdown(logs_dir, "07_retro.md", "Delivery Blocked", [blocked_reason, *[f"feedback: {x}" for x in feedback]])
-        _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_BLOCKED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery blocked", payload={"feedback": feedback, "review": last_review.model_dump(), "qa": last_qa.model_dump()}, severity="ERROR")
+        _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_BLOCKED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery blocked", payload={"feedback": feedback, "audit": last_audit.model_dump(), "review": last_review.model_dump(), "qa": last_qa.model_dump(), "documentation": last_docs.model_dump()}, severity="ERROR")
         _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_BLOCKED", actor=actor, task_doc=doc, payload={"task_id": task_id, "feedback": feedback})
         return {"ok": False, "task_id": task_id, "status": "blocked", "feedback": feedback, "worktree": str(worktree_root), "project_id": project_id}
     except Exception as e:
@@ -1217,6 +1707,8 @@ def delivery_summary() -> dict[str, Any]:
         "coding": len([t for t in tasks if str(t.get("status") or "") == "doing"]),
         "qa": len([t for t in tasks if str(t.get("status") or "") == "test"]),
         "release": len([t for t in tasks if str(t.get("status") or "") == "release"]),
+        "needs_clarification": len([t for t in tasks if str(t.get("status") or "") == "needs_clarification"]),
+        "merge_conflict": len([t for t in tasks if str(t.get("status") or "") == "merge_conflict"]),
         "blocked": len([t for t in tasks if str(t.get("status") or "") == "blocked"]),
         "closed": len([t for t in tasks if str(t.get("status") or "") == "closed"]),
     }
@@ -1232,7 +1724,7 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", task_id: st
     for task in candidates:
         if wanted_task_id and str(task.get("task_id") or "") != wanted_task_id:
             continue
-        if (not wanted_task_id) and str(task.get("status") or "") not in ("todo", "doing", "test", "release"):
+        if (not wanted_task_id) and str(task.get("status") or "") not in ("todo", "doing", "test", "release", "merge_conflict"):
             continue
         scanned += 1
         ledger_path = Path(str(task.get("ledger_path") or "")).expanduser().resolve()

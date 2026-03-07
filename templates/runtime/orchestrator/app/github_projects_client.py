@@ -276,6 +276,15 @@ mutation($projectId: ID!, $title: String!, $body: String) {
 """
 
 
+UPDATE_DRAFT_ISSUE_MUTATION = """
+mutation($draftIssueId: ID!, $title: String, $body: String) {
+  updateProjectV2DraftIssue(input: { draftIssueId: $draftIssueId, title: $title, body: $body }) {
+    draftIssue { id title body }
+  }
+}
+"""
+
+
 def pick_project_from_number_query(data: dict[str, Any], owner_type: str) -> Optional[dict[str, Any]]:
     owner_type = (owner_type or "").strip().upper()
     if owner_type == "ORG":

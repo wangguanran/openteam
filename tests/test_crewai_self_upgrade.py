@@ -16,6 +16,7 @@ def _add_template_app_to_syspath() -> None:
 
 
 _add_template_app_to_syspath()
+os.environ.setdefault("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "0")
 
 from app import crewai_self_upgrade  # noqa: E402
 
@@ -440,6 +441,180 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertEqual(updated["status"], "APPROVED")
             self.assertEqual(updated["discussion_last_comment_id"], 101)
             self.assertFalse(updated["awaiting_user_reply"])
+
+    def test_proposal_issue_template_is_chinese(self):
+        doc = {
+            "proposal_id": "su-feature-demo",
+            "repo_root": "/tmp/team-os",
+            "repo_locator": "foo/bar",
+            "module": "Runtime",
+            "status": "PENDING_CONFIRMATION",
+            "version_bump": "minor",
+            "target_version": "0.2.0",
+            "cooldown_until": "2026-03-07T02:00:00Z",
+            "title": "运行时启动预检",
+            "summary": "在开发前先完成运行时启动预检。",
+            "rationale": "这样可以减少启动回归。",
+            "work_items": [
+                {
+                    "title": "补齐启动预检命令",
+                    "owner_role": crewai_self_upgrade.ROLE_FEATURE_CODING_AGENT,
+                }
+            ],
+        }
+
+        title = crewai_self_upgrade._proposal_issue_title(doc)
+        body = crewai_self_upgrade._proposal_issue_body(doc)
+        labels = crewai_self_upgrade._proposal_issue_labels(doc)
+
+        self.assertEqual(title, "[Feature][Runtime] 运行时启动预检")
+        self.assertIn("# 功能提案讨论", body)
+        self.assertIn("## 如何回复", body)
+        self.assertIn("功能编码 Agent", body)
+        self.assertIn("- Module: Runtime", body)
+        self.assertEqual(
+            labels,
+            [
+                "module:runtime",
+                "proposal:pending-confirmation",
+                "source:self-upgrade",
+                "stage:proposal",
+                "teamos",
+                "type:feature",
+                "version:minor",
+            ],
+        )
+
+    def test_task_issue_template_is_chinese(self):
+        finding = crewai_self_upgrade.UpgradeFinding(
+            kind="BUG",
+            lane="bug",
+            title="修复启动导入回归",
+            summary="修复启动路径中的导入回归。",
+            module="Runtime",
+            rationale="当前启动链路仍可能引用旧模块。",
+            impact="HIGH",
+            workstream_id="general",
+            files=["templates/runtime/orchestrator/app/main.py"],
+            tests=["python -m unittest tests.test_crewai_runtime"],
+            acceptance=["启动后 /healthz 返回 ok"],
+            version_bump="patch",
+            target_version="0.1.1",
+        )
+        item = crewai_self_upgrade.UpgradeWorkItem(
+            title="清理旧导入引用",
+            summary="移除旧 self_improve runner 引用。",
+            owner_role=crewai_self_upgrade.ROLE_BUGFIX_CODING_AGENT,
+            review_role=crewai_self_upgrade.ROLE_REVIEW_AGENT,
+            qa_role=crewai_self_upgrade.ROLE_QA_AGENT,
+            allowed_paths=["templates/runtime/orchestrator/app/main.py"],
+            tests=["python -m unittest tests.test_crewai_runtime"],
+            acceptance=["启动后 /healthz 返回 ok"],
+            worktree_hint="/tmp/wt-bug",
+            module="Runtime",
+        )
+
+        title = crewai_self_upgrade._issue_title_for_work_item("team-os", finding, item)
+        body = crewai_self_upgrade._issue_body(
+            repo_root=Path("/tmp/team-os"),
+            repo_locator="foo/bar",
+            finding=finding,
+            work_item=item,
+            fingerprint="demo-fp",
+            marker="<!-- teamos:self_upgrade:demo-fp-runtime-cleanup -->",
+            doc={
+                "self_upgrade_audit": {
+                    "status": "approved",
+                    "classification": "bug",
+                    "closure": "ready",
+                    "worth_doing": True,
+                    "docs_required": True,
+                    "summary": "问题闭环，可以进入开发。",
+                    "feedback": [],
+                },
+                "documentation_policy": {
+                    "required": True,
+                    "status": "pending",
+                    "documentation_role": crewai_self_upgrade.ROLE_DOCUMENTATION_AGENT,
+                    "allowed_paths": ["README.md", "docs"],
+                    "rationale": "运行时行为变更需要同步说明文档。",
+                },
+            },
+        )
+
+        self.assertEqual(title, "[Bug][Runtime] 清理旧导入引用")
+        self.assertIn("<!-- teamos:self_upgrade:demo-fp-runtime-cleanup -->", body)
+        self.assertIn("# 自升级任务", body)
+        self.assertIn("- Module: Runtime", body)
+        self.assertIn("- 目标里程碑: v0.1.1", body)
+        self.assertIn("## 范围外", body)
+        self.assertIn("## 审计状态", body)
+        self.assertIn("## 文档同步", body)
+        self.assertIn("问题审计 Agent", body)
+        self.assertIn("文档同步 Agent", body)
+        self.assertIn("## 执行约束", body)
+        self.assertIn("缺陷修复 Agent", body)
+
+    def test_task_issue_labels_include_module_stage_and_version(self):
+        finding = crewai_self_upgrade.UpgradeFinding(
+            kind="BUG",
+            lane="bug",
+            title="修复启动导入回归",
+            summary="修复启动路径中的导入回归。",
+            module="Runtime",
+            version_bump="patch",
+            target_version="0.1.1",
+        )
+        item = crewai_self_upgrade.UpgradeWorkItem(title="清理旧导入引用", module="Runtime")
+        labels = crewai_self_upgrade._task_issue_labels(doc={"status": "todo"}, finding=finding, work_item=item)
+        self.assertEqual(
+            labels,
+            [
+                "milestone:v0-1-1",
+                "module:runtime",
+                "source:self-upgrade",
+                "stage:queued",
+                "teamos",
+                "type:bug",
+                "version:patch",
+            ],
+        )
+
+    def test_task_issue_labels_use_merge_conflict_stage_when_delivery_hits_conflict(self):
+        finding = crewai_self_upgrade.UpgradeFinding(
+            kind="BUG",
+            lane="bug",
+            title="修复发布冲突回退",
+            summary="修复 release 阶段的冲突回退链路。",
+            module="Self-Upgrade",
+            version_bump="patch",
+            target_version="0.1.1",
+        )
+        item = crewai_self_upgrade.UpgradeWorkItem(title="回退到 coding 处理冲突", module="Self-Upgrade")
+        labels = crewai_self_upgrade._task_issue_labels(
+            doc={"status": "merge_conflict", "self_upgrade_execution": {"stage": "merge_conflict"}},
+            finding=finding,
+            work_item=item,
+        )
+        self.assertIn("stage:merge-conflict", labels)
+
+    def test_task_issue_labels_use_needs_clarification_stage_when_audit_blocks(self):
+        finding = crewai_self_upgrade.UpgradeFinding(
+            kind="BUG",
+            lane="bug",
+            title="补齐 issue 闭环描述",
+            summary="当前 issue 缺少复现步骤。",
+            module="Runtime",
+            version_bump="patch",
+            target_version="0.1.1",
+        )
+        item = crewai_self_upgrade.UpgradeWorkItem(title="补齐 issue 闭环描述", module="Runtime")
+        labels = crewai_self_upgrade._task_issue_labels(
+            doc={"status": "needs_clarification", "self_upgrade_execution": {"stage": "needs_clarification"}},
+            finding=finding,
+            work_item=item,
+        )
+        self.assertIn("stage:needs-clarification", labels)
 
 
 if __name__ == "__main__":

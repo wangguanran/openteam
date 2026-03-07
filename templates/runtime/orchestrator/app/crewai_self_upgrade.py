@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from . import crew_tools
 from . import codex_llm
 from . import crewai_runtime
-from .github_issues_bus import GitHubIssuesBusError, ensure_issue, list_issue_comments, update_issue, upsert_comment_with_marker
+from .github_issues_bus import GitHubIssuesBusError, ensure_issue, ensure_milestone, list_issue_comments, update_issue, upsert_comment_with_marker
 from .github_projects_client import GitHubAPIError, GitHubAuthError
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, get_project_cfg, load_mapping
@@ -30,7 +30,7 @@ class SelfUpgradeError(RuntimeError):
 class UpgradeWorkItem(BaseModel):
     title: str
     summary: str = ""
-    owner_role: str = "Coding-Agent"
+    owner_role: str = "Feature-Coding-Agent"
     review_role: str = "Review-Agent"
     qa_role: str = "QA-Agent"
     workstream_id: str = "general"
@@ -38,6 +38,7 @@ class UpgradeWorkItem(BaseModel):
     tests: list[str] = Field(default_factory=list)
     acceptance: list[str] = Field(default_factory=list)
     worktree_hint: str = ""
+    module: str = ""
 
 
 class UpgradeFinding(BaseModel):
@@ -45,6 +46,7 @@ class UpgradeFinding(BaseModel):
     lane: str = "bug"
     title: str
     summary: str
+    module: str = ""
     rationale: str = ""
     impact: str = "MED"
     workstream_id: str = "general"
@@ -74,12 +76,109 @@ class ProposalDiscussionResponse(BaseModel):
     title: str = ""
     summary: str = ""
     version_bump: str = ""
+    module: str = ""
 
 
 class _IssueRecord(BaseModel):
     title: str
     url: str = ""
     error: str = ""
+
+
+ROLE_PRODUCT_MANAGER = "Product-Manager"
+ROLE_TEST_MANAGER = "Test-Manager"
+ROLE_ISSUE_DRAFTER = "Issue-Drafter"
+ROLE_REVIEW_AGENT = "Review-Agent"
+ROLE_QA_AGENT = "QA-Agent"
+ROLE_PROCESS_OPTIMIZATION_ANALYST = "Process-Optimization-Analyst"
+ROLE_ISSUE_DISCUSSION_AGENT = "Issue-Discussion-Agent"
+ROLE_ISSUE_AUDIT_AGENT = "Issue-Audit-Agent"
+ROLE_DOCUMENTATION_AGENT = "Documentation-Agent"
+ROLE_FEATURE_CODING_AGENT = "Feature-Coding-Agent"
+ROLE_BUGFIX_CODING_AGENT = "Bugfix-Coding-Agent"
+ROLE_PROCESS_OPTIMIZATION_AGENT = "Process-Optimization-Agent"
+
+ROLE_DISPLAY_ZH = {
+    ROLE_PRODUCT_MANAGER: "产品经理",
+    ROLE_TEST_MANAGER: "测试经理",
+    ROLE_ISSUE_DRAFTER: "提单 Agent",
+    ROLE_REVIEW_AGENT: "评审 Agent",
+    ROLE_QA_AGENT: "QA Agent",
+    ROLE_PROCESS_OPTIMIZATION_ANALYST: "流程优化分析 Agent",
+    ROLE_ISSUE_DISCUSSION_AGENT: "需求答复 Agent",
+    ROLE_ISSUE_AUDIT_AGENT: "问题审计 Agent",
+    ROLE_DOCUMENTATION_AGENT: "文档同步 Agent",
+    ROLE_FEATURE_CODING_AGENT: "功能编码 Agent",
+    ROLE_BUGFIX_CODING_AGENT: "缺陷修复 Agent",
+    ROLE_PROCESS_OPTIMIZATION_AGENT: "流程优化编码 Agent",
+}
+
+MODULE_ALIASES = {
+    "runtime": "Runtime",
+    "self-upgrade": "Self-Upgrade",
+    "self-upgrade-runtime": "Self-Upgrade",
+    "ci": "CI",
+    "doctor": "Doctor",
+    "bootstrap": "Bootstrap",
+    "workspace": "Workspace",
+    "github-project": "GitHub-Project",
+    "delivery": "Delivery",
+    "proposal": "Proposal",
+    "review": "Review",
+    "qa": "QA",
+    "cli": "CLI",
+    "hub": "Hub",
+    "release": "Release",
+    "requirements": "Requirements",
+    "observability": "Observability",
+    "security": "Security",
+}
+
+MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
+    ((".github/workflows", "workflow", "ci", "github actions"), "CI"),
+    (("bootstrap_and_run.py", "run.sh", "bootstrap"), "Bootstrap"),
+    (("doctor.py", " doctor", "doctor "), "Doctor"),
+    (("workspace", "worktree", "worktrees", "workspace_store"), "Workspace"),
+    (("panel_github_sync", "github_projects", "github issue", "github project"), "GitHub-Project"),
+    (("delivery", "review", "qa", "release"), "Delivery"),
+    (("proposal", "discussion"), "Proposal"),
+    (("teamos", " cli ", " cli/", "/teamos"), "CLI"),
+    (("temporal", "postgres", "redis", "hub"), "Hub"),
+    (("requirements", "raw_inputs", "requirement"), "Requirements"),
+    (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
+    (("security", "auth", "oauth", "token"), "Security"),
+    (("crewai_self_upgrade", "self_upgrade", "self-upgrade"), "Self-Upgrade"),
+    (("control-plane", "orchestrator", "main.py", "runtime"), "Runtime"),
+]
+
+
+class LocalizedWorkItemText(BaseModel):
+    title: str = ""
+    summary: str = ""
+    acceptance: list[str] = Field(default_factory=list)
+
+
+class LocalizedFindingText(BaseModel):
+    title: str = ""
+    summary: str = ""
+    rationale: str = ""
+    acceptance: list[str] = Field(default_factory=list)
+    work_items: list[LocalizedWorkItemText] = Field(default_factory=list)
+
+
+class LocalizedProposalText(BaseModel):
+    title: str = ""
+    summary: str = ""
+    rationale: str = ""
+    work_items: list[LocalizedWorkItemText] = Field(default_factory=list)
+
+
+class LocalizedTaskText(BaseModel):
+    task_title: str = ""
+    title: str = ""
+    summary: str = ""
+    rationale: str = ""
+    acceptance: list[str] = Field(default_factory=list)
 
 
 def _env_truthy(name: str, default: str = "0") -> bool:
@@ -99,6 +198,188 @@ def _ts_compact_utc() -> str:
 def _slug(text: str, *, default: str = "item") -> str:
     s = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower()).strip("-")
     return s or default
+
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_ASCII_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+
+
+def role_display_zh(role_id: str) -> str:
+    rid = str(role_id or "").strip()
+    return ROLE_DISPLAY_ZH.get(rid, rid or "未命名角色")
+
+
+def _module_slug(module: str) -> str:
+    return _slug(module, default="self-upgrade")
+
+
+def _normalize_module_name(
+    raw: str = "",
+    *,
+    paths: Optional[list[str]] = None,
+    workstream_id: str = "",
+    title: str = "",
+    summary: str = "",
+    lane: str = "",
+) -> str:
+    raw_slug = _module_slug(raw)
+    if raw_slug in MODULE_ALIASES:
+        return MODULE_ALIASES[raw_slug]
+
+    bag = " | ".join(
+        [
+            str(raw or ""),
+            str(workstream_id or ""),
+            str(title or ""),
+            str(summary or ""),
+            " ".join([str(x).strip() for x in (paths or []) if str(x).strip()]),
+        ]
+    ).lower()
+    for needles, module in MODULE_RULES:
+        if any(needle in bag for needle in needles):
+            return module
+
+    if raw_slug and raw_slug not in ("item", "general"):
+        return "-".join([part.capitalize() for part in raw_slug.split("-") if part]) or "Self-Upgrade"
+    if str(lane or "").strip().lower() == "bug":
+        return "Runtime"
+    return "Self-Upgrade"
+
+
+def _normalize_repo_doc_path(path: str) -> str:
+    raw = str(path or "").strip().replace("\\", "/").lstrip("/")
+    while raw.startswith("./"):
+        raw = raw[2:]
+    return raw
+
+
+def _documentation_allowed_paths(*, module: str, lane: str, allowed_paths: list[str]) -> list[str]:
+    out = ["README.md", "docs", "templates/runtime/README.md"]
+    module_norm = _normalize_module_name(module, paths=allowed_paths, lane=lane)
+    lane_norm = str(lane or "").strip().lower()
+    path_bag = [_normalize_repo_doc_path(x) for x in (allowed_paths or []) if _normalize_repo_doc_path(x)]
+    if module_norm in ("CLI", "Doctor", "Bootstrap", "Runtime", "Self-Upgrade", "CI", "Release", "GitHub-Project"):
+        out.extend(
+            [
+                "docs/EXECUTION_RUNBOOK.md",
+                "docs/REPO_BOOTSTRAP_AND_UPGRADE.md",
+                "docs/GOVERNANCE.md",
+            ]
+        )
+    if module_norm == "CI":
+        out.append(".github/ISSUE_TEMPLATE")
+    if lane_norm == "process":
+        out.append("docs/plan")
+    if any(path.startswith(".github/workflows") for path in path_bag):
+        out.extend([".github/ISSUE_TEMPLATE", "docs/GOVERNANCE.md"])
+    return sorted({x for x in out if str(x).strip()})
+
+
+def _default_documentation_policy(*, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> dict[str, Any]:
+    lane = str(finding.lane or "").strip().lower()
+    module = _normalize_module_name(
+        str(work_item.module or finding.module or "").strip(),
+        paths=list(work_item.allowed_paths or finding.files or []),
+        workstream_id=str(work_item.workstream_id or finding.workstream_id or ""),
+        title=str(work_item.title or finding.title or ""),
+        summary=str(work_item.summary or finding.summary or ""),
+        lane=lane,
+    )
+    paths = [_normalize_repo_doc_path(x) for x in (work_item.allowed_paths or finding.files or []) if _normalize_repo_doc_path(x)]
+    reasons: list[str] = []
+    if lane in ("feature", "process"):
+        reasons.append("该任务属于功能增强或流程优化，默认需要同步说明文档。")
+    if module in ("CLI", "Doctor", "Bootstrap", "Runtime", "Self-Upgrade", "CI", "Release", "GitHub-Project"):
+        reasons.append(f"模块 `{module}` 对外行为或运维流程敏感，需要记录使用/回滚说明。")
+    if any(path == "README.md" or path.startswith("docs/") or path.startswith(".github/workflows") or path == "teamos" for path in paths):
+        reasons.append("任务涉及入口脚本、文档或工作流路径，需要同步说明和操作手册。")
+    required = bool(reasons)
+    if not reasons:
+        reasons.append("当前任务以局部缺陷修复为主，默认不强制更新文档。")
+    return {
+        "required": required,
+        "status": "pending" if required else "not_required",
+        "allowed_paths": _documentation_allowed_paths(module=module, lane=lane, allowed_paths=list(work_item.allowed_paths or finding.files or [])),
+        "rationale": " ".join(reasons),
+        "documentation_role": ROLE_DOCUMENTATION_AGENT,
+    }
+
+
+def _issue_type_token(lane: str) -> str:
+    return {"feature": "Feature", "bug": "Bug", "process": "Process"}.get(str(lane or "").strip().lower(), "Task")
+
+
+def _version_label(version_bump: str) -> str:
+    vb = str(version_bump or "none").strip().lower()
+    return f"version:{vb if vb in ('major', 'minor', 'patch', 'none') else 'none'}"
+
+
+def _proposal_status_label(status: str) -> str:
+    raw = str(status or "PENDING_CONFIRMATION").strip().upper()
+    mapping = {
+        "PENDING_CONFIRMATION": "proposal:pending-confirmation",
+        "APPROVED": "proposal:approved",
+        "HOLD": "proposal:hold",
+        "REJECTED": "proposal:rejected",
+        "MATERIALIZED": "proposal:materialized",
+        "COLLECTING": "proposal:hold",
+    }
+    return mapping.get(raw, "proposal:pending-confirmation")
+
+
+def _milestone_title_for_target_version(version: str) -> str:
+    ver = str(version or "").strip()
+    if not ver or not re.search(r"^\d+\.\d+\.\d+$", ver):
+        return ""
+    return f"v{ver}"
+
+
+def _proposal_issue_marker(doc: dict[str, Any]) -> str:
+    return f"<!-- teamos:feature-proposal:{str(doc.get('proposal_id') or '').strip()} -->"
+
+
+def _task_issue_marker(*, repo_locator: str, repo_root: Path, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> str:
+    fingerprint = _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding) + "-" + _slug(work_item.title, default="work")
+    return f"<!-- teamos:self_upgrade:{fingerprint} -->"
+
+
+def _normalize_owner_role(role_id: str, lane: str) -> str:
+    rid = str(role_id or "").strip()
+    if rid in ("", "Coding-Agent", "Developer", "Developer-Agent"):
+        return _coding_owner_role(lane)
+    return rid
+
+
+def _normalize_review_role(role_id: str) -> str:
+    rid = str(role_id or "").strip()
+    if rid in ("", "Review Agent"):
+        return ROLE_REVIEW_AGENT
+    return rid
+
+
+def _normalize_qa_role(role_id: str) -> str:
+    rid = str(role_id or "").strip()
+    if rid in ("", "QA Agent"):
+        return ROLE_QA_AGENT
+    return rid
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(str(text or "")))
+
+
+def _looks_english(text: str) -> bool:
+    s = str(text or "").strip()
+    return bool(s) and bool(_ASCII_WORD_RE.search(s)) and not _has_cjk(s)
+
+
+def _normalize_issue_text(text: str, *, empty_fallback: str = "(空)") -> str:
+    s = str(text or "").strip()
+    return s or empty_fallback
+
+
+def _zh_localization_enabled() -> bool:
+    return _env_truthy("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "1")
 
 
 def _git_dir(repo_root: Path) -> Optional[Path]:
@@ -432,6 +713,266 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "") ->
     }
 
 
+def _codex_structured_model() -> str:
+    return str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.3-codex").strip()
+
+
+def _codex_structured(prompt: str, *, schema_model: type[BaseModel], timeout_sec: int = 120) -> BaseModel:
+    result = codex_llm.codex_exec_structured(
+        prompt=prompt,
+        schema=schema_model.model_json_schema(),
+        timeout_sec=timeout_sec,
+        model=_codex_structured_model(),
+    )
+    return schema_model.model_validate(result.data)
+
+
+def _translate_to_zh_structured(*, payload: dict[str, Any], schema_model: type[BaseModel], prompt_title: str) -> BaseModel:
+    prompt = "\n".join(
+        [
+            f"你是 Team OS 的中文化助手。请把下面的 {prompt_title} 翻译成简体中文。",
+            "要求：",
+            "- 只翻译自然语言文本。",
+            "- 保留 role id、状态枚举、版本号、issue/proposal/task id、路径、命令、URL、标签名、worktree_hint、repo_locator 原样不变。",
+            "- 输出必须符合给定 JSON Schema。",
+            "- 不要增加新字段，不要删除现有字段。",
+            "",
+            "输入 JSON：",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        ]
+    )
+    return _codex_structured(prompt, schema_model=schema_model, timeout_sec=150)
+
+
+def _localize_finding_to_zh(finding: UpgradeFinding) -> UpgradeFinding:
+    if not _zh_localization_enabled():
+        return finding
+    texts = [finding.title, finding.summary, finding.rationale, *list(finding.acceptance or [])]
+    texts.extend([w.title for w in (finding.work_items or [])])
+    texts.extend([w.summary for w in (finding.work_items or [])])
+    texts.extend([x for w in (finding.work_items or []) for x in (w.acceptance or [])])
+    if not any(_looks_english(x) for x in texts):
+        return finding
+    try:
+        localized = _translate_to_zh_structured(
+            payload={
+                "title": finding.title,
+                "summary": finding.summary,
+                "rationale": finding.rationale,
+                "acceptance": list(finding.acceptance or []),
+                "work_items": [
+                    {
+                        "title": str(w.title or ""),
+                        "summary": str(w.summary or ""),
+                        "acceptance": list(w.acceptance or []),
+                    }
+                    for w in (finding.work_items or [])
+                ],
+            },
+            schema_model=LocalizedFindingText,
+            prompt_title="自升级发现项",
+        )
+    except Exception:
+        return finding
+    work_items = list(finding.work_items or [])
+    localized_items = list(localized.work_items or [])
+    out_items: list[UpgradeWorkItem] = []
+    for idx, work_item in enumerate(work_items):
+        patch = localized_items[idx] if idx < len(localized_items) else LocalizedWorkItemText()
+        out_items.append(
+            work_item.model_copy(
+                update={
+                    "title": str(patch.title or work_item.title).strip() or work_item.title,
+                    "summary": str(patch.summary or work_item.summary).strip() or work_item.summary,
+                    "acceptance": [str(x).strip() for x in (patch.acceptance or work_item.acceptance or []) if str(x).strip()],
+                }
+            )
+        )
+    return finding.model_copy(
+        update={
+            "title": str(localized.title or finding.title).strip() or finding.title,
+            "summary": str(localized.summary or finding.summary).strip() or finding.summary,
+            "rationale": str(localized.rationale or finding.rationale).strip() or finding.rationale,
+            "acceptance": [str(x).strip() for x in (localized.acceptance or finding.acceptance or []) if str(x).strip()],
+            "work_items": out_items,
+        }
+    )
+
+
+def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
+    if not _zh_localization_enabled():
+        return dict(doc)
+    texts = [doc.get("title"), doc.get("summary"), doc.get("rationale")]
+    texts.extend([str((x or {}).get("title") or "") for x in (doc.get("work_items") or []) if isinstance(x, dict)])
+    texts.extend([str((x or {}).get("summary") or "") for x in (doc.get("work_items") or []) if isinstance(x, dict)])
+    if not any(_looks_english(x) for x in texts):
+        return dict(doc)
+    try:
+        localized = _translate_to_zh_structured(
+            payload={
+                "title": str(doc.get("title") or ""),
+                "summary": str(doc.get("summary") or ""),
+                "rationale": str(doc.get("rationale") or ""),
+                "work_items": [
+                    {
+                        "title": str((x or {}).get("title") or ""),
+                        "summary": str((x or {}).get("summary") or ""),
+                        "acceptance": list(((x or {}).get("acceptance") or [])),
+                    }
+                    for x in (doc.get("work_items") or [])
+                    if isinstance(x, dict)
+                ],
+            },
+            schema_model=LocalizedProposalText,
+            prompt_title="功能提案",
+        )
+    except Exception:
+        return dict(doc)
+    out = dict(doc)
+    out["title"] = str(localized.title or doc.get("title") or "").strip() or str(doc.get("title") or "")
+    out["summary"] = str(localized.summary or doc.get("summary") or "").strip() or str(doc.get("summary") or "")
+    out["rationale"] = str(localized.rationale or doc.get("rationale") or "").strip() or str(doc.get("rationale") or "")
+    out["module"] = _normalize_module_name(
+        str(doc.get("module") or "").strip(),
+        paths=[str(x).strip() for x in (doc.get("files") or []) if str(x).strip()],
+        workstream_id=str(doc.get("workstream_id") or ""),
+        title=str(out.get("title") or ""),
+        summary=str(out.get("summary") or ""),
+        lane=str(doc.get("lane") or ""),
+    )
+    items = []
+    localized_items = list(localized.work_items or [])
+    lane = str(doc.get("lane") or "feature").strip().lower() or "feature"
+    for idx, raw in enumerate(list(doc.get("work_items") or [])):
+        item = dict(raw) if isinstance(raw, dict) else {}
+        patch = localized_items[idx] if idx < len(localized_items) else LocalizedWorkItemText()
+        item["title"] = str(patch.title or item.get("title") or "").strip() or str(item.get("title") or "")
+        item["summary"] = str(patch.summary or item.get("summary") or "").strip() or str(item.get("summary") or "")
+        if patch.acceptance:
+            item["acceptance"] = [str(x).strip() for x in patch.acceptance if str(x).strip()]
+        item["owner_role"] = _normalize_owner_role(str(item.get("owner_role") or "").strip(), lane)
+        item["review_role"] = _normalize_review_role(str(item.get("review_role") or "").strip())
+        item["qa_role"] = _normalize_qa_role(str(item.get("qa_role") or "").strip())
+        item["module"] = _normalize_module_name(
+            str(item.get("module") or out.get("module") or "").strip(),
+            paths=[str(x).strip() for x in (item.get("allowed_paths") or doc.get("files") or []) if str(x).strip()],
+            workstream_id=str(item.get("workstream_id") or doc.get("workstream_id") or "general").strip(),
+            title=str(item.get("title") or ""),
+            summary=str(item.get("summary") or ""),
+            lane=lane,
+        )
+        items.append(item)
+    out["work_items"] = items
+    return out
+
+
+def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
+    if not _zh_localization_enabled():
+        return dict(doc)
+    su = doc.get("self_upgrade") or {}
+    if not isinstance(su, dict):
+        su = {}
+    work_item = su.get("work_item") or {}
+    if not isinstance(work_item, dict):
+        work_item = {}
+    texts = [doc.get("title"), su.get("summary"), su.get("rationale"), work_item.get("title"), work_item.get("summary")]
+    texts.extend(list(su.get("acceptance") or []))
+    texts.extend(list(work_item.get("acceptance") or []))
+    if not any(_looks_english(x) for x in texts):
+        return dict(doc)
+    try:
+        localized = _translate_to_zh_structured(
+            payload={
+                "task_title": str(doc.get("title") or ""),
+                "title": str(work_item.get("title") or ""),
+                "summary": str(work_item.get("summary") or su.get("summary") or ""),
+                "rationale": str(su.get("rationale") or ""),
+                "acceptance": list(work_item.get("acceptance") or su.get("acceptance") or []),
+            },
+            schema_model=LocalizedTaskText,
+            prompt_title="自升级任务单",
+        )
+    except Exception:
+        return dict(doc)
+    out = dict(doc)
+    if localized.task_title:
+        out["title"] = str(localized.task_title).strip()
+    su_out = dict(su)
+    if localized.summary:
+        su_out["summary"] = str(localized.summary).strip()
+    if localized.rationale:
+        su_out["rationale"] = str(localized.rationale).strip()
+    if localized.acceptance:
+        su_out["acceptance"] = [str(x).strip() for x in localized.acceptance if str(x).strip()]
+    wi_out = dict(work_item)
+    if localized.title:
+        wi_out["title"] = str(localized.title).strip()
+    if localized.summary:
+        wi_out["summary"] = str(localized.summary).strip()
+    if localized.acceptance:
+        wi_out["acceptance"] = [str(x).strip() for x in localized.acceptance if str(x).strip()]
+    lane = str(su.get("lane") or "bug").strip().lower() or "bug"
+    wi_out["owner_role"] = _normalize_owner_role(str(wi_out.get("owner_role") or out.get("owner_role") or "").strip(), lane)
+    wi_out["review_role"] = _normalize_review_role(str(wi_out.get("review_role") or ((out.get("execution_policy") or {}) if isinstance(out.get("execution_policy"), dict) else {}).get("review_role") or "").strip())
+    wi_out["qa_role"] = _normalize_qa_role(str(wi_out.get("qa_role") or ((out.get("execution_policy") or {}) if isinstance(out.get("execution_policy"), dict) else {}).get("qa_role") or "").strip())
+    wi_out["module"] = _normalize_module_name(
+        str(wi_out.get("module") or su.get("module") or "").strip(),
+        paths=[str(x).strip() for x in (wi_out.get("allowed_paths") or ((out.get("execution_policy") or {}) if isinstance(out.get("execution_policy"), dict) else {}).get("allowed_paths") or su.get("files") or []) if str(x).strip()],
+        workstream_id=str(wi_out.get("workstream_id") or out.get("workstream_id") or su.get("workstream_id") or "general").strip(),
+        title=str(wi_out.get("title") or out.get("title") or ""),
+        summary=str(wi_out.get("summary") or su_out.get("summary") or ""),
+        lane=lane,
+    )
+    su_out["module"] = _normalize_module_name(
+        str(su_out.get("module") or wi_out.get("module") or "").strip(),
+        paths=[str(x).strip() for x in (su_out.get("files") or wi_out.get("allowed_paths") or []) if str(x).strip()],
+        workstream_id=str(out.get("workstream_id") or su_out.get("workstream_id") or "general").strip(),
+        title=str(out.get("title") or wi_out.get("title") or ""),
+        summary=str(su_out.get("summary") or wi_out.get("summary") or ""),
+        lane=lane,
+    )
+    su_out["work_item"] = wi_out
+    out["self_upgrade"] = su_out
+    out["owner_role"] = wi_out["owner_role"]
+    out["owners"] = [wi_out["owner_role"]]
+    out["roles_involved"] = [wi_out["owner_role"], wi_out["review_role"], wi_out["qa_role"]]
+    execution_policy = out.get("execution_policy") or {}
+    if isinstance(execution_policy, dict):
+        execution_policy = dict(execution_policy)
+        execution_policy["review_role"] = wi_out["review_role"]
+        execution_policy["qa_role"] = wi_out["qa_role"]
+        execution_policy["module"] = wi_out["module"]
+        execution_policy["commit_message_template"] = f"{str(out.get('id') or '').strip() or 'TASK'}: {str(wi_out.get('title') or out.get('title') or '').strip()}"
+        out["execution_policy"] = execution_policy
+    return out
+
+
+def _localize_discussion_response_to_zh(reply: ProposalDiscussionResponse) -> ProposalDiscussionResponse:
+    if not _zh_localization_enabled():
+        return reply
+    texts = [reply.reply_body, reply.title, reply.summary]
+    if not any(_looks_english(x) for x in texts):
+        return reply
+    try:
+        localized = _translate_to_zh_structured(
+            payload=reply.model_dump(),
+            schema_model=ProposalDiscussionResponse,
+            prompt_title="需求讨论回复",
+        )
+    except Exception:
+        return reply
+    return ProposalDiscussionResponse.model_validate(
+        {
+            "reply_body": str(localized.reply_body or reply.reply_body).strip() or reply.reply_body,
+            "action": str(localized.action or reply.action).strip() or reply.action,
+            "title": str(localized.title or reply.title).strip(),
+            "summary": str(localized.summary or reply.summary).strip(),
+            "version_bump": str(localized.version_bump or reply.version_bump).strip(),
+            "module": str(reply.module or "").strip(),
+        }
+    )
+
+
 _SEMVER_RE = re.compile(r"\b(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)\b")
 
 
@@ -500,10 +1041,10 @@ def _lane_default_baseline_action(lane: str, version_bump: str) -> str:
 def _coding_owner_role(lane: str) -> str:
     ln = str(lane or "bug").strip().lower()
     if ln == "feature":
-        return "Feature-Coding-Agent"
+        return ROLE_FEATURE_CODING_AGENT
     if ln == "bug":
-        return "Bugfix-Coding-Agent"
-    return "Process-Optimization-Agent"
+        return ROLE_BUGFIX_CODING_AGENT
+    return ROLE_PROCESS_OPTIMIZATION_AGENT
 
 
 def _worktree_hint(*, repo_root: Path, lane: str, title: str) -> str:
@@ -516,13 +1057,21 @@ def _default_work_items(*, repo_root: Path, finding: UpgradeFinding) -> list[Upg
             title=str(finding.title or "").strip(),
             summary=str(finding.summary or "").strip(),
             owner_role=_coding_owner_role(finding.lane),
-            review_role="Review-Agent",
-            qa_role="QA-Agent",
+            review_role=ROLE_REVIEW_AGENT,
+            qa_role=ROLE_QA_AGENT,
             workstream_id=finding.workstream_id or "general",
             allowed_paths=list(finding.files or []),
             tests=list(finding.tests or []),
             acceptance=list(finding.acceptance or []),
             worktree_hint=_worktree_hint(repo_root=repo_root, lane=finding.lane, title=finding.title),
+            module=_normalize_module_name(
+                str(finding.module or "").strip(),
+                paths=list(finding.files or []),
+                workstream_id=str(finding.workstream_id or ""),
+                title=str(finding.title or ""),
+                summary=str(finding.summary or ""),
+                lane=str(finding.lane or ""),
+            ),
         )
     ]
 
@@ -625,15 +1174,23 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         if version_bump == "none":
             target_version = current_version
         work_items: list[UpgradeWorkItem] = []
+        normalized_module = _normalize_module_name(
+            str(getattr(finding, "module", "") or "").strip(),
+            paths=[str(x).strip() for x in (finding.files or []) if str(x).strip()],
+            workstream_id=workstream_id,
+            title=str(finding.title or "").strip(),
+            summary=str(finding.summary or "").strip(),
+            lane=lane,
+        )
         for item in list(getattr(finding, "work_items", []) or [])[:6]:
             title = str(getattr(item, "title", "") or "").strip() or str(finding.title or "").strip() or "Untitled work item"
             work_items.append(
                 UpgradeWorkItem(
                     title=title,
                     summary=str(getattr(item, "summary", "") or "").strip() or str(finding.summary or "").strip(),
-                    owner_role=str(getattr(item, "owner_role", "") or "").strip() or _coding_owner_role(lane),
-                    review_role=str(getattr(item, "review_role", "") or "").strip() or "Review-Agent",
-                    qa_role=str(getattr(item, "qa_role", "") or "").strip() or "QA-Agent",
+                    owner_role=_normalize_owner_role(str(getattr(item, "owner_role", "") or "").strip(), lane),
+                    review_role=_normalize_review_role(str(getattr(item, "review_role", "") or "").strip()),
+                    qa_role=_normalize_qa_role(str(getattr(item, "qa_role", "") or "").strip()),
                     workstream_id=str(getattr(item, "workstream_id", "") or "").strip() or workstream_id or "general",
                     allowed_paths=[str(x).strip() for x in (getattr(item, "allowed_paths", None) or finding.files or []) if str(x).strip()][:20],
                     tests=[str(x).strip() for x in (getattr(item, "tests", None) or finding.tests or []) if str(x).strip()][:20],
@@ -644,6 +1201,15 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
                         title=title,
                         raw_hint=str(getattr(item, "worktree_hint", "") or "").strip(),
                     ),
+                    module=_normalize_module_name(
+                        str(getattr(item, "module", "") or "").strip(),
+                        paths=[str(x).strip() for x in (getattr(item, "allowed_paths", None) or finding.files or []) if str(x).strip()],
+                        workstream_id=str(getattr(item, "workstream_id", "") or "").strip() or workstream_id,
+                        title=title,
+                        summary=str(getattr(item, "summary", "") or "").strip() or str(finding.summary or "").strip(),
+                        lane=lane,
+                    )
+                    or normalized_module,
                 )
             )
         finding_obj = UpgradeFinding(
@@ -651,6 +1217,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
             lane=lane,
             title=str(finding.title or "").strip() or "Untitled finding",
             summary=str(finding.summary or "").strip(),
+            module=normalized_module,
             rationale=str(finding.rationale or "").strip(),
             impact=impact,
             workstream_id=workstream_id or "general",
@@ -684,7 +1251,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
     llm = _crewai_llm()
     product_manager = Agent(
-        role="Product Manager",
+        role=ROLE_PRODUCT_MANAGER,
         goal="Identify worthwhile feature improvements and product-level optimizations for the target repository.",
         backstory="You think like a product manager. You prioritize user-visible value, versioning impact, and whether a change belongs in a new baseline.",
         llm=llm,
@@ -692,7 +1259,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     test_manager = Agent(
-        role="Test Manager",
+        role=ROLE_TEST_MANAGER,
         goal="Identify bugs, regressions, and missing black-box or white-box tests from the repository context.",
         backstory="You reason like a QA/test lead and focus on reproducible defects, weak test coverage, and operational risk.",
         llm=llm,
@@ -700,7 +1267,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     issue_drafter = Agent(
-        role="Issue Drafter",
+        role=ROLE_ISSUE_DRAFTER,
         goal="Break features and bug fixes into small, execution-scoped engineering work items suitable for GitHub Projects and downstream coding agents.",
         backstory="You think like a delivery lead. You keep issues small, explicit, and scoped to one piece of work, with clear owner roles and worktree hints.",
         llm=llm,
@@ -708,7 +1275,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     review_agent = Agent(
-        role="Review Agent",
+        role=ROLE_REVIEW_AGENT,
         goal="Enforce code review constraints so coding agents only touch issue-scoped files and commit history remains task-linked.",
         backstory="You act like an engineering reviewer protecting scope discipline, commit hygiene, and release boundaries.",
         llm=llm,
@@ -716,7 +1283,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     qa_agent = Agent(
-        role="QA Agent",
+        role=ROLE_QA_AGENT,
         goal="Ensure each work item has explicit verification, QA handoff, and close criteria before it can be considered done.",
         backstory="You are the final delivery gate. No item closes without review and QA evidence.",
         llm=llm,
@@ -724,7 +1291,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     process_analyst = Agent(
-        role="Process Optimization Analyst",
+        role=ROLE_PROCESS_OPTIMIZATION_ANALYST,
         goal="Use recent execution telemetry to identify improvements in the self-upgrade process itself.",
         backstory="You optimize the team workflow by looking at timings, failures, repeated blockers, and wasted motion.",
         llm=llm,
@@ -778,9 +1345,12 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
             "- Features use lane=feature, kind=FEATURE, require user confirmation, and use version_bump=major or minor.\n"
             "- Bugs use lane=bug, kind=BUG, no user confirmation, and use version_bump=patch.\n"
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
+            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Every feature or bug finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
-            "- Each work item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint.\n"
+            "- Each work item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding.\n"
             "- Coding work items must be issue-scoped only; no extra optimization outside the listed paths.\n"
+            "- 所有面向用户的自然语言字段必须使用简体中文，包括 title、summary、rationale、acceptance、work_items.title、work_items.summary。\n"
+            "- 保留 role id、路径、命令、状态枚举、版本号、URL、worktree_hint 为原样。\n"
             "- Also include repo-level ci_actions and notes.\n"
         ),
         expected_output="A structured JSON upgrade plan.",
@@ -793,6 +1363,8 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         description=(
             "Review the draft upgrade plan.\n"
             "Reject large or fuzzy work items. Ensure every coding work item has clear path scope, task-linked commit discipline, and explicit downstream review/QA roles.\n"
+            "Reject any finding that spans multiple modules or uses an unstable module name.\n"
+            "Keep all user-facing natural language fields in Simplified Chinese.\n"
             f"Keep no more than {int(max_findings)} findings in the final output."
         ),
         expected_output="A validated structured JSON upgrade plan ready for issue/task recording.",
@@ -805,6 +1377,8 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         description=(
             "Finalize the plan from a QA and release perspective.\n"
             "Make sure each work item has explicit tests and acceptance. Features must wait for user confirmation. Bugs can flow immediately.\n"
+            "Preserve the single-module rule so downstream issue titles can follow [Type][Module] xxx.\n"
+            "Keep all user-facing natural language fields in Simplified Chinese.\n"
             "No item should be closeable without review and QA acceptance."
         ),
         expected_output="A final structured JSON upgrade plan ready for runtime materialization.",
@@ -821,7 +1395,9 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
     )
     out = crew.kickoff()
     current_version = str(repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
-    return _coerce_plan(out, max_findings=max_findings, repo_root=Path(str(repo_context.get("repo_root") or ".")), current_version=current_version), {
+    plan = _coerce_plan(out, max_findings=max_findings, repo_root=Path(str(repo_context.get("repo_root") or ".")), current_version=current_version)
+    plan = plan.model_copy(update={"findings": [_localize_finding_to_zh(f) for f in (plan.findings or [])]})
+    return plan, {
         "raw": str(out),
         "token_usage": getattr(out, "token_usage", None).model_dump() if getattr(out, "token_usage", None) else {},
         "task_outputs": [
@@ -856,13 +1432,19 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _task_title_for_finding(finding: UpgradeFinding) -> str:
-    kind = {"BUG": "BUG", "OPTIMIZATION": "OPT", "CI": "CI"}.get(str(finding.kind or "").upper(), "OPT")
-    return f"[SELF-UPGRADE][{kind}] {finding.title}".strip()
+    module = _normalize_module_name(
+        str(finding.module or "").strip(),
+        paths=list(finding.files or []),
+        workstream_id=str(finding.workstream_id or ""),
+        title=str(finding.title or ""),
+        summary=str(finding.summary or ""),
+        lane=str(finding.lane or ""),
+    )
+    return f"[{_issue_type_token(finding.lane)}][{module}] {finding.title}".strip()
 
 
 def _issue_title_for_finding(repo_name: str, finding: UpgradeFinding) -> str:
-    kind = {"BUG": "BUG", "OPTIMIZATION": "OPT", "CI": "CI"}.get(str(finding.kind or "").upper(), "OPT")
-    return f"[Self-Upgrade][{kind}][{repo_name}] {finding.title}".strip()
+    return _task_title_for_finding(finding)
 
 
 def _finding_fingerprint(*, repo_locator: str, repo_root: Path, finding: UpgradeFinding) -> str:
@@ -882,16 +1464,160 @@ def _proposal_id_for_finding(*, repo_locator: str, repo_root: Path, finding: Upg
     return f"su-{finding.lane}-{_finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding)}"
 
 
+def _work_item_key(item: UpgradeWorkItem) -> str:
+    seed = "|".join(
+        [
+            str(item.worktree_hint or "").strip(),
+            str(item.owner_role or "").strip(),
+            ",".join(sorted([str(x).strip() for x in (item.allowed_paths or []) if str(x).strip()])),
+            ",".join(sorted([str(x).strip() for x in (item.tests or []) if str(x).strip()])),
+        ]
+    )
+    if not seed.strip():
+        seed = str(item.title or "").strip().lower()
+    return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+
+
 def _task_title_for_work_item(finding: UpgradeFinding, item: UpgradeWorkItem) -> str:
-    lane = {"feature": "FEATURE", "bug": "BUG", "process": "PROCESS"}.get(str(finding.lane or "").lower(), "WORK")
-    owner = str(item.owner_role or "Coding-Agent").replace(" ", "-")
-    return f"[SELF-UPGRADE][{lane}][{owner}] {item.title}".strip()
+    module = _normalize_module_name(
+        str(item.module or finding.module or "").strip(),
+        paths=list(item.allowed_paths or finding.files or []),
+        workstream_id=str(item.workstream_id or finding.workstream_id or ""),
+        title=str(item.title or finding.title or ""),
+        summary=str(item.summary or finding.summary or ""),
+        lane=str(finding.lane or ""),
+    )
+    return f"[{_issue_type_token(finding.lane)}][{module}] {item.title}".strip()
 
 
 def _issue_title_for_work_item(repo_name: str, finding: UpgradeFinding, item: UpgradeWorkItem) -> str:
-    lane = {"feature": "FEATURE", "bug": "BUG", "process": "PROCESS"}.get(str(finding.lane or "").lower(), "WORK")
-    owner = str(item.owner_role or "Coding-Agent").replace(" ", "-")
-    return f"[Self-Upgrade][{lane}][{owner}][{repo_name}] {item.title}".strip()
+    return _task_title_for_work_item(finding, item)
+
+
+def _proposal_module(doc: dict[str, Any]) -> str:
+    return _normalize_module_name(
+        str(doc.get("module") or "").strip(),
+        paths=[str(x).strip() for x in (doc.get("files") or []) if str(x).strip()],
+        workstream_id=str(doc.get("workstream_id") or ""),
+        title=str(doc.get("title") or ""),
+        summary=str(doc.get("summary") or ""),
+        lane=str(doc.get("lane") or ""),
+    )
+
+
+def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
+    lane = str(doc.get("lane") or "feature").strip().lower() or "feature"
+    module = _proposal_module(doc)
+    labels = [
+        "teamos",
+        "source:self-upgrade",
+        f"type:{lane if lane in ('feature', 'bug', 'process') else 'feature'}",
+        f"module:{_module_slug(module)}",
+        "stage:proposal",
+        _proposal_status_label(str(doc.get("status") or "")),
+        _version_label(str(doc.get("version_bump") or "")),
+    ]
+    return sorted({str(x).strip() for x in labels if str(x).strip()})
+
+
+def _task_issue_stage_label(doc: dict[str, Any]) -> str:
+    execution = doc.get("self_upgrade_execution") or {}
+    stage = str((execution if isinstance(execution, dict) else {}).get("stage") or "").strip().lower()
+    status = str(doc.get("status") or "").strip().lower()
+    if status in ("needs_clarification",):
+        return "stage:needs-clarification"
+    if stage in ("audit", "coding", "review", "qa", "docs", "release", "blocked", "closed", "merge_conflict", "needs_clarification"):
+        return {"closed": "stage:done", "merge_conflict": "stage:merge-conflict"}.get(stage, f"stage:{stage}")
+    if status in ("doing",):
+        return "stage:coding"
+    if status in ("test",):
+        return "stage:qa"
+    if status in ("release",):
+        return "stage:release"
+    if status in ("merge_conflict",):
+        return "stage:merge-conflict"
+    if status in ("blocked",):
+        return "stage:blocked"
+    if status in ("closed", "done"):
+        return "stage:done"
+    return "stage:queued"
+
+
+def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_item: UpgradeWorkItem) -> list[str]:
+    module = _normalize_module_name(
+        str(work_item.module or finding.module or "").strip(),
+        paths=list(work_item.allowed_paths or finding.files or []),
+        workstream_id=str(work_item.workstream_id or finding.workstream_id or ""),
+        title=str(work_item.title or finding.title or ""),
+        summary=str(work_item.summary or finding.summary or ""),
+        lane=str(finding.lane or ""),
+    )
+    lane = str(finding.lane or "bug").strip().lower() or "bug"
+    labels = [
+        "teamos",
+        "source:self-upgrade",
+        f"type:{lane if lane in ('feature', 'bug', 'process') else 'bug'}",
+        f"module:{_module_slug(module)}",
+        _task_issue_stage_label(doc),
+        _version_label(str(finding.version_bump or "")),
+    ]
+    milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
+    if milestone_title:
+        labels.append(f"milestone:{_module_slug(milestone_title)}")
+    return sorted({str(x).strip() for x in labels if str(x).strip()})
+
+
+def _task_issue_audit_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
+    audit = doc.get("self_upgrade_audit") or {}
+    if not isinstance(audit, dict):
+        audit = {}
+    lane = str(audit.get("classification") or finding.lane or "").strip().lower() or str(finding.lane or "bug").strip().lower() or "bug"
+    closure = str(audit.get("closure") or audit.get("status") or "pending").strip() or "pending"
+    feedback = [str(x).strip() for x in (audit.get("feedback") or []) if str(x).strip()]
+    lines = [
+        f"- 审计角色: {role_display_zh(str(audit.get('audit_role') or ROLE_ISSUE_AUDIT_AGENT))} ({str(audit.get('audit_role') or ROLE_ISSUE_AUDIT_AGENT)})",
+        f"- 当前状态: {str(audit.get('status') or 'pending')}",
+        f"- 问题分类: {_issue_type_token(lane)}",
+        f"- 闭环性: {closure}",
+        f"- 值得进入开发: {'是' if bool(audit.get('worth_doing', True)) else '否'}",
+        f"- 需要文档同步: {'是' if bool(audit.get('docs_required', False)) else '否'}",
+    ]
+    if str(audit.get("summary") or "").strip():
+        lines.append(f"- 审计结论: {str(audit.get('summary') or '').strip()}")
+    lines.extend([f"- 审计反馈: {item}" for item in feedback] or ["- 审计反馈: （待审计）"])
+    return lines
+
+
+def _task_issue_documentation_lines(doc: dict[str, Any], *, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> list[str]:
+    policy = doc.get("documentation_policy") or {}
+    if not isinstance(policy, dict):
+        policy = {}
+    if not policy:
+        policy = _default_documentation_policy(finding=finding, work_item=work_item)
+    allowed_paths = [str(x).strip() for x in (policy.get("allowed_paths") or []) if str(x).strip()]
+    lines = [
+        f"- 文档角色: {role_display_zh(str(policy.get('documentation_role') or ROLE_DOCUMENTATION_AGENT))} ({str(policy.get('documentation_role') or ROLE_DOCUMENTATION_AGENT)})",
+        f"- 是否必需: {'是' if bool(policy.get('required')) else '否'}",
+        f"- 当前状态: {str(policy.get('status') or ('pending' if bool(policy.get('required')) else 'not_required'))}",
+        f"- 同步理由: {str(policy.get('rationale') or '(无)')}",
+    ]
+    if allowed_paths:
+        lines.append(f"- 允许更新路径: {', '.join(allowed_paths)}")
+    else:
+        lines.append("- 允许更新路径: （未指定）")
+    return lines
+
+
+def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding) -> Optional[int]:
+    lane = str(finding.lane or "").strip().lower()
+    milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
+    if lane not in ("feature", "bug") or not milestone_title or not repo_locator:
+        return None
+    description = f"Team OS self-upgrade release milestone for {milestone_title}."
+    try:
+        return ensure_milestone(repo_locator, title=milestone_title, description=description)
+    except (GitHubAuthError, GitHubIssuesBusError):
+        return None
 
 
 def list_proposals(*, lane: str = "", status: str = "") -> list[dict[str, Any]]:
@@ -995,6 +1721,14 @@ def _update_proposal_record(
         doc["status"] = str(status).strip().upper()
     if isinstance(extra, dict):
         doc.update(extra)
+    doc["module"] = _normalize_module_name(
+        str(doc.get("module") or "").strip(),
+        paths=[str(x).strip() for x in (doc.get("files") or []) if str(x).strip()],
+        workstream_id=str(doc.get("workstream_id") or ""),
+        title=str(doc.get("title") or ""),
+        summary=str(doc.get("summary") or ""),
+        lane=str(doc.get("lane") or ""),
+    )
     doc["updated_at"] = now
     items[pid] = doc
     state_doc["items"] = items
@@ -1003,56 +1737,63 @@ def _update_proposal_record(
 
 
 def _proposal_issue_title(doc: dict[str, Any]) -> str:
-    pid = str(doc.get("proposal_id") or "").strip()
-    title = str(doc.get("title") or "Untitled feature proposal").strip()
-    repo_root = Path(str(doc.get("repo_root") or "."))
-    return f"[Feature Proposal][{repo_root.name}][{pid}] {title}".strip()
-
-
-def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
-    status = str(doc.get("status") or "").strip().lower() or "pending_confirmation"
-    return ["teamos", "self-upgrade", "feature-proposal", f"proposal-{status}"]
+    title = str(doc.get("title") or "未命名功能提案").strip()
+    module = _proposal_module(doc)
+    lane = str(doc.get("lane") or "feature").strip().lower() or "feature"
+    return f"[{_issue_type_token(lane)}][{module}] {title}".strip()
 
 
 def _proposal_issue_body(doc: dict[str, Any]) -> str:
+    module = _proposal_module(doc)
+    milestone_title = ""
+    if str(doc.get("status") or "").strip().upper() == "MATERIALIZED":
+        milestone_title = _milestone_title_for_target_version(str(doc.get("target_version") or ""))
     lines = [
-        f"<!-- teamos:feature-proposal:{str(doc.get('proposal_id') or '').strip()} -->",
-        "# Feature Proposal Discussion",
+        _proposal_issue_marker(doc),
+        "# 功能提案讨论",
         "",
-        f"- proposal_id: {doc.get('proposal_id') or ''}",
-        f"- repo_locator: {doc.get('repo_locator') or ''}",
-        f"- status: {doc.get('status') or ''}",
-        f"- version_bump: {doc.get('version_bump') or ''}",
-        f"- target_version: {doc.get('target_version') or ''}",
-        f"- cooldown_until: {doc.get('cooldown_until') or ''}",
+        f"- 提案 ID: {doc.get('proposal_id') or ''}",
+        f"- Module: {module}",
+        f"- 仓库定位: {doc.get('repo_locator') or ''}",
+        f"- 当前状态: {doc.get('status') or ''}",
+        f"- 版本变更: {doc.get('version_bump') or ''}",
+        f"- 目标版本: {doc.get('target_version') or ''}",
+        f"- 目标里程碑: {milestone_title or '(待批准后分配)'}",
+        f"- 冷静期截止: {doc.get('cooldown_until') or ''}",
         "",
-        "## Summary",
+        "## 概要",
         "",
-        str(doc.get("summary") or "").strip() or "(empty)",
+        _normalize_issue_text(str(doc.get("summary") or "").strip()),
         "",
-        "## Rationale",
+        "## 背景与原因",
         "",
-        str(doc.get("rationale") or "").strip() or "(empty)",
+        _normalize_issue_text(str(doc.get("rationale") or "").strip()),
         "",
-        "## Work Items",
+        "## 拆分工作项",
         "",
     ]
     work_items = list(doc.get("work_items") or [])
     if work_items:
         for raw in work_items:
             item = raw if isinstance(raw, dict) else {}
-            lines.append(f"- {str(item.get('title') or '').strip()} [{str(item.get('owner_role') or 'Coding-Agent').strip()}]")
+            lines.append(f"- {str(item.get('title') or '').strip() or '(未命名工作项)'} [{role_display_zh(_normalize_owner_role(str(item.get('owner_role') or '').strip(), str(doc.get('lane') or 'feature')))}]")
     else:
-        lines.append("- (none)")
+        lines.append("- （无）")
     lines.extend(
         [
             "",
-            "## How To Reply",
+            "## 范围约束",
             "",
-            "- Ask questions directly in this issue; the Team OS discussion agent will reply and adjust the proposal.",
-            "- Reply `/approve` or `确认` after you are satisfied.",
-            "- Reply `/hold` or `暂缓` to pause the proposal.",
-            "- Reply `/reject` or `不做` to cancel the proposal.",
+            "- 这是 proposal discussion issue，不直接进入编码执行。",
+            "- 只有在你明确确认后，Team OS 才会拆分 execution work items 并分配 milestone。",
+            "- 开发 issue 会单独创建，并遵守 [Type][Module] xxx 命名与单模块约束。",
+            "",
+            "## 如何回复",
+            "",
+            "- 直接在这个 issue 里提问即可，Team OS 的需求答复 Agent 会回复并调整提案。",
+            "- 如果确认进入开发，请回复 `/approve` 或 `确认`。",
+            "- 如果要暂缓，请回复 `/hold` 或 `暂缓`。",
+            "- 如果决定不做，请回复 `/reject` 或 `不做`。",
             "",
         ]
     )
@@ -1067,6 +1808,17 @@ def _discussion_issue_number(doc: dict[str, Any]) -> int:
 
 
 def _ensure_proposal_discussion_issue(proposal: dict[str, Any]) -> dict[str, Any]:
+    proposal = _localize_proposal_doc_to_zh(proposal)
+    proposal = _update_proposal_record(
+        str(proposal.get("proposal_id") or ""),
+        title=str(proposal.get("title") or "").strip(),
+        summary=str(proposal.get("summary") or "").strip(),
+        extra={
+            "module": _proposal_module(proposal),
+            "rationale": str(proposal.get("rationale") or "").strip(),
+            "work_items": list(proposal.get("work_items") or []),
+        },
+    )
     repo_locator = str(proposal.get("repo_locator") or "").strip()
     if not repo_locator:
         return dict(proposal)
@@ -1074,12 +1826,13 @@ def _ensure_proposal_discussion_issue(proposal: dict[str, Any]) -> dict[str, Any
     title = _proposal_issue_title(proposal)
     body = _proposal_issue_body(proposal)
     labels = _proposal_issue_labels(proposal)
+    marker = _proposal_issue_marker(proposal)
     try:
         if issue_number > 0:
-            issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state="open")
+            issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state="open", milestone=None)
         else:
-            issue = ensure_issue(repo_locator, title=title, body=body, allow_create=True, labels=labels)
-            issue = update_issue(repo_locator, issue.number, title=title, body=body, labels=labels, state="open")
+            issue = ensure_issue(repo_locator, title=title, body=body, allow_create=True, labels=labels, marker=marker)
+            issue = update_issue(repo_locator, issue.number, title=title, body=body, labels=labels, state="open", milestone=None)
     except (GitHubAuthError, GitHubIssuesBusError) as e:
         return _update_proposal_record(
             str(proposal.get("proposal_id") or ""),
@@ -1166,7 +1919,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
         ],
     }
     agent = Agent(
-        role="Issue Discussion Agent",
+        role=ROLE_ISSUE_DISCUSSION_AGENT,
         goal="Respond to feature proposal questions, clarify scope, and update the proposal without starting development until the user confirms.",
         backstory="You act like the PM-side feature discussion owner. You answer questions, tighten the feature shape, and only approve development when the user is explicit.",
         llm=llm,
@@ -1181,8 +1934,10 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             "Rules:\n"
             "- If the user is only asking questions or suggesting changes, keep action=pending or hold.\n"
             "- Only set action=approve when the user explicitly confirms the feature should proceed.\n"
-            "- You may refine title, summary, or version_bump if the user feedback clearly changes the scope.\n"
-            "- Keep the reply concise and directly answer the user's latest questions.\n\n"
+            "- You may refine title, summary, version_bump, or module if the user feedback clearly changes the scope.\n"
+            "- module must stay a single stable value such as Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- Keep the reply concise and directly answer the user's latest questions.\n"
+            "- 所有 reply_body、title、summary 必须使用简体中文。\n\n"
             f"Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         ),
         expected_output="A structured JSON discussion reply.",
@@ -1228,6 +1983,7 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
                 reply = kickoff_proposal_discussion(proposal=proposal, comments=new_comments, verbose=verbose)
             except Exception:
                 reply = _discussion_fallback_reply(proposal=proposal, comments_text=comments_text, explicit_action=explicit_action)
+            reply = _localize_discussion_response_to_zh(reply)
             action = explicit_action or str(reply.action or "").strip().lower()
             if action in ("approve", "reject", "hold"):
                 proposal = decide_proposal(
@@ -1237,14 +1993,20 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
                     summary=str(reply.summary or "").strip(),
                     version_bump=str(reply.version_bump or "").strip(),
                 )
+                if str(reply.module or "").strip():
+                    proposal = _update_proposal_record(
+                        str(proposal.get("proposal_id") or ""),
+                        extra={"module": str(reply.module or "").strip()},
+                    )
             else:
                 proposal = _update_proposal_record(
                     str(proposal.get("proposal_id") or ""),
                     title=str(reply.title or "").strip(),
                     summary=str(reply.summary or "").strip(),
                     version_bump=str(reply.version_bump or "").strip(),
-                    extra={"status": "PENDING_CONFIRMATION"},
+                    extra={"status": "PENDING_CONFIRMATION", "module": str(reply.module or "").strip()},
                 )
+            proposal = _ensure_proposal_discussion_issue(proposal)
             marker = f"<!-- teamos:proposal-reply:{str(proposal.get('proposal_id') or '').strip()}:{latest_comment_id} -->"
             upsert_comment_with_marker(
                 repo_locator,
@@ -1305,6 +2067,30 @@ def _upsert_proposal(
     current_version: str,
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
+    finding = _localize_finding_to_zh(finding)
+    if finding.work_items:
+        finding = finding.model_copy(
+            update={
+                "work_items": [
+                    w.model_copy(
+                        update={
+                            "module": _normalize_module_name(
+                                str(w.module or finding.module or "").strip(),
+                                paths=list(w.allowed_paths or finding.files or []),
+                                workstream_id=str(w.workstream_id or finding.workstream_id or ""),
+                                title=str(w.title or finding.title or ""),
+                                summary=str(w.summary or finding.summary or ""),
+                                lane=str(finding.lane or ""),
+                            ),
+                            "owner_role": _normalize_owner_role(w.owner_role, finding.lane),
+                            "review_role": _normalize_review_role(w.review_role),
+                            "qa_role": _normalize_qa_role(w.qa_role),
+                        }
+                    )
+                    for w in finding.work_items
+                ]
+            }
+        )
     proposal_id = _proposal_id_for_finding(repo_locator=repo_locator, repo_root=repo_root, finding=finding)
     state = _read_proposals_state()
     items = state.get("items") if isinstance(state.get("items"), dict) else {}
@@ -1325,6 +2111,7 @@ def _upsert_proposal(
         "proposal_id": proposal_id,
         "lane": finding.lane,
         "kind": finding.kind,
+        "module": str(existing.get("module") or finding.module or _normalize_module_name(paths=list(finding.files or []), workstream_id=finding.workstream_id, title=finding.title, summary=finding.summary, lane=finding.lane)),
         "title": str(existing.get("title") or finding.title),
         "summary": str(existing.get("summary") or finding.summary),
         "rationale": str(existing.get("rationale") or finding.rationale),
@@ -1381,12 +2168,22 @@ def _proposal_due(doc: dict[str, Any]) -> bool:
         return True
 
 
-def _find_existing_task(*, project_id: str, title: str, repo_locator: str, repo_root: Path) -> Optional[dict[str, Any]]:
+def _find_existing_task(*, project_id: str, title: str, repo_locator: str, repo_root: Path, finding_fingerprint: str = "", work_item_key: str = "") -> Optional[dict[str, Any]]:
     d = _task_ledger_dir(project_id)
     if not d.exists():
         return None
     for p in sorted(d.glob("*.yaml")):
         doc = _load_yaml(p)
+        orchestration = doc.get("orchestration") or {}
+        if not isinstance(orchestration, dict):
+            orchestration = {}
+        if (
+            finding_fingerprint
+            and work_item_key
+            and str(orchestration.get("finding_fingerprint") or "").strip() == str(finding_fingerprint).strip()
+            and str(orchestration.get("work_item_key") or "").strip() == str(work_item_key).strip()
+        ):
+            return {"task_id": str(doc.get("id") or "").strip(), "ledger_path": str(p), "doc": doc}
         if str(doc.get("title") or "").strip() != title:
             continue
         repo = doc.get("repo") or {}
@@ -1409,8 +2206,27 @@ def _ensure_task_record(
     issue: _IssueRecord,
     proposal_id: str = "",
 ) -> dict[str, Any]:
+    finding = _localize_finding_to_zh(finding)
+    matched_work_item = next((w for w in (finding.work_items or []) if str(w.worktree_hint or "") == str(work_item.worktree_hint or "") or str(w.title or "") == str(work_item.title or "")), None)
+    if matched_work_item is not None:
+        work_item = matched_work_item
+    work_item = work_item.model_copy(
+        update={
+            "owner_role": _normalize_owner_role(work_item.owner_role, finding.lane),
+            "review_role": _normalize_review_role(work_item.review_role),
+            "qa_role": _normalize_qa_role(work_item.qa_role),
+        }
+    )
     title = _task_title_for_work_item(finding, work_item)
-    existing = _find_existing_task(project_id=panel_project_id, title=title, repo_locator=repo_locator, repo_root=repo_root)
+    work_item_key = _work_item_key(work_item)
+    existing = _find_existing_task(
+        project_id=panel_project_id,
+        title=title,
+        repo_locator=repo_locator,
+        repo_root=repo_root,
+        finding_fingerprint=_finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding),
+        work_item_key=work_item_key,
+    )
     if existing:
         task_id = str(existing.get("task_id") or "").strip()
         ledger_path = Path(str(existing.get("ledger_path") or ""))
@@ -1443,7 +2259,49 @@ def _ensure_task_record(
         title=work_item.title or finding.title,
         raw_hint=str(existing_execution.get("worktree_path") or work_item.worktree_hint or ""),
     )
-    work_item = work_item.model_copy(update={"worktree_hint": normalized_worktree_hint})
+    normalized_module = _normalize_module_name(
+        str(work_item.module or finding.module or "").strip(),
+        paths=list(work_item.allowed_paths or finding.files or []),
+        workstream_id=str(work_item.workstream_id or finding.workstream_id or ""),
+        title=str(work_item.title or finding.title or ""),
+        summary=str(work_item.summary or finding.summary or ""),
+        lane=str(finding.lane or ""),
+    )
+    work_item = work_item.model_copy(update={"worktree_hint": normalized_worktree_hint, "module": normalized_module})
+    finding = finding.model_copy(update={"module": _normalize_module_name(str(finding.module or normalized_module), paths=list(finding.files or work_item.allowed_paths or []), workstream_id=str(finding.workstream_id or ""), title=str(finding.title or ""), summary=str(finding.summary or ""), lane=str(finding.lane or ""))})
+    existing_audit = doc.get("self_upgrade_audit") or {}
+    if not isinstance(existing_audit, dict):
+        existing_audit = {}
+    default_docs = _default_documentation_policy(finding=finding, work_item=work_item)
+    existing_docs = doc.get("documentation_policy") or {}
+    if not isinstance(existing_docs, dict):
+        existing_docs = {}
+    documentation_policy = {
+        "required": bool(existing_docs.get("required", default_docs["required"])),
+        "status": str(existing_docs.get("status") or default_docs["status"]),
+        "allowed_paths": [str(x).strip() for x in (existing_docs.get("allowed_paths") or default_docs["allowed_paths"]) if str(x).strip()],
+        "rationale": str(existing_docs.get("rationale") or default_docs["rationale"]),
+        "documentation_role": str(existing_docs.get("documentation_role") or default_docs["documentation_role"] or ROLE_DOCUMENTATION_AGENT),
+        "updated_at": str(existing_docs.get("updated_at") or _utc_now_iso()),
+        "completed_at": str(existing_docs.get("completed_at") or ""),
+        "summary": str(existing_docs.get("summary") or ""),
+        "changed_files": [str(x).strip() for x in (existing_docs.get("changed_files") or []) if str(x).strip()],
+        "followups": [str(x).strip() for x in (existing_docs.get("followups") or []) if str(x).strip()],
+    }
+    audit_doc = {
+        "status": str(existing_audit.get("status") or "pending"),
+        "classification": str(existing_audit.get("classification") or finding.lane),
+        "module": str(existing_audit.get("module") or normalized_module),
+        "worth_doing": bool(existing_audit.get("worth_doing", True)),
+        "closure": str(existing_audit.get("closure") or "pending"),
+        "docs_required": bool(existing_audit.get("docs_required", documentation_policy["required"])),
+        "summary": str(existing_audit.get("summary") or ""),
+        "feedback": [str(x).strip() for x in (existing_audit.get("feedback") or []) if str(x).strip()],
+        "audit_role": str(existing_audit.get("audit_role") or ROLE_ISSUE_AUDIT_AGENT),
+        "updated_at": str(existing_audit.get("updated_at") or _utc_now_iso()),
+        "approved_at": str(existing_audit.get("approved_at") or ""),
+        "issue_title_snapshot": str(existing_audit.get("issue_title_snapshot") or ""),
+    }
 
     repo_doc = doc.get("repo") or {}
     if not isinstance(repo_doc, dict):
@@ -1468,7 +2326,13 @@ def _ensure_task_record(
     doc["updated_at"] = _utc_now_iso()
     doc["owners"] = [work_item.owner_role]
     doc["owner_role"] = work_item.owner_role
-    doc["roles_involved"] = [work_item.owner_role, work_item.review_role, work_item.qa_role]
+    doc["roles_involved"] = [
+        ROLE_ISSUE_AUDIT_AGENT,
+        work_item.owner_role,
+        work_item.review_role,
+        work_item.qa_role,
+        str(documentation_policy.get("documentation_role") or ROLE_DOCUMENTATION_AGENT),
+    ]
     doc["need_pm_decision"] = False
     doc["orchestration"] = {
         "engine": "crewai",
@@ -1476,12 +2340,14 @@ def _ensure_task_record(
         "finding_kind": finding.kind,
         "finding_lane": finding.lane,
         "finding_fingerprint": _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding),
+        "work_item_key": work_item_key,
         "proposal_id": proposal_id,
     }
     doc["workflows"] = ["SelfUpgrade"]
     doc["self_upgrade"] = {
         "kind": finding.kind,
         "lane": finding.lane,
+        "module": finding.module,
         "summary": finding.summary,
         "rationale": finding.rationale,
         "impact": finding.impact,
@@ -1512,6 +2378,8 @@ def _ensure_task_record(
         "commit_sha": str(existing_execution.get("commit_sha") or ""),
         "closed_at": str(existing_execution.get("closed_at") or ""),
     }
+    doc["self_upgrade_audit"] = audit_doc
+    doc["documentation_policy"] = documentation_policy
     doc["execution_policy"] = {
         "issue_only_scope": True,
         "allowed_paths": list(work_item.allowed_paths or []),
@@ -1519,51 +2387,119 @@ def _ensure_task_record(
         "commit_message_template": f"{task_id}: {work_item.title}",
         "issue_id_required": True,
         "no_extra_optimization": True,
+        "module": normalized_module,
         "review_role": work_item.review_role,
         "qa_role": work_item.qa_role,
+        "documentation_role": str(documentation_policy.get("documentation_role") or ROLE_DOCUMENTATION_AGENT),
     }
     _write_yaml(ledger_path, doc)
+    try:
+        sync_out = sync_task_issue_from_doc(doc)
+        if sync_out.get("ok") and str(sync_out.get("url") or "").strip():
+            links["issue"] = str(sync_out.get("url") or "").strip()
+            doc["links"] = links
+            _write_yaml(ledger_path, doc)
+    except Exception:
+        pass
     return {"task_id": task_id, "ledger_path": str(ledger_path)}
 
 
-def _issue_body(*, repo_root: Path, repo_locator: str, finding: UpgradeFinding, work_item: UpgradeWorkItem, fingerprint: str) -> str:
+def _issue_body(
+    *,
+    repo_root: Path,
+    repo_locator: str,
+    finding: UpgradeFinding,
+    work_item: UpgradeWorkItem,
+    fingerprint: str,
+    marker: str = "",
+    doc: Optional[dict[str, Any]] = None,
+) -> str:
+    module = _normalize_module_name(
+        str(work_item.module or finding.module or "").strip(),
+        paths=list(work_item.allowed_paths or finding.files or []),
+        workstream_id=str(work_item.workstream_id or finding.workstream_id or ""),
+        title=str(work_item.title or finding.title or ""),
+        summary=str(work_item.summary or finding.summary or ""),
+        lane=str(finding.lane or ""),
+    )
+    milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
+    issue_marker = str(marker or "").strip() or f"<!-- teamos:self_upgrade:{fingerprint} -->"
     lines = [
-        f"<!-- teamos:self_upgrade:{fingerprint} -->",
-        "# Self-Upgrade Finding",
+        issue_marker,
+        "# 自升级任务",
         "",
-        f"- kind: {finding.kind}",
-        f"- lane: {finding.lane}",
-        f"- repo_locator: {repo_locator}",
-        f"- repo_root: {repo_root}",
-        f"- impact: {finding.impact}",
-        f"- owner_role: {work_item.owner_role}",
-        f"- review_role: {work_item.review_role}",
-        f"- qa_role: {work_item.qa_role}",
-        f"- version_bump: {finding.version_bump}",
-        f"- target_version: {finding.target_version}",
+        f"- 类型: {_issue_type_token(finding.lane)}",
+        f"- Module: {module}",
+        f"- 仓库定位: {repo_locator}",
+        f"- 仓库路径: {repo_root}",
+        f"- 影响等级: {finding.impact}",
+        f"- 版本变更: {finding.version_bump}",
+        f"- 目标版本: {finding.target_version}",
+        f"- 目标里程碑: {milestone_title or '(无)'}",
         "",
-        "## Summary",
+        "## 任务概要",
         "",
-        work_item.summary or finding.summary,
+        _normalize_issue_text(work_item.summary or finding.summary),
         "",
-        "## Rationale",
+        "## 背景与原因",
         "",
-        finding.rationale or "(none)",
+        _normalize_issue_text(finding.rationale, empty_fallback="(无)"),
         "",
-        "## Execution Policy",
-        "",
-        f"- worktree_hint: {work_item.worktree_hint or '(none)'}",
-        "- issue_only_scope: true",
-        "- no_extra_optimization: true",
-        "",
-        "## Affected Files",
+        "## 范围内",
         "",
     ]
-    lines.extend([f"- {x}" for x in (work_item.allowed_paths or finding.files or [])] or ["- (not specified)"])
-    lines.extend(["", "## Tests", ""])
-    lines.extend([f"- {x}" for x in (work_item.tests or finding.tests or [])] or ["- (not specified)"])
-    lines.extend(["", "## Acceptance", ""])
-    lines.extend([f"- {x}" for x in (work_item.acceptance or finding.acceptance or [])] or ["- (not specified)"])
+    lines.extend([f"- {x}" for x in (work_item.allowed_paths or finding.files or [])] or ["- （未指定）"])
+    lines.extend(
+        [
+            "",
+            "## 范围外",
+            "",
+            "- 除上述路径外均不在本工单范围内。",
+            "- 不允许顺手优化、额外重构或修改无关模块。",
+            "",
+            "## 测试与验证",
+            "",
+        ]
+    )
+    lines.extend([f"- {x}" for x in (work_item.tests or finding.tests or [])] or ["- （未指定）"])
+    lines.extend(["", "## 验收标准", ""])
+    lines.extend([f"- {x}" for x in (work_item.acceptance or finding.acceptance or [])] or ["- （未指定）"])
+    lines.extend(
+        [
+            "",
+            "## 风险与回滚",
+            "",
+            "- 如验证失败或 QA 未通过，必须回退本任务改动并保持 issue 处于 blocked/reopened 状态。",
+            "- 任何超出 allowed_paths 的改动都应视为越界并驳回。",
+            "",
+            "## 审计状态",
+            "",
+        ]
+    )
+    lines.extend(_task_issue_audit_lines(doc or {}, finding=finding))
+    lines.extend(
+        [
+            "",
+            "## 文档同步",
+            "",
+        ]
+    )
+    lines.extend(_task_issue_documentation_lines(doc or {}, finding=finding, work_item=work_item))
+    lines.extend(
+        [
+            "",
+            "## 执行约束",
+            "",
+            f"- 编码角色: {role_display_zh(work_item.owner_role)} ({work_item.owner_role})",
+            f"- 评审角色: {role_display_zh(work_item.review_role)} ({work_item.review_role})",
+            f"- QA 角色: {role_display_zh(work_item.qa_role)} ({work_item.qa_role})",
+            f"- worktree_hint: {work_item.worktree_hint or '(无)'}",
+            "- issue_only_scope: true",
+            "- no_extra_optimization: true",
+            "- 提交信息必须包含任务号，格式示例: TASK-ID: 标题",
+            "",
+        ]
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -1571,18 +2507,218 @@ def _issue_body(*, repo_root: Path, repo_locator: str, finding: UpgradeFinding, 
 def _ensure_issue_record(*, repo_locator: str, repo_root: Path, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> _IssueRecord:
     if not repo_locator:
         return _IssueRecord(title=_issue_title_for_work_item(repo_root.name, finding, work_item), error="missing_repo_locator")
+    finding = _localize_finding_to_zh(finding)
+    work_item = work_item.model_copy(
+        update={
+            "module": _normalize_module_name(
+                str(work_item.module or finding.module or "").strip(),
+                paths=list(work_item.allowed_paths or finding.files or []),
+                workstream_id=str(work_item.workstream_id or finding.workstream_id or ""),
+                title=str(work_item.title or finding.title or ""),
+                summary=str(work_item.summary or finding.summary or ""),
+                lane=str(finding.lane or ""),
+            )
+        }
+    )
+    finding = finding.model_copy(update={"module": _normalize_module_name(str(finding.module or work_item.module), paths=list(finding.files or work_item.allowed_paths or []), workstream_id=str(finding.workstream_id or ""), title=str(finding.title or ""), summary=str(finding.summary or ""), lane=str(finding.lane or ""))})
     title = _issue_title_for_work_item(repo_root.name, finding, work_item)
     fingerprint = _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding) + "-" + _slug(work_item.title, default="work")
+    marker = _task_issue_marker(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
+    body = _issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint, marker=marker, doc=doc)
+    labels = _task_issue_labels(doc={}, finding=finding, work_item=work_item)
+    milestone = _task_issue_milestone_number(repo_locator=repo_locator, finding=finding)
     try:
         issue = ensure_issue(
             repo_locator,
             title=title,
-            body=_issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint),
+            body=body,
             allow_create=True,
+            labels=labels,
+            milestone=milestone,
+            marker=marker,
         )
+        issue = update_issue(repo_locator, issue.number, title=title, body=body, labels=labels, state="open", milestone=milestone)
         return _IssueRecord(title=title, url=str(issue.url or ""))
     except (GitHubAuthError, GitHubIssuesBusError) as e:
         return _IssueRecord(title=title, error=str(e)[:500])
+
+
+def _issue_number_from_url(issue_url: str) -> int:
+    m = re.search(r"/issues/(?P<number>\d+)(?:$|[?#])", str(issue_url or "").strip())
+    return int(m.group("number")) if m else 0
+
+
+def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    finding, work_item = _finding_from_task_doc(doc)
+    if finding is None or work_item is None:
+        return {"ok": False, "reason": "missing_self_upgrade_finding"}
+    repo = doc.get("repo") or {}
+    if not isinstance(repo, dict):
+        repo = {}
+    repo_locator = str(repo.get("locator") or "").strip()
+    repo_root = Path(str(repo.get("source_workdir") or repo.get("workdir") or team_os_root())).resolve()
+    if not repo_locator:
+        return {"ok": False, "reason": "missing_repo_locator"}
+    links = doc.get("links") or {}
+    if not isinstance(links, dict):
+        links = {}
+    issue_number = _issue_number_from_url(str(links.get("issue") or ""))
+    title = _issue_title_for_work_item(repo_root.name, finding, work_item)
+    fingerprint = str((((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("finding_fingerprint")) or _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding))
+    marker = _task_issue_marker(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
+    body = _issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint, marker=marker)
+    labels = _task_issue_labels(doc=doc, finding=finding, work_item=work_item)
+    milestone = _task_issue_milestone_number(repo_locator=repo_locator, finding=finding)
+    issue_state = "closed" if str(doc.get("status") or "").strip().lower() in ("closed", "done") else "open"
+    try:
+        if issue_number > 0:
+            issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state=issue_state, milestone=milestone)
+        else:
+            created = _ensure_issue_record(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
+            if created.error or not created.url:
+                return {"ok": False, "reason": created.error or "issue_create_failed", "title": created.title}
+            issue_number = _issue_number_from_url(created.url)
+            issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state=issue_state, milestone=milestone)
+            links["issue"] = str(issue.url or created.url)
+            doc["links"] = links
+        return {"ok": True, "number": int(issue.number), "url": str(issue.url or ""), "title": str(issue.title or title), "labels": labels, "milestone": milestone or 0}
+    except (GitHubAuthError, GitHubIssuesBusError) as e:
+        return {"ok": False, "reason": str(e)[:500], "title": title}
+
+
+def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding], Optional[UpgradeWorkItem]]:
+    su = doc.get("self_upgrade") or {}
+    if not isinstance(su, dict):
+        return None, None
+    work_item_raw = su.get("work_item") or {}
+    if not isinstance(work_item_raw, dict):
+        work_item_raw = {}
+    try:
+        work_item = UpgradeWorkItem(
+            title=str(work_item_raw.get("title") or doc.get("title") or "").strip() or str(doc.get("title") or "未命名任务"),
+            summary=str(work_item_raw.get("summary") or su.get("summary") or "").strip(),
+            owner_role=_normalize_owner_role(str(work_item_raw.get("owner_role") or doc.get("owner_role") or "").strip(), str(su.get("lane") or "bug")),
+            review_role=_normalize_review_role(str(work_item_raw.get("review_role") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role") or "").strip()),
+            qa_role=_normalize_qa_role(str(work_item_raw.get("qa_role") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("qa_role") or "").strip()),
+            workstream_id=str(work_item_raw.get("workstream_id") or doc.get("workstream_id") or su.get("workstream_id") or "general").strip() or "general",
+            allowed_paths=[str(x).strip() for x in (work_item_raw.get("allowed_paths") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("allowed_paths") or su.get("files") or []) if str(x).strip()],
+            tests=[str(x).strip() for x in (work_item_raw.get("tests") or su.get("tests") or []) if str(x).strip()],
+            acceptance=[str(x).strip() for x in (work_item_raw.get("acceptance") or su.get("acceptance") or []) if str(x).strip()],
+            worktree_hint=str(work_item_raw.get("worktree_hint") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("worktree_hint") or "").strip(),
+            module=_normalize_module_name(
+                str(work_item_raw.get("module") or su.get("module") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("module") or "").strip(),
+                paths=[str(x).strip() for x in (work_item_raw.get("allowed_paths") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("allowed_paths") or su.get("files") or []) if str(x).strip()],
+                workstream_id=str(work_item_raw.get("workstream_id") or doc.get("workstream_id") or su.get("workstream_id") or "general").strip(),
+                title=str(work_item_raw.get("title") or doc.get("title") or "").strip(),
+                summary=str(work_item_raw.get("summary") or su.get("summary") or "").strip(),
+                lane=str(su.get("lane") or "bug"),
+            ),
+        )
+        finding = UpgradeFinding(
+            kind=str(su.get("kind") or "BUG").strip() or "BUG",
+            lane=str(su.get("lane") or "bug").strip() or "bug",
+            title=str(work_item.title or doc.get("title") or "未命名任务").strip(),
+            summary=str(su.get("summary") or work_item.summary or "").strip(),
+            module=_normalize_module_name(
+                str(su.get("module") or work_item.module or "").strip(),
+                paths=[str(x).strip() for x in (su.get("files") or work_item.allowed_paths or []) if str(x).strip()],
+                workstream_id=str(doc.get("workstream_id") or work_item.workstream_id or "general").strip(),
+                title=str(work_item.title or doc.get("title") or ""),
+                summary=str(su.get("summary") or work_item.summary or ""),
+                lane=str(su.get("lane") or "bug"),
+            ),
+            rationale=str(su.get("rationale") or "").strip(),
+            impact=str(su.get("impact") or "MED").strip() or "MED",
+            workstream_id=str(doc.get("workstream_id") or work_item.workstream_id or "general").strip() or "general",
+            files=[str(x).strip() for x in (su.get("files") or work_item.allowed_paths or []) if str(x).strip()],
+            tests=[str(x).strip() for x in (su.get("tests") or work_item.tests or []) if str(x).strip()],
+            acceptance=[str(x).strip() for x in (su.get("acceptance") or work_item.acceptance or []) if str(x).strip()],
+            version_bump=str(su.get("version_bump") or "patch").strip() or "patch",
+            target_version=str(su.get("target_version") or "").strip(),
+            baseline_action=str(su.get("baseline_action") or "").strip(),
+            requires_user_confirmation=bool(su.get("requires_user_confirmation") or False),
+            cooldown_hours=int(su.get("cooldown_hours") or 0),
+            work_items=[work_item],
+        )
+        return finding, work_item
+    except Exception:
+        return None, None
+
+
+def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos") -> dict[str, Any]:
+    stats = {"proposals": 0, "proposal_issues": 0, "tasks": 0, "task_issues": 0, "errors": 0}
+    for proposal in list_proposals():
+        try:
+            pid = str(proposal.get("proposal_id") or "").strip()
+            if not pid:
+                continue
+            localized = _localize_proposal_doc_to_zh(proposal)
+            localized = _update_proposal_record(
+                pid,
+                title=str(localized.get("title") or "").strip(),
+                summary=str(localized.get("summary") or "").strip(),
+                extra={
+                    "module": _proposal_module(localized),
+                    "rationale": str(localized.get("rationale") or "").strip(),
+                    "work_items": list(localized.get("work_items") or []),
+                },
+            )
+            stats["proposals"] += 1
+            if str(localized.get("repo_locator") or "").strip():
+                _ensure_proposal_discussion_issue(localized)
+                stats["proposal_issues"] += 1
+        except Exception:
+            stats["errors"] += 1
+    for ledger_path in sorted(_task_ledger_dir(project_id).glob("*.yaml")):
+        try:
+            doc = _load_yaml(ledger_path)
+            if not isinstance(doc, dict) or str(((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("flow") or "").strip().lower() != "self_upgrade":
+                continue
+            localized_doc = _localize_task_doc_to_zh(doc)
+            finding, work_item = _finding_from_task_doc(localized_doc)
+            if finding is not None and work_item is not None:
+                localized_doc["title"] = _task_title_for_work_item(finding, work_item)
+                repo_info = localized_doc.get("repo") or {}
+                if not isinstance(repo_info, dict):
+                    repo_info = {}
+                repo_locator_for_fp = str(repo_info.get("locator") or "").strip()
+                repo_root_for_fp = Path(str(repo_info.get("source_workdir") or repo_info.get("workdir") or team_os_root())).resolve()
+                orchestration = localized_doc.get("orchestration") or {}
+                if isinstance(orchestration, dict):
+                    orchestration = dict(orchestration)
+                    orchestration["finding_fingerprint"] = str(
+                        orchestration.get("finding_fingerprint")
+                        or _finding_fingerprint(repo_locator=repo_locator_for_fp, repo_root=repo_root_for_fp, finding=finding)
+                    )
+                    orchestration["work_item_key"] = str(orchestration.get("work_item_key") or _work_item_key(work_item))
+                    localized_doc["orchestration"] = orchestration
+                su = localized_doc.get("self_upgrade") or {}
+                if isinstance(su, dict):
+                    su = dict(su)
+                    su["module"] = finding.module
+                    wi = su.get("work_item") or {}
+                    if isinstance(wi, dict):
+                        wi = dict(wi)
+                        wi["module"] = work_item.module
+                        su["work_item"] = wi
+                    localized_doc["self_upgrade"] = su
+                execution_policy = localized_doc.get("execution_policy") or {}
+                if isinstance(execution_policy, dict):
+                    execution_policy = dict(execution_policy)
+                    execution_policy["module"] = work_item.module
+                    localized_doc["execution_policy"] = execution_policy
+            if localized_doc != doc:
+                _write_yaml(ledger_path, localized_doc)
+            stats["tasks"] += 1
+            sync_out = sync_task_issue_from_doc(localized_doc)
+            if sync_out.get("ok"):
+                _write_yaml(ledger_path, localized_doc)
+                stats["task_issues"] += 1
+            elif str(sync_out.get("reason") or "").strip():
+                stats["errors"] += 1
+        except Exception:
+            stats["errors"] += 1
+    return stats
 
 
 def _sync_panel(*, db, project_id: str) -> dict[str, Any]:
@@ -1595,48 +2731,48 @@ def _sync_panel(*, db, project_id: str) -> dict[str, Any]:
 
 def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str) -> dict[str, str]:
     return {
-        "Product-Manager": db.register_agent(
-            role_id="Product-Manager",
+        ROLE_PRODUCT_MANAGER: db.register_agent(
+            role_id=ROLE_PRODUCT_MANAGER,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,
             state="RUNNING",
             current_action="discovering feature opportunities",
         ),
-        "Test-Manager": db.register_agent(
-            role_id="Test-Manager",
+        ROLE_TEST_MANAGER: db.register_agent(
+            role_id=ROLE_TEST_MANAGER,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,
             state="RUNNING",
             current_action="scanning bugs and test gaps",
         ),
-        "Issue-Drafter": db.register_agent(
-            role_id="Issue-Drafter",
+        ROLE_ISSUE_DRAFTER: db.register_agent(
+            role_id=ROLE_ISSUE_DRAFTER,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,
             state="RUNNING",
             current_action="splitting work into executable items",
         ),
-        "Review-Agent": db.register_agent(
-            role_id="Review-Agent",
+        ROLE_REVIEW_AGENT: db.register_agent(
+            role_id=ROLE_REVIEW_AGENT,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,
             state="RUNNING",
             current_action="checking scope and review gates",
         ),
-        "QA-Agent": db.register_agent(
-            role_id="QA-Agent",
+        ROLE_QA_AGENT: db.register_agent(
+            role_id=ROLE_QA_AGENT,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,
             state="RUNNING",
             current_action="reviewing QA and acceptance gates",
         ),
-        "Process-Optimization-Analyst": db.register_agent(
-            role_id="Process-Optimization-Analyst",
+        ROLE_PROCESS_OPTIMIZATION_ANALYST: db.register_agent(
+            role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,

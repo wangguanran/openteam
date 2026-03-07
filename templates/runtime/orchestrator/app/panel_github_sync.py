@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -14,6 +15,7 @@ from .github_projects_client import (
     PROJECT_QUERY_REPO_BY_NUMBER,
     PROJECT_QUERY_USER_BY_NUMBER,
     UPDATE_ITEM_FIELD_MUTATION,
+    UPDATE_DRAFT_ISSUE_MUTATION,
     GitHubAPIError,
     GitHubAuthError,
     GitHubGraphQL,
@@ -69,6 +71,25 @@ def _parse_date_from_iso(ts: str) -> str:
     if len(ts) >= 10:
         return ts[:10]
     return ""
+
+
+def _issue_style_type(kind: str = "", lane: str = "") -> str:
+    raw = _lower(lane or kind)
+    if raw in ("bug", "ci", "regression"):
+        return "Bug"
+    if raw in ("process", "ops", "maintenance"):
+        return "Process"
+    return "Feature"
+
+
+def _panel_item_title(raw_title: str, *, kind: str = "", lane: str = "", module: str = "") -> str:
+    title = _norm(raw_title)
+    if not title:
+        return "[Feature][General] 未命名事项"
+    if re.match(r"^\[(Bug|Feature|Process)\]\[[^\]]+\]\s+\S+", title):
+        return title
+    mod = _norm(module) or "General"
+    return f"[{_issue_style_type(kind=kind, lane=lane)}][{mod}] {title}"
 
 
 def _load_tasks(project_id: str) -> list[dict[str, Any]]:
@@ -139,7 +160,8 @@ def _load_self_upgrade_feature_proposals(project_id: str) -> list[dict[str, Any]
         doc = raw if isinstance(raw, dict) else {}
         if str(doc.get("project_id") or "teamos").strip() != str(project_id):
             continue
-        if str(doc.get("lane") or "").strip().lower() != "feature":
+        lane = str(doc.get("lane") or "").strip().lower()
+        if lane not in ("feature", "process"):
             continue
         status = str(doc.get("status") or "").strip().upper()
         if status in ("REJECTED", "MATERIALIZED"):
@@ -193,7 +215,12 @@ def _desired_items(
     # Tasks
     for t in _load_tasks(project_id):
         tid = str(t.get("id") or "").strip()
-        title = str(t.get("title") or "").strip()
+        title = _panel_item_title(
+            str(t.get("title") or "").strip(),
+            kind=str((((t.get("self_upgrade") or {}) if isinstance(t.get("self_upgrade"), dict) else {}).get("kind")) or ""),
+            lane=str((((t.get("self_upgrade") or {}) if isinstance(t.get("self_upgrade"), dict) else {}).get("lane")) or ""),
+            module=str((((t.get("self_upgrade") or {}) if isinstance(t.get("self_upgrade"), dict) else {}).get("module")) or (((t.get("execution_policy") or {}) if isinstance(t.get("execution_policy"), dict) else {}).get("module")) or ""),
+        )
         state = str(t.get("status") or t.get("state") or "").strip()
         wsid = str(t.get("workstream_id") or "general").strip()
         risk = str(t.get("risk_level") or t.get("risk") or "").strip()
@@ -214,14 +241,14 @@ def _desired_items(
             DesiredItem(
                 key=tid,
                 kind="TASK",
-                title=f"[TASK] {tid} {title}".strip(),
+                title=title,
                 body="\n".join(
                     [
-                        f"Task ID: {tid}",
-                        f"Ledger: {t.get('artifacts', {}).get('ledger', t.get('_path', ''))}",
-                        f"Logs: {t.get('artifacts', {}).get('logs_dir', '')}",
+                        f"任务 ID: {tid}",
+                        f"台账: {t.get('artifacts', {}).get('ledger', t.get('_path', ''))}",
+                        f"日志: {t.get('artifacts', {}).get('logs_dir', '')}",
                         "",
-                        "Links:",
+                        "关联信息:",
                         links_text or "(none)",
                     ]
                 ).strip()
@@ -329,10 +356,16 @@ def _desired_items(
             )
         )
 
-    # Feature proposals waiting for discussion / confirmation.
+    # Self-upgrade proposals waiting for discussion / confirmation.
     for p in _load_self_upgrade_feature_proposals(project_id):
         proposal_id = str(p.get("proposal_id") or "").strip()
         status = str(p.get("status") or "").strip().upper()
+        panel_title = _panel_item_title(
+            str(p.get("discussion_issue_title") or p.get("title") or "").strip(),
+            kind=str(p.get("kind") or ""),
+            lane=str(p.get("lane") or "feature"),
+            module=str(p.get("module") or ""),
+        )
         links_text = "\n".join(
             [
                 f"discussion_issue={str(p.get('discussion_issue_url') or '').strip()}",
@@ -344,18 +377,18 @@ def _desired_items(
             DesiredItem(
                 key=f"FEATURE_PROPOSAL:{proposal_id}",
                 kind="DECISION",
-                title=f"[FEATURE] {proposal_id} {str(p.get('title') or '').strip()}".strip(),
+                title=panel_title,
                 body="\n".join(
                     [
-                        f"Feature proposal: {proposal_id}",
-                        f"Status: {status}",
-                        f"Target version: {str(p.get('target_version') or '').strip()}",
-                        f"Cooldown until: {str(p.get('cooldown_until') or '').strip()}",
+                        f"提案 ID: {proposal_id}",
+                        f"状态: {status}",
+                        f"目标版本: {str(p.get('target_version') or '').strip()}",
+                        f"冷静期截止: {str(p.get('cooldown_until') or '').strip()}",
                         "",
-                        "Summary:",
+                        "概要:",
                         str(p.get("summary") or "").strip() or "(none)",
                         "",
-                        "Discussion issue:",
+                        "讨论 issue:",
                         str(p.get("discussion_issue_url") or "").strip() or "(missing)",
                     ]
                 ).strip()
@@ -670,6 +703,7 @@ class GitHubProjectsPanelSync:
         for it in desired:
             item = existing_by_key.get(it.key)
             item_id = str((item or {}).get("id") or "").strip()
+            item_content = ((item or {}).get("content") or {}) if isinstance((item or {}).get("content"), dict) else {}
             is_new = False
             if not item_id:
                 try:
@@ -680,6 +714,18 @@ class GitHubProjectsPanelSync:
                 except Exception as e:
                     stats["errors"] += 1
                     errors.append(f"create_item_failed key={it.key}: {e}")
+                    continue
+            else:
+                try:
+                    if str(item_content.get("__typename") or "") == "DraftIssue":
+                        draft_issue_id = str(item_content.get("id") or "").strip()
+                        current_title = str(item_content.get("title") or "").strip()
+                        current_body = str(item_content.get("body") or "").strip()
+                        if draft_issue_id and (current_title != it.title or current_body != it.body):
+                            gh.graphql(UPDATE_DRAFT_ISSUE_MUTATION, {"draftIssueId": draft_issue_id, "title": it.title, "body": it.body})
+                except Exception as e:
+                    stats["errors"] += 1
+                    errors.append(f"update_draft_issue_failed key={it.key}: {e}")
                     continue
 
             # Prepare values

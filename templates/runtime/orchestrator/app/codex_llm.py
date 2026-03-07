@@ -141,3 +141,22 @@ def codex_exec_json(
             os.remove(out_path)
         except OSError:
             pass
+
+
+def codex_exec_structured(
+    *,
+    prompt: str,
+    schema: dict[str, Any],
+    timeout_sec: int = 90,
+    model: Optional[str] = None,
+) -> CodexResult:
+    with tempfile.NamedTemporaryFile(prefix="teamos_codex_schema_", suffix=".json", delete=False, mode="w", encoding="utf-8") as schema_f:
+        json.dump(schema, schema_f, ensure_ascii=False, indent=2)
+        schema_path = schema_f.name
+    try:
+        return codex_exec_json(prompt=prompt, schema_path=schema_path, timeout_sec=timeout_sec, model=model)
+    finally:
+        try:
+            os.remove(schema_path)
+        except OSError:
+            pass

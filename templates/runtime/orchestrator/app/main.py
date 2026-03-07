@@ -298,12 +298,12 @@ _SELF_UPGRADE_LOCK = threading.Lock()
 _SELF_UPGRADE_DELIVERY_LOCK = threading.Lock()
 _SELF_UPGRADE_STALE_AGENT_ROLES = frozenset(
     {
-        "Product-Manager",
-        "Test-Manager",
-        "Issue-Drafter",
-        "Review-Agent",
-        "QA-Agent",
-        "Process-Optimization-Analyst",
+        crewai_self_upgrade.ROLE_PRODUCT_MANAGER,
+        crewai_self_upgrade.ROLE_TEST_MANAGER,
+        crewai_self_upgrade.ROLE_ISSUE_DRAFTER,
+        crewai_self_upgrade.ROLE_REVIEW_AGENT,
+        crewai_self_upgrade.ROLE_QA_AGENT,
+        crewai_self_upgrade.ROLE_PROCESS_OPTIMIZATION_ANALYST,
         "Scheduler-Agent",
         "Release-Agent",
         "Process-Metrics-Agent",
