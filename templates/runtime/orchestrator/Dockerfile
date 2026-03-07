@@ -13,6 +13,8 @@ ARG TEAMOS_APT_MIRROR_URL=http://deb.debian.org/debian
 ARG TEAMOS_APT_SECURITY_MIRROR_URL=http://deb.debian.org/debian-security
 ARG TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
 ARG TEAMOS_CREWAI_GIT_REF=main
+ARG TEAMOS_NODE_VERSION=24.12.0
+ARG TEAMOS_OPENCLAW_VERSION=2026.3.2
 ARG TEAMOS_PIP_INDEX_URL=https://pypi.org/simple
 ARG TEAMOS_PIP_TRUSTED_HOST=
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,8 +39,26 @@ RUN set -eux; \
     fi
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl git \
+    && apt-get install -y --no-install-recommends ca-certificates curl git xz-utils \
     && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+      amd64) node_arch='x64' ;; \
+      arm64) node_arch='arm64' ;; \
+      *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors -fsSL "https://nodejs.org/dist/v${TEAMOS_NODE_VERSION}/node-v${TEAMOS_NODE_VERSION}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz; \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1; \
+    rm -f /tmp/node.tar.xz; \
+    node --version; \
+    npm --version; \
+    npm config set fetch-retries 5; \
+    npm config set fetch-retry-mintimeout 20000; \
+    npm config set fetch-retry-maxtimeout 120000; \
+    npm install -g "openclaw@${TEAMOS_OPENCLAW_VERSION}"; \
+    openclaw --help >/dev/null
 
 COPY requirements.txt /app/requirements.txt
 RUN python - <<'PY' > /tmp/requirements-base.txt

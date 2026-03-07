@@ -82,6 +82,19 @@ def _issue_style_type(kind: str = "", lane: str = "") -> str:
     return "Feature"
 
 
+def _milestone_status_key(state: str) -> str:
+    raw = _lower(state)
+    if raw == "released":
+        return "DONE"
+    if raw in ("release-candidate", "frozen"):
+        return "IN_REVIEW"
+    if raw == "blocked":
+        return "BLOCKED"
+    if raw == "active":
+        return "IN_PROGRESS"
+    return "TODO"
+
+
 def _panel_item_title(raw_title: str, *, kind: str = "", lane: str = "", module: str = "") -> str:
     title = _norm(raw_title)
     if not title:
@@ -411,14 +424,19 @@ def _desired_items(
     # Milestones from plan overlay
     for m in list_milestones(project_id):
         links_text = _join_links(m.links)
+        panel_title = _panel_item_title(f"跟踪 {m.title} 版本发布", kind="PROCESS", lane="process", module="Release")
         items.append(
             DesiredItem(
                 key=f"MILESTONE:{m.milestone_id}",
                 kind="MILESTONE",
-                title=f"[MILESTONE] {m.milestone_id} {m.title}".strip(),
+                title=panel_title,
                 body="\n".join(
                     [
                         f"Milestone: {m.milestone_id}",
+                        f"状态: {m.state}",
+                        f"发布线: {m.release_line or '(none)'}",
+                        f"目标版本: {m.target_version or '(none)'}",
+                        f"统计: total={m.total_items} open={m.open_items} blocked={m.blocked_items} done={m.done_items}",
                         "",
                         m.objective or "",
                         "",
@@ -434,7 +452,7 @@ def _desired_items(
                 ).strip()
                 + "\n",
                 workstreams=[str(x) for x in (m.workstreams or [])] or ["general"],
-                status_key="TODO",
+                status_key=_milestone_status_key(m.state),
                 risk_key="LOW",
                 need_pm=False,
                 focus=focus_obj,

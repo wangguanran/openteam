@@ -1919,6 +1919,111 @@ def cmd_self_upgrade_delivery_tasks(args: argparse.Namespace) -> None:
     print(_fmt_table(["task_id", "status", "stage", "owner_role", "attempts", "pull_request", "title"], rows))
 
 
+def cmd_openclaw_status(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    out = _http_json("GET", base + "/v1/openclaw/status")
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"openclaw.available={bool(out.get('available'))}")
+    print(f"openclaw.enabled={bool(out.get('enabled'))}")
+    print(f"openclaw.configured={bool(out.get('configured'))}")
+    print(f"openclaw.bin_path={str(out.get('bin_path') or '')}")
+    print(f"openclaw.config_file={str(out.get('config_file') or '')}")
+    print(f"openclaw.channel={str(out.get('channel') or '')}")
+    print(f"openclaw.target={str(out.get('target') or '')}")
+    print(f"openclaw.gateway_mode={str(out.get('gateway_mode') or '')}")
+    print(f"openclaw.gateway_url={str(out.get('gateway_url') or '')}")
+    print(f"openclaw.gateway_transport={str(out.get('gateway_transport') or '')}")
+    print(f"openclaw.gateway_state_dir={str(out.get('gateway_state_dir') or '')}")
+    print(f"openclaw.allow_insecure_private_ws={bool(out.get('allow_insecure_private_ws'))}")
+    print(f"openclaw.path_patterns={','.join([str(x) for x in (out.get('path_patterns') or [])])}")
+    print(f"openclaw.event_types={','.join([str(x) for x in (out.get('event_types') or [])])}")
+    health = out.get("health") or {}
+    print(f"openclaw.health_ok={bool(health.get('ok'))}")
+    state = out.get("state") or {}
+    print(f"openclaw.cursor={state.get('cursor', 0)}")
+    print(f"openclaw.last_run_at={state.get('last_run_at', '')}")
+    print(f"openclaw.last_error={state.get('last_error', '')}")
+
+
+def cmd_openclaw_config(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    enabled = None
+    if bool(getattr(args, "enable", False)):
+        enabled = True
+    elif bool(getattr(args, "disable", False)):
+        enabled = False
+    payload = {
+        "enabled": enabled,
+        "channel": str(getattr(args, "channel", "") or "").strip() or None,
+        "target": str(getattr(args, "target", "") or "").strip() or None,
+        "gateway_mode": str(getattr(args, "gateway_mode", "") or "").strip() or None,
+        "gateway_url": str(getattr(args, "gateway_url", "") or "").strip() or None,
+        "gateway_token": str(getattr(args, "gateway_token", "") or "").strip() or None,
+        "gateway_password": str(getattr(args, "gateway_password", "") or "").strip() or None,
+        "gateway_transport": str(getattr(args, "gateway_transport", "") or "").strip() or None,
+        "gateway_state_dir": str(getattr(args, "gateway_state_dir", "") or "").strip() or None,
+        "allow_insecure_private_ws": True if bool(getattr(args, "allow_insecure_private_ws", False)) else (False if bool(getattr(args, "disallow_insecure_private_ws", False)) else None),
+        "path_patterns": [str(x).strip() for x in (getattr(args, "path", []) or []) if str(x).strip()] or None,
+        "event_types": [str(x).strip() for x in (getattr(args, "event_type", []) or []) if str(x).strip()] or None,
+        "exclude_event_types": [str(x).strip() for x in (getattr(args, "exclude_event_type", []) or []) if str(x).strip()] or None,
+        "message_prefix": str(getattr(args, "message_prefix", "") or "").strip() or None,
+    }
+    out = _http_json("POST", base + "/v1/openclaw/config", payload)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    cfg = out.get("config") or {}
+    print(f"openclaw.enabled={bool(cfg.get('enabled'))}")
+    print(f"openclaw.channel={str(cfg.get('channel') or '')}")
+    print(f"openclaw.target={str(cfg.get('target') or '')}")
+    print(f"openclaw.gateway_mode={str(cfg.get('gateway_mode') or '')}")
+    print(f"openclaw.gateway_url={str(cfg.get('gateway_url') or '')}")
+    print(f"openclaw.gateway_transport={str(cfg.get('gateway_transport') or '')}")
+    print(f"openclaw.gateway_state_dir={str(cfg.get('gateway_state_dir') or '')}")
+    print(f"openclaw.allow_insecure_private_ws={bool(cfg.get('allow_insecure_private_ws'))}")
+    print(f"openclaw.path_patterns={','.join([str(x) for x in (cfg.get('path_patterns') or [])])}")
+    print(f"openclaw.event_types={','.join([str(x) for x in (cfg.get('event_types') or [])])}")
+
+
+def cmd_openclaw_test(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    payload = {
+        "message": str(getattr(args, "message", "") or "").strip() or "Team OS OpenClaw test message",
+        "channel": str(getattr(args, "channel", "") or "").strip() or None,
+        "target": str(getattr(args, "target", "") or "").strip() or None,
+        "path": str(getattr(args, "path", "") or "").strip() or None,
+        "dry_run": bool(getattr(args, "dry_run", False)),
+    }
+    out = _http_json("POST", base + "/v1/openclaw/report/test", payload)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"ok={bool(out.get('ok'))}")
+    print(f"channel={str(out.get('channel') or '')}")
+    print(f"target={str(out.get('target') or '')}")
+    print(out.get("message") or "")
+
+
+def cmd_openclaw_sweep(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    payload = {
+        "dry_run": bool(getattr(args, "dry_run", False)),
+        "limit": int(getattr(args, "limit", 100) or 100),
+    }
+    out = _http_json("POST", base + "/v1/openclaw/sweep", payload)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"ok={bool(out.get('ok'))}")
+    print(f"scanned={out.get('scanned', 0)}")
+    print(f"sent={out.get('sent', 0)}")
+    print(f"skipped={out.get('skipped', 0)}")
+    errs = out.get("errors") or []
+    print(f"errors={len(errs)}")
+
+
 def cmd_daemon_start(args: argparse.Namespace) -> None:
     """
     Legacy daemon mode has been removed.
@@ -2948,6 +3053,45 @@ def main(argv: Optional[list[str]] = None) -> int:
     sidt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
     sidt.add_argument("--json", action="store_true", help="print raw JSON")
     sidt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
+
+    ocs = sp.add_parser("openclaw-status", help="Show Team OS OpenClaw reporting status and detection")
+    ocs.add_argument("--json", action="store_true", help="print raw JSON")
+    ocs.set_defaults(fn=cmd_openclaw_status)
+
+    occ = sp.add_parser("openclaw-config", help="Configure Team OS OpenClaw reporting route")
+    occ.add_argument("--enable", action="store_true", help="enable OpenClaw reporting")
+    occ.add_argument("--disable", action="store_true", help="disable OpenClaw reporting")
+    occ.add_argument("--channel", default="", help="channel id, for example telegram")
+    occ.add_argument("--target", default="", help="target id, for example a Telegram chat id or @channel")
+    occ.add_argument("--gateway-mode", default="", help="gateway mode override, usually remote")
+    occ.add_argument("--gateway-url", default="", help="gateway websocket url, for example ws://host.docker.internal:18789")
+    occ.add_argument("--gateway-token", default="", help="gateway token override")
+    occ.add_argument("--gateway-password", default="", help="gateway password override")
+    occ.add_argument("--gateway-transport", default="", help="gateway transport, for example direct")
+    occ.add_argument("--gateway-state-dir", default="", help="persistent OpenClaw client state dir")
+    occ.add_argument("--allow-insecure-private-ws", action="store_true", help="allow ws:// to a private non-loopback gateway")
+    occ.add_argument("--disallow-insecure-private-ws", action="store_true", help="forbid ws:// to a private non-loopback gateway")
+    occ.add_argument("--path", action="append", default=[], help="repo path glob to report, repeatable; use * for all")
+    occ.add_argument("--event-type", action="append", default=[], help="event type glob to report, repeatable")
+    occ.add_argument("--exclude-event-type", action="append", default=[], help="event type glob to exclude, repeatable")
+    occ.add_argument("--message-prefix", default="", help="message title prefix")
+    occ.add_argument("--json", action="store_true", help="print raw JSON")
+    occ.set_defaults(fn=cmd_openclaw_config)
+
+    oct = sp.add_parser("openclaw-test", help="Send a test report through OpenClaw")
+    oct.add_argument("--message", default="Team OS OpenClaw test message", help="message body")
+    oct.add_argument("--channel", default="", help="override configured channel")
+    oct.add_argument("--target", default="", help="override configured target")
+    oct.add_argument("--path", default="", help="optional repo path for route matching context")
+    oct.add_argument("--dry-run", action="store_true", help="render and validate without sending")
+    oct.add_argument("--json", action="store_true", help="print raw JSON")
+    oct.set_defaults(fn=cmd_openclaw_test)
+
+    ocsw = sp.add_parser("openclaw-sweep", help="Process queued runtime events through OpenClaw once")
+    ocsw.add_argument("--dry-run", action="store_true", help="match and render without sending")
+    ocsw.add_argument("--limit", type=int, default=100, help="max events to process in one sweep")
+    ocsw.add_argument("--json", action="store_true", help="print raw JSON")
+    ocsw.set_defaults(fn=cmd_openclaw_sweep)
 
     args = p.parse_args(argv)
     try:

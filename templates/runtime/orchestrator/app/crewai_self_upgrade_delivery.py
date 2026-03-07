@@ -553,7 +553,7 @@ def _update_task_state(
                 links = {}
             links["issue"] = str(sync_out.get("url") or "").strip()
             doc["links"] = links
-            _write_yaml(ledger_path, doc)
+        _write_yaml(ledger_path, doc)
     except Exception:
         pass
     return doc

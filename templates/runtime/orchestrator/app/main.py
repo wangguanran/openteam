@@ -18,6 +18,7 @@ from .demo_seed import seed_mock_data
 from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraphQL, RATE_LIMIT_QUERY, resolve_github_token
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
+from .plan_store import list_milestones
 from . import redis_bus
 from .requirements_store import (
     RequirementsError,
@@ -32,6 +33,7 @@ from . import crewai_orchestrator
 from . import crewai_self_upgrade
 from . import crewai_self_upgrade_delivery
 from . import crewai_runtime
+from . import openclaw_reporter
 from . import crew_tools
 from .state_store import (
     StateError,
@@ -984,6 +986,37 @@ def _startup_background_threads() -> None:
     sdt = threading.Thread(target=_self_upgrade_delivery_loop, name="self-upgrade-delivery-loop", daemon=True)
     sdt.start()
 
+    def _openclaw_reporting_loop() -> None:
+        if not _env_truthy("TEAMOS_OPENCLAW_AUTO", "0"):
+            return
+        interval_sec = max(15, int(os.getenv("TEAMOS_OPENCLAW_INTERVAL_SEC", "30") or "30"))
+        initial_delay_sec = max(3, int(os.getenv("TEAMOS_OPENCLAW_INITIAL_DELAY_SEC", "10") or "10"))
+        try:
+            time.sleep(initial_delay_sec)
+            while True:
+                try:
+                    if not _leader_write_allowed():
+                        time.sleep(interval_sec)
+                        continue
+                    _ = openclaw_reporter.sweep_events(db=DB, dry_run=False, limit=200)
+                except Exception as e:
+                    try:
+                        DB.add_event(
+                            event_type="OPENCLAW_REPORTING_LOOP_FAILED",
+                            actor="control-plane.openclaw-loop",
+                            project_id="teamos",
+                            workstream_id=_default_workstream_id(),
+                            payload={"error": str(e)[:300]},
+                        )
+                    except Exception:
+                        pass
+                time.sleep(interval_sec)
+        except Exception:
+            pass
+
+    oct = threading.Thread(target=_openclaw_reporting_loop, name="openclaw-reporting-loop", daemon=True)
+    oct.start()
+
     # Startup indicator for optional Redis runtime bus.
     try:
         DB.add_event(
@@ -1105,6 +1138,36 @@ class SelfUpgradeProposalDecisionIn(BaseModel):
     version_bump: Optional[str] = None
 
 
+class OpenClawConfigIn(BaseModel):
+    enabled: Optional[bool] = None
+    channel: Optional[str] = None
+    target: Optional[str] = None
+    gateway_mode: Optional[str] = None
+    gateway_url: Optional[str] = None
+    gateway_token: Optional[str] = None
+    gateway_password: Optional[str] = None
+    gateway_transport: Optional[str] = None
+    gateway_state_dir: Optional[str] = None
+    allow_insecure_private_ws: Optional[bool] = None
+    path_patterns: Optional[list[str]] = None
+    event_types: Optional[list[str]] = None
+    exclude_event_types: Optional[list[str]] = None
+    message_prefix: Optional[str] = None
+
+
+class OpenClawReportTestIn(BaseModel):
+    message: Optional[str] = None
+    channel: Optional[str] = None
+    target: Optional[str] = None
+    path: Optional[str] = None
+    dry_run: bool = False
+
+
+class OpenClawSweepIn(BaseModel):
+    dry_run: bool = False
+    limit: int = Field(default=100, ge=1, le=500)
+
+
 class RunStartIn(BaseModel):
     project_id: str = "teamos"
     workstream_id: str = "general"
@@ -1188,6 +1251,9 @@ def v1_status():
     proposals = crewai_self_upgrade.list_proposals()
     delivery_tasks = crewai_self_upgrade_delivery.list_delivery_tasks()
     delivery_summary = crewai_self_upgrade_delivery.delivery_summary()
+    milestones = [m.__dict__ for m in list_milestones("teamos")]
+    openclaw_status = openclaw_reporter.detect_openclaw(probe_health=False)
+    openclaw_status["state"] = openclaw_reporter.load_state()
     pending_proposals = [
         p
         for p in proposals
@@ -1223,7 +1289,15 @@ def v1_status():
                 "active_tasks": [t for t in delivery_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release")][:20],
                 "blocked_tasks": [t for t in delivery_tasks if str(t.get("status") or "") == "blocked"][:20],
             },
+            "milestones": {
+                "total": len(milestones),
+                "active": len([m for m in milestones if str(m.get("state") or "") == "active"]),
+                "blocked": len([m for m in milestones if str(m.get("state") or "") == "blocked"]),
+                "release_candidate": len([m for m in milestones if str(m.get("state") or "") == "release-candidate"]),
+                "items": milestones[:20],
+            },
         },
+        "openclaw": openclaw_status,
         "pending_decisions": pending,
         "redis_bus": redis_bus.describe(),
     }
@@ -2253,6 +2327,64 @@ def v1_self_upgrade_discussions_sync():
     _require_leader_write()
     out = _run_self_upgrade_discussion_sync(actor="self_upgrade_discussion_api")
     return {"ok": True, **out}
+
+
+@app.get("/v1/self_upgrade/milestones")
+def v1_self_upgrade_milestones(
+    project_id: str = Query(default="teamos"),
+    state: str = Query(default=""),
+):
+    items = [m.__dict__ for m in list_milestones(str(project_id or "teamos").strip() or "teamos")]
+    state_filter = str(state or "").strip().lower()
+    if state_filter:
+        items = [m for m in items if str(m.get("state") or "").strip().lower() == state_filter]
+    return {"total": len(items), "milestones": items}
+
+
+@app.get("/v1/openclaw/status")
+def v1_openclaw_status():
+    out = openclaw_reporter.detect_openclaw()
+    out["state"] = openclaw_reporter.load_state()
+    return out
+
+
+@app.get("/v1/openclaw/config")
+def v1_openclaw_config():
+    return {"config": openclaw_reporter.load_config()}
+
+
+@app.post("/v1/openclaw/config")
+def v1_openclaw_config_update(payload: OpenClawConfigIn):
+    _require_leader_write()
+    patch = payload.model_dump(exclude_none=True)
+    config = openclaw_reporter.save_config(patch)
+    DB.add_event(
+        event_type="OPENCLAW_CONFIG_UPDATED",
+        actor="openclaw_api",
+        project_id="teamos",
+        workstream_id=_default_workstream_id(),
+        payload={"config": config},
+    )
+    return {"ok": True, "config": config, "status": openclaw_reporter.detect_openclaw()}
+
+
+@app.post("/v1/openclaw/report/test")
+def v1_openclaw_report_test(payload: OpenClawReportTestIn):
+    _require_leader_write()
+    out = openclaw_reporter.report_manual(
+        message=str(payload.message or "").strip() or "Team OS OpenClaw test message",
+        channel=str(payload.channel or "").strip(),
+        target=str(payload.target or "").strip(),
+        path=str(payload.path or "").strip(),
+        dry_run=bool(payload.dry_run),
+    )
+    return out
+
+
+@app.post("/v1/openclaw/sweep")
+def v1_openclaw_sweep(payload: OpenClawSweepIn):
+    _require_leader_write()
+    return openclaw_reporter.sweep_events(db=DB, dry_run=bool(payload.dry_run), limit=int(payload.limit or 100))
 
 
 @app.get("/v1/self_upgrade/delivery/tasks")

@@ -19,6 +19,7 @@ from .github_issues_bus import GitHubIssuesBusError, ensure_issue, ensure_milest
 from .github_projects_client import GitHubAPIError, GitHubAuthError
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, get_project_cfg, load_mapping
+from .plan_store import upsert_runtime_milestone
 from .state_store import ledger_tasks_dir, runtime_state_root, team_os_root
 from . import workspace_store
 
@@ -94,6 +95,7 @@ ROLE_PROCESS_OPTIMIZATION_ANALYST = "Process-Optimization-Analyst"
 ROLE_ISSUE_DISCUSSION_AGENT = "Issue-Discussion-Agent"
 ROLE_ISSUE_AUDIT_AGENT = "Issue-Audit-Agent"
 ROLE_DOCUMENTATION_AGENT = "Documentation-Agent"
+ROLE_MILESTONE_MANAGER = "Milestone-Manager-Agent"
 ROLE_FEATURE_CODING_AGENT = "Feature-Coding-Agent"
 ROLE_BUGFIX_CODING_AGENT = "Bugfix-Coding-Agent"
 ROLE_PROCESS_OPTIMIZATION_AGENT = "Process-Optimization-Agent"
@@ -108,6 +110,7 @@ ROLE_DISPLAY_ZH = {
     ROLE_ISSUE_DISCUSSION_AGENT: "需求答复 Agent",
     ROLE_ISSUE_AUDIT_AGENT: "问题审计 Agent",
     ROLE_DOCUMENTATION_AGENT: "文档同步 Agent",
+    ROLE_MILESTONE_MANAGER: "里程碑经理 Agent",
     ROLE_FEATURE_CODING_AGENT: "功能编码 Agent",
     ROLE_BUGFIX_CODING_AGENT: "缺陷修复 Agent",
     ROLE_PROCESS_OPTIMIZATION_AGENT: "流程优化编码 Agent",
@@ -332,6 +335,56 @@ def _milestone_title_for_target_version(version: str) -> str:
     if not ver or not re.search(r"^\d+\.\d+\.\d+$", ver):
         return ""
     return f"v{ver}"
+
+
+def _milestone_id_for_title(title: str) -> str:
+    return _module_slug(title or "")
+
+
+def _release_line_for_finding(finding: UpgradeFinding) -> str:
+    lane = str(finding.lane or "").strip().lower()
+    version_bump = str(finding.version_bump or "").strip().lower()
+    if lane == "bug" or version_bump == "patch":
+        return "patch"
+    if version_bump == "major":
+        return "major"
+    if version_bump == "minor":
+        return "minor"
+    return "none"
+
+
+def _milestone_schedule(release_line: str) -> tuple[str, str, str]:
+    import datetime as _dt
+
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    lead_days = {
+        "patch": 7,
+        "minor": 14,
+        "major": 30,
+    }.get(str(release_line or "").strip().lower(), 10)
+    target = today + _dt.timedelta(days=lead_days)
+    start_date = today.isoformat()
+    target_date = target.isoformat()
+    due_on = f"{target_date}T00:00:00Z"
+    return start_date, target_date, due_on
+
+
+def _milestone_state_from_metrics(*, total_items: int, blocked_items: int, done_items: int) -> str:
+    if total_items <= 0:
+        return "draft"
+    if blocked_items > 0 and done_items < total_items:
+        return "blocked"
+    if done_items >= total_items:
+        return "release-candidate"
+    return "active"
+
+
+def _release_issue_marker(*, project_id: str, milestone_id: str) -> str:
+    return f"<!-- teamos:release-milestone:{str(project_id or '').strip()}:{str(milestone_id or '').strip()} -->"
+
+
+def _release_issue_title(*, milestone_title: str) -> str:
+    return f"[Process][Release] 跟踪 {str(milestone_title or '').strip()} 版本发布".strip()
 
 
 def _proposal_issue_marker(doc: dict[str, Any]) -> str:
@@ -1561,7 +1614,10 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
         _task_issue_stage_label(doc),
         _version_label(str(finding.version_bump or "")),
     ]
-    milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
+    milestone_doc = doc.get("self_upgrade_milestone") or {}
+    if not isinstance(milestone_doc, dict):
+        milestone_doc = {}
+    milestone_title = str(milestone_doc.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
     if milestone_title:
         labels.append(f"milestone:{_module_slug(milestone_title)}")
     return sorted({str(x).strip() for x in labels if str(x).strip()})
@@ -1608,7 +1664,303 @@ def _task_issue_documentation_lines(doc: dict[str, Any], *, finding: UpgradeFind
     return lines
 
 
-def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding) -> Optional[int]:
+def _task_issue_milestone_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
+    milestone = doc.get("self_upgrade_milestone") or {}
+    if not isinstance(milestone, dict):
+        milestone = {}
+    milestone_title = str(milestone.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
+    lines = [
+        f"- 里程碑角色: {role_display_zh(str(milestone.get('manager_role') or ROLE_MILESTONE_MANAGER))} ({str(milestone.get('manager_role') or ROLE_MILESTONE_MANAGER)})",
+        f"- 发布线: {str(milestone.get('release_line') or _release_line_for_finding(finding) or '(无)')}",
+        f"- 当前状态: {str(milestone.get('state') or 'draft')}",
+        f"- 目标版本: {str(milestone.get('target_version') or finding.target_version or '')}",
+        f"- GitHub Milestone: {milestone_title or '(无)'}",
+    ]
+    if int(milestone.get("github_milestone_number") or 0) > 0:
+        lines[-1] = f"- GitHub Milestone: {milestone_title or '(无)'} (#{int(milestone.get('github_milestone_number') or 0)})"
+    if str(milestone.get("release_issue_url") or "").strip():
+        issue_number = int(milestone.get("release_issue_number") or 0)
+        issue_text = f"#{issue_number}" if issue_number > 0 else str(milestone.get("release_issue_url") or "").strip()
+        lines.append(f"- Release Issue: {issue_text} {str(milestone.get('release_issue_url') or '').strip()}".strip())
+    lines.append(
+        f"- 当前任务统计: total={int(milestone.get('total_items') or 0)}, open={int(milestone.get('open_items') or 0)}, blocked={int(milestone.get('blocked_items') or 0)}, done={int(milestone.get('done_items') or 0)}"
+    )
+    return lines
+
+
+def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    total_items = 0
+    open_items = 0
+    blocked_items = 0
+    done_items = 0
+    workstreams: set[str] = set()
+    links: list[str] = []
+    tasks: list[dict[str, Any]] = []
+
+    def _collect(doc: dict[str, Any]) -> None:
+        nonlocal total_items, open_items, blocked_items, done_items
+        if not isinstance(doc, dict):
+            return
+        orchestration = doc.get("orchestration") or {}
+        if not isinstance(orchestration, dict) or str(orchestration.get("flow") or "").strip().lower() != "self_upgrade":
+            return
+        milestone = doc.get("self_upgrade_milestone") or {}
+        if not isinstance(milestone, dict) or str(milestone.get("milestone_id") or "").strip() != milestone_id:
+            return
+        total_items += 1
+        status = str(doc.get("status") or "").strip().lower()
+        if status in ("done", "closed"):
+            done_items += 1
+        else:
+            open_items += 1
+        if status in ("blocked", "needs_clarification", "merge_conflict"):
+            blocked_items += 1
+        workstream = str(doc.get("workstream_id") or "").strip()
+        if workstream:
+            workstreams.add(workstream)
+        issue_url = str((((doc.get("links") or {}) if isinstance(doc.get("links"), dict) else {}).get("issue")) or "").strip()
+        if issue_url:
+            links.append(issue_url)
+        tasks.append(
+            {
+                "task_id": str(doc.get("task_id") or "").strip(),
+                "title": str(doc.get("title") or "").strip(),
+                "status": status,
+                "issue_url": issue_url,
+            }
+        )
+    for ledger_path in sorted(_task_ledger_dir(project_id).glob("*.yaml")):
+        _collect(_load_yaml(ledger_path))
+    extra_task_id = ""
+    if isinstance(extra_doc, dict):
+        extra_task_id = str(extra_doc.get("task_id") or "").strip()
+        if extra_task_id and extra_task_id not in {str(item.get("task_id") or "").strip() for item in tasks}:
+            _collect(extra_doc)
+    return {
+        "total_items": total_items,
+        "open_items": open_items,
+        "blocked_items": blocked_items,
+        "done_items": done_items,
+        "workstreams": sorted(workstreams),
+        "links": sorted({x for x in links if x}),
+        "tasks": tasks,
+    }
+
+
+def _build_milestone_doc(
+    *,
+    project_id: str,
+    repo_locator: str,
+    finding: UpgradeFinding,
+    work_item: UpgradeWorkItem,
+    existing: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    lane = str(finding.lane or "").strip().lower()
+    milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
+    if lane not in ("feature", "bug") or not milestone_title:
+        return {}
+    existing = dict(existing or {})
+    milestone_id = str(existing.get("milestone_id") or _milestone_id_for_title(milestone_title)).strip()
+    release_line = str(existing.get("release_line") or _release_line_for_finding(finding)).strip()
+    start_date, target_date, due_on = _milestone_schedule(release_line)
+    summary = _milestone_task_summary(project_id=project_id, milestone_id=milestone_id)
+    state = str(existing.get("state") or "").strip()
+    if state not in ("frozen", "released"):
+        state = _milestone_state_from_metrics(
+            total_items=int(summary.get("total_items") or 0),
+            blocked_items=int(summary.get("blocked_items") or 0),
+            done_items=int(summary.get("done_items") or 0),
+        )
+    objective = str(existing.get("objective") or "").strip() or f"交付 {milestone_title} 版本中的 {role_display_zh(work_item.owner_role)} 与相关验收工单。"
+    links = sorted(
+        {
+            str(x).strip()
+            for x in ([str(x).strip() for x in (existing.get("links") or [])] + [str(x).strip() for x in (summary.get("links") or [])])
+            if str(x).strip()
+        }
+    )
+    workstreams = sorted(
+        {
+            str(x).strip()
+            for x in (
+                list(existing.get("workstreams") or [])
+                + list(summary.get("workstreams") or [])
+                + [str(work_item.workstream_id or finding.workstream_id or "").strip()]
+            )
+            if str(x).strip()
+        }
+    )
+    return {
+        "milestone_id": milestone_id,
+        "title": milestone_title,
+        "start_date": str(existing.get("start_date") or start_date),
+        "target_date": str(existing.get("target_date") or target_date),
+        "workstreams": workstreams,
+        "objective": objective,
+        "links": links,
+        "state": state or "draft",
+        "release_line": release_line,
+        "target_version": str(existing.get("target_version") or finding.target_version or "").strip(),
+        "version_bump": str(existing.get("version_bump") or finding.version_bump or "").strip(),
+        "repo_locator": str(existing.get("repo_locator") or repo_locator).strip(),
+        "manager_role": str(existing.get("manager_role") or ROLE_MILESTONE_MANAGER).strip(),
+        "github_milestone_number": int(existing.get("github_milestone_number") or 0),
+        "github_milestone_due_on": str(existing.get("github_milestone_due_on") or due_on),
+        "release_issue_number": int(existing.get("release_issue_number") or 0),
+        "release_issue_url": str(existing.get("release_issue_url") or "").strip(),
+        "total_items": int(summary.get("total_items") or 0),
+        "open_items": int(summary.get("open_items") or 0),
+        "blocked_items": int(summary.get("blocked_items") or 0),
+        "done_items": int(summary.get("done_items") or 0),
+        "updated_at": _utc_now_iso(),
+    }
+
+
+def _release_issue_body(*, project_id: str, milestone: dict[str, Any], summary: dict[str, Any]) -> str:
+    marker = _release_issue_marker(project_id=project_id, milestone_id=str(milestone.get("milestone_id") or ""))
+    tasks = list(summary.get("tasks") or [])
+    lines = [
+        marker,
+        "# 版本发布跟踪",
+        "",
+        f"- 里程碑: {str(milestone.get('title') or '').strip()}",
+        f"- 里程碑 ID: {str(milestone.get('milestone_id') or '').strip()}",
+        f"- 管理角色: {role_display_zh(str(milestone.get('manager_role') or ROLE_MILESTONE_MANAGER))} ({str(milestone.get('manager_role') or ROLE_MILESTONE_MANAGER)})",
+        f"- 发布线: {str(milestone.get('release_line') or '').strip() or '(无)'}",
+        f"- 当前状态: {str(milestone.get('state') or 'draft')}",
+        f"- 目标日期: {str(milestone.get('target_date') or '').strip() or '(未定)'}",
+        "",
+        "## 版本目标",
+        "",
+        str(milestone.get("objective") or "").strip() or "(无)",
+        "",
+        "## 当前统计",
+        "",
+        f"- 总任务数: {int(milestone.get('total_items') or 0)}",
+        f"- 未完成: {int(milestone.get('open_items') or 0)}",
+        f"- 阻塞: {int(milestone.get('blocked_items') or 0)}",
+        f"- 已完成: {int(milestone.get('done_items') or 0)}",
+        "",
+        "## 当前包含任务",
+        "",
+    ]
+    if tasks:
+        for item in tasks[:20]:
+            title = str(item.get("title") or item.get("task_id") or "(未命名任务)").strip()
+            issue_url = str(item.get("issue_url") or "").strip()
+            status = str(item.get("status") or "").strip() or "unknown"
+            lines.append(f"- {title} [{status}] {issue_url}".strip())
+    else:
+        lines.append("- （当前还没有挂到该里程碑的任务）")
+    lines.extend(["", "## 发布门禁", "", "- 所有 task issue 需要完成 coding/review/qa/docs/release 闭环。", "- blocked 或 needs_clarification 状态必须清零后才能进入发布。", ""])
+    return "\n".join(lines)
+
+
+def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    finding, work_item = _finding_from_task_doc(doc)
+    if finding is None or work_item is None:
+        return {"ok": False, "reason": "missing_self_upgrade_finding"}
+    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    repo = doc.get("repo") or {}
+    if not isinstance(repo, dict):
+        repo = {}
+    repo_locator = str(repo.get("locator") or "").strip()
+    existing = doc.get("self_upgrade_milestone") or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    milestone = _build_milestone_doc(
+        project_id=project_id,
+        repo_locator=repo_locator,
+        finding=finding,
+        work_item=work_item,
+        existing=existing,
+    )
+    if not milestone:
+        return {"ok": False, "reason": "milestone_not_required"}
+    summary = _milestone_task_summary(
+        project_id=project_id,
+        milestone_id=str(milestone.get("milestone_id") or ""),
+        extra_doc={**doc, "self_upgrade_milestone": dict(milestone)},
+    )
+    milestone.update(
+        {
+            "total_items": int(summary.get("total_items") or 0),
+            "open_items": int(summary.get("open_items") or 0),
+            "blocked_items": int(summary.get("blocked_items") or 0),
+            "done_items": int(summary.get("done_items") or 0),
+            "workstreams": sorted({str(x).strip() for x in (milestone.get("workstreams") or []) + (summary.get("workstreams") or []) if str(x).strip()}),
+            "links": sorted({str(x).strip() for x in (milestone.get("links") or []) + (summary.get("links") or []) if str(x).strip()}),
+        }
+    )
+    milestone["state"] = str(existing.get("state") or milestone.get("state") or "").strip()
+    if milestone["state"] not in ("frozen", "released"):
+        milestone["state"] = _milestone_state_from_metrics(
+            total_items=int(milestone.get("total_items") or 0),
+            blocked_items=int(milestone.get("blocked_items") or 0),
+            done_items=int(milestone.get("done_items") or 0),
+        )
+    if repo_locator:
+        description = f"Team OS self-upgrade release milestone for {str(milestone.get('title') or '').strip()}."
+        try:
+            milestone_number = ensure_milestone(
+                repo_locator,
+                title=str(milestone.get("title") or "").strip(),
+                description=description,
+                due_on=str(milestone.get("github_milestone_due_on") or "").strip() or None,
+            )
+            if milestone_number > 0:
+                milestone["github_milestone_number"] = milestone_number
+        except (GitHubAuthError, GitHubIssuesBusError):
+            pass
+        marker = _release_issue_marker(project_id=project_id, milestone_id=str(milestone.get("milestone_id") or ""))
+        title = _release_issue_title(milestone_title=str(milestone.get("title") or "").strip())
+        labels = sorted(
+            {
+                "teamos",
+                "source:self-upgrade",
+                "type:process",
+                "module:release",
+                "stage:release",
+                _version_label(str(milestone.get("version_bump") or "")),
+                f"milestone:{_module_slug(str(milestone.get('title') or ''))}",
+            }
+        )
+        body = _release_issue_body(project_id=project_id, milestone=milestone, summary=summary)
+        try:
+            issue = ensure_issue(
+                repo_locator,
+                title=title,
+                body=body,
+                allow_create=True,
+                labels=labels,
+                milestone=int(milestone.get("github_milestone_number") or 0) or None,
+                marker=marker,
+            )
+            issue = update_issue(
+                repo_locator,
+                int(issue.number),
+                title=title,
+                body=body,
+                labels=labels,
+                state="open",
+                milestone=int(milestone.get("github_milestone_number") or 0) or None,
+            )
+            milestone["release_issue_number"] = int(issue.number or 0)
+            milestone["release_issue_url"] = str(issue.url or "").strip()
+            milestone["links"] = sorted({str(x).strip() for x in (milestone.get("links") or []) + [str(issue.url or "").strip()] if str(x).strip()})
+        except (GitHubAuthError, GitHubIssuesBusError):
+            pass
+    upsert_runtime_milestone(project_id, milestone)
+    doc["self_upgrade_milestone"] = milestone
+    return {"ok": True, "milestone": milestone}
+
+
+def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, doc: Optional[dict[str, Any]] = None) -> Optional[int]:
+    milestone = (doc or {}).get("self_upgrade_milestone") if isinstance(doc, dict) else None
+    if isinstance(milestone, dict):
+        num = int(milestone.get("github_milestone_number") or 0)
+        if num > 0:
+            return num
     lane = str(finding.lane or "").strip().lower()
     milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
     if lane not in ("feature", "bug") or not milestone_title or not repo_locator:
@@ -2276,6 +2628,9 @@ def _ensure_task_record(
     existing_docs = doc.get("documentation_policy") or {}
     if not isinstance(existing_docs, dict):
         existing_docs = {}
+    existing_milestone = doc.get("self_upgrade_milestone") or {}
+    if not isinstance(existing_milestone, dict):
+        existing_milestone = {}
     documentation_policy = {
         "required": bool(existing_docs.get("required", default_docs["required"])),
         "status": str(existing_docs.get("status") or default_docs["status"]),
@@ -2302,6 +2657,13 @@ def _ensure_task_record(
         "approved_at": str(existing_audit.get("approved_at") or ""),
         "issue_title_snapshot": str(existing_audit.get("issue_title_snapshot") or ""),
     }
+    milestone_doc = _build_milestone_doc(
+        project_id=panel_project_id,
+        repo_locator=repo_locator,
+        finding=finding,
+        work_item=work_item,
+        existing=existing_milestone,
+    )
 
     repo_doc = doc.get("repo") or {}
     if not isinstance(repo_doc, dict):
@@ -2328,6 +2690,7 @@ def _ensure_task_record(
     doc["owner_role"] = work_item.owner_role
     doc["roles_involved"] = [
         ROLE_ISSUE_AUDIT_AGENT,
+        ROLE_MILESTONE_MANAGER,
         work_item.owner_role,
         work_item.review_role,
         work_item.qa_role,
@@ -2379,6 +2742,7 @@ def _ensure_task_record(
         "closed_at": str(existing_execution.get("closed_at") or ""),
     }
     doc["self_upgrade_audit"] = audit_doc
+    doc["self_upgrade_milestone"] = milestone_doc
     doc["documentation_policy"] = documentation_policy
     doc["execution_policy"] = {
         "issue_only_scope": True,
@@ -2390,6 +2754,7 @@ def _ensure_task_record(
         "module": normalized_module,
         "review_role": work_item.review_role,
         "qa_role": work_item.qa_role,
+        "milestone_manager_role": str(milestone_doc.get("manager_role") or ROLE_MILESTONE_MANAGER),
         "documentation_role": str(documentation_policy.get("documentation_role") or ROLE_DOCUMENTATION_AGENT),
     }
     _write_yaml(ledger_path, doc)
@@ -2398,7 +2763,7 @@ def _ensure_task_record(
         if sync_out.get("ok") and str(sync_out.get("url") or "").strip():
             links["issue"] = str(sync_out.get("url") or "").strip()
             doc["links"] = links
-            _write_yaml(ledger_path, doc)
+        _write_yaml(ledger_path, doc)
     except Exception:
         pass
     return {"task_id": task_id, "ledger_path": str(ledger_path)}
@@ -2422,7 +2787,6 @@ def _issue_body(
         summary=str(work_item.summary or finding.summary or ""),
         lane=str(finding.lane or ""),
     )
-    milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
     issue_marker = str(marker or "").strip() or f"<!-- teamos:self_upgrade:{fingerprint} -->"
     lines = [
         issue_marker,
@@ -2434,9 +2798,13 @@ def _issue_body(
         f"- 仓库路径: {repo_root}",
         f"- 影响等级: {finding.impact}",
         f"- 版本变更: {finding.version_bump}",
-        f"- 目标版本: {finding.target_version}",
-        f"- 目标里程碑: {milestone_title or '(无)'}",
         "",
+        "## 版本与里程碑",
+        "",
+    ]
+    lines.extend(_task_issue_milestone_lines(doc or {}, finding=finding))
+    lines.extend(
+        [
         "## 任务概要",
         "",
         _normalize_issue_text(work_item.summary or finding.summary),
@@ -2447,7 +2815,7 @@ def _issue_body(
         "",
         "## 范围内",
         "",
-    ]
+    ])
     lines.extend([f"- {x}" for x in (work_item.allowed_paths or finding.files or [])] or ["- （未指定）"])
     lines.extend(
         [
@@ -2524,7 +2892,7 @@ def _ensure_issue_record(*, repo_locator: str, repo_root: Path, finding: Upgrade
     title = _issue_title_for_work_item(repo_root.name, finding, work_item)
     fingerprint = _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding) + "-" + _slug(work_item.title, default="work")
     marker = _task_issue_marker(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
-    body = _issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint, marker=marker, doc=doc)
+    body = _issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint, marker=marker, doc={})
     labels = _task_issue_labels(doc={}, finding=finding, work_item=work_item)
     milestone = _task_issue_milestone_number(repo_locator=repo_locator, finding=finding)
     try:
@@ -2552,6 +2920,7 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     finding, work_item = _finding_from_task_doc(doc)
     if finding is None or work_item is None:
         return {"ok": False, "reason": "missing_self_upgrade_finding"}
+    milestone_out = sync_milestone_from_doc(doc)
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
         repo = {}
@@ -2566,9 +2935,9 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     title = _issue_title_for_work_item(repo_root.name, finding, work_item)
     fingerprint = str((((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("finding_fingerprint")) or _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding))
     marker = _task_issue_marker(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
-    body = _issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint, marker=marker)
+    body = _issue_body(repo_root=repo_root, repo_locator=repo_locator, finding=finding, work_item=work_item, fingerprint=fingerprint, marker=marker, doc=doc)
     labels = _task_issue_labels(doc=doc, finding=finding, work_item=work_item)
-    milestone = _task_issue_milestone_number(repo_locator=repo_locator, finding=finding)
+    milestone = _task_issue_milestone_number(repo_locator=repo_locator, finding=finding, doc=doc)
     issue_state = "closed" if str(doc.get("status") or "").strip().lower() in ("closed", "done") else "open"
     try:
         if issue_number > 0:
@@ -2581,7 +2950,15 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state=issue_state, milestone=milestone)
             links["issue"] = str(issue.url or created.url)
             doc["links"] = links
-        return {"ok": True, "number": int(issue.number), "url": str(issue.url or ""), "title": str(issue.title or title), "labels": labels, "milestone": milestone or 0}
+        return {
+            "ok": True,
+            "number": int(issue.number),
+            "url": str(issue.url or ""),
+            "title": str(issue.title or title),
+            "labels": labels,
+            "milestone": milestone or 0,
+            "milestone_sync": milestone_out,
+        }
     except (GitHubAuthError, GitHubIssuesBusError) as e:
         return {"ok": False, "reason": str(e)[:500], "title": title}
 
@@ -2778,6 +3155,14 @@ def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str) -
             task_id=task_id,
             state="RUNNING",
             current_action="analyzing process telemetry",
+        ),
+        ROLE_MILESTONE_MANAGER: db.register_agent(
+            role_id=ROLE_MILESTONE_MANAGER,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            task_id=task_id,
+            state="RUNNING",
+            current_action="planning release lines and milestones",
         ),
     }
 

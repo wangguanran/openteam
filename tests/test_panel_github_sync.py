@@ -28,6 +28,17 @@ class PanelGitHubSyncTests(unittest.TestCase):
             "[Process][Self-Upgrade] 增加提案闭环",
         )
 
+    def test_panel_milestone_title_uses_release_issue_style(self):
+        self.assertEqual(
+            panel_github_sync._panel_item_title("跟踪 v0.1.1 版本发布", kind="PROCESS", lane="process", module="Release"),
+            "[Process][Release] 跟踪 v0.1.1 版本发布",
+        )
+
+    def test_milestone_status_key_maps_release_candidate_to_in_review(self):
+        self.assertEqual(panel_github_sync._milestone_status_key("release-candidate"), "IN_REVIEW")
+        self.assertEqual(panel_github_sync._milestone_status_key("active"), "IN_PROGRESS")
+        self.assertEqual(panel_github_sync._milestone_status_key("blocked"), "BLOCKED")
+
 
 if __name__ == "__main__":
     unittest.main()

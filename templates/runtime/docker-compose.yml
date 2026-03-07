@@ -118,6 +118,8 @@ services:
         no_proxy: ${TEAMOS_BUILD_NO_PROXY:-}
         TEAMOS_CREWAI_GIT_URL: ${TEAMOS_CREWAI_GIT_URL:-https://github.com/wangguanran/crewAI.git}
         TEAMOS_CREWAI_GIT_REF: ${TEAMOS_CREWAI_GIT_REF:-main}
+        TEAMOS_NODE_VERSION: ${TEAMOS_NODE_VERSION:-24.12.0}
+        TEAMOS_OPENCLAW_VERSION: ${TEAMOS_OPENCLAW_VERSION:-2026.3.2}
         TEAMOS_APT_MIRROR_URL: ${TEAMOS_APT_MIRROR_URL:-http://deb.debian.org/debian}
         TEAMOS_APT_SECURITY_MIRROR_URL: ${TEAMOS_APT_SECURITY_MIRROR_URL:-http://deb.debian.org/debian-security}
         TEAMOS_PIP_INDEX_URL: ${TEAMOS_PIP_INDEX_URL:-https://pypi.org/simple}
@@ -161,14 +163,31 @@ services:
       TEAMOS_SELF_UPGRADE_MAX_FINDINGS: ${TEAMOS_SELF_UPGRADE_MAX_FINDINGS:-3}
       CREWAI_OPENAI_AUTH_MODE: ${CREWAI_OPENAI_AUTH_MODE:-oauth_codex}
       TEAMOS_CREWAI_MODEL: ${TEAMOS_CREWAI_MODEL:-openai-codex/gpt-5.3-codex}
+      TEAMOS_OPENCLAW_AUTO: ${TEAMOS_OPENCLAW_AUTO:-0}
+      TEAMOS_OPENCLAW_INTERVAL_SEC: ${TEAMOS_OPENCLAW_INTERVAL_SEC:-30}
+      TEAMOS_OPENCLAW_INITIAL_DELAY_SEC: ${TEAMOS_OPENCLAW_INITIAL_DELAY_SEC:-10}
+      TEAMOS_OPENCLAW_CHANNEL: ${TEAMOS_OPENCLAW_CHANNEL:-telegram}
+      TEAMOS_OPENCLAW_TARGET: ${TEAMOS_OPENCLAW_TARGET:-}
+      TEAMOS_OPENCLAW_GATEWAY_MODE: ${TEAMOS_OPENCLAW_GATEWAY_MODE:-}
+      TEAMOS_OPENCLAW_GATEWAY_URL: ${TEAMOS_OPENCLAW_GATEWAY_URL:-}
+      TEAMOS_OPENCLAW_GATEWAY_TOKEN: ${TEAMOS_OPENCLAW_GATEWAY_TOKEN:-}
+      TEAMOS_OPENCLAW_GATEWAY_PASSWORD: ${TEAMOS_OPENCLAW_GATEWAY_PASSWORD:-}
+      TEAMOS_OPENCLAW_GATEWAY_TRANSPORT: ${TEAMOS_OPENCLAW_GATEWAY_TRANSPORT:-direct}
+      TEAMOS_OPENCLAW_STATE_DIR: ${TEAMOS_OPENCLAW_STATE_DIR:-/teamos-runtime/state/openclaw-client}
+      TEAMOS_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${TEAMOS_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      TEAMOS_OPENCLAW_PATH_PATTERNS: ${TEAMOS_OPENCLAW_PATH_PATTERNS:-*}
+      TEAMOS_OPENCLAW_EVENT_TYPES: ${TEAMOS_OPENCLAW_EVENT_TYPES:-SELF_UPGRADE_*}
+      TEAMOS_OPENCLAW_EXCLUDE_EVENT_TYPES: ${TEAMOS_OPENCLAW_EXCLUDE_EVENT_TYPES:-}
+      TEAMOS_OPENCLAW_MESSAGE_PREFIX: ${TEAMOS_OPENCLAW_MESSAGE_PREFIX:-[TeamOS 上报]}
+      OPENCLAW_CONFIG_DIR: /root/.openclaw
       HTTP_PROXY: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
       HTTPS_PROXY: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
       ALL_PROXY: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-}
+      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,temporal,openhands-agent-server,control-plane}
       http_proxy: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
       https_proxy: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
       all_proxy: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-}
+      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,temporal,openhands-agent-server,control-plane}
       # GitHub Projects panel sync (view-layer)
       TEAMOS_PANEL_GH_AUTO_SYNC: ${TEAMOS_PANEL_GH_AUTO_SYNC:-0}
       TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}
@@ -194,6 +213,8 @@ services:
       - ${HOME}/.teamos/workspace:/teamos-workspace:rw
       # OAuth: reuse host Codex login state (do not commit; local-only).
       - ${HOME}/.codex:/root/.codex:rw
+      # OpenClaw: reuse local channel/gateway/account configuration (read-only).
+      - ${HOME}/.openclaw:/root/.openclaw:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=2).read()\""]
       interval: 10s

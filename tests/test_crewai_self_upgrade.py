@@ -18,7 +18,7 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 os.environ.setdefault("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "0")
 
-from app import crewai_self_upgrade  # noqa: E402
+from app import crewai_self_upgrade, plan_store  # noqa: E402
 
 
 class _FakeDB:
@@ -546,14 +546,122 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertIn("<!-- teamos:self_upgrade:demo-fp-runtime-cleanup -->", body)
         self.assertIn("# 自升级任务", body)
         self.assertIn("- Module: Runtime", body)
-        self.assertIn("- 目标里程碑: v0.1.1", body)
+        self.assertIn("- GitHub Milestone: v0.1.1", body)
         self.assertIn("## 范围外", body)
         self.assertIn("## 审计状态", body)
         self.assertIn("## 文档同步", body)
+        self.assertIn("## 版本与里程碑", body)
         self.assertIn("问题审计 Agent", body)
         self.assertIn("文档同步 Agent", body)
+        self.assertIn("里程碑经理 Agent", body)
         self.assertIn("## 执行约束", body)
         self.assertIn("缺陷修复 Agent", body)
+
+    def test_build_milestone_doc_assigns_patch_release_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                finding = crewai_self_upgrade.UpgradeFinding(
+                    kind="BUG",
+                    lane="bug",
+                    title="修复启动导入回归",
+                    summary="修复启动路径中的导入回归。",
+                    module="Runtime",
+                    version_bump="patch",
+                    target_version="0.1.1",
+                    workstream_id="general",
+                )
+                item = crewai_self_upgrade.UpgradeWorkItem(
+                    title="清理旧导入引用",
+                    summary="移除旧 self_improve runner 引用。",
+                    owner_role=crewai_self_upgrade.ROLE_BUGFIX_CODING_AGENT,
+                    workstream_id="general",
+                    module="Runtime",
+                )
+                out = crewai_self_upgrade._build_milestone_doc(
+                    project_id="teamos",
+                    repo_locator="foo/bar",
+                    finding=finding,
+                    work_item=item,
+                )
+
+        self.assertEqual(out["title"], "v0.1.1")
+        self.assertEqual(out["milestone_id"], "v0-1-1")
+        self.assertEqual(out["release_line"], "patch")
+        self.assertEqual(out["state"], "draft")
+        self.assertEqual(out["manager_role"], crewai_self_upgrade.ROLE_MILESTONE_MANAGER)
+
+    def test_sync_milestone_from_doc_persists_runtime_milestone_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = {
+                "project_id": "teamos",
+                "task_id": "TEAMOS-1001",
+                "title": "[Bug][Runtime] 清理旧导入引用",
+                "status": "todo",
+                "workstream_id": "general",
+                "repo": {
+                    "locator": "foo/bar",
+                    "workdir": str(repo_root),
+                },
+                "links": {
+                    "issue": "https://github.com/foo/bar/issues/55",
+                },
+                "self_upgrade": {
+                    "kind": "BUG",
+                    "lane": "bug",
+                    "module": "Runtime",
+                    "summary": "修复启动路径中的导入回归。",
+                    "rationale": "当前启动链路仍可能引用旧模块。",
+                    "impact": "HIGH",
+                    "files": ["templates/runtime/orchestrator/app/main.py"],
+                    "tests": ["python -m unittest tests.test_crewai_runtime"],
+                    "acceptance": ["启动后 /healthz 返回 ok"],
+                    "version_bump": "patch",
+                    "target_version": "0.1.1",
+                    "baseline_action": "",
+                    "work_item": {
+                        "title": "清理旧导入引用",
+                        "summary": "移除旧 self_improve runner 引用。",
+                        "owner_role": crewai_self_upgrade.ROLE_BUGFIX_CODING_AGENT,
+                        "review_role": crewai_self_upgrade.ROLE_REVIEW_AGENT,
+                        "qa_role": crewai_self_upgrade.ROLE_QA_AGENT,
+                        "workstream_id": "general",
+                        "allowed_paths": ["templates/runtime/orchestrator/app/main.py"],
+                        "tests": ["python -m unittest tests.test_crewai_runtime"],
+                        "acceptance": ["启动后 /healthz 返回 ok"],
+                        "worktree_hint": str(runtime_root / "workspace" / "worktrees" / "wt-bug-runtime"),
+                        "module": "Runtime",
+                    },
+                },
+                "orchestration": {
+                    "flow": "self_upgrade",
+                },
+            }
+            release_issue = SimpleNamespace(number=101, url="https://github.com/foo/bar/issues/101", title="[Process][Release] 跟踪 v0.1.1 版本发布")
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.ensure_milestone",
+                return_value=7,
+            ), mock.patch(
+                "app.crewai_self_upgrade.ensure_issue",
+                return_value=release_issue,
+            ), mock.patch(
+                "app.crewai_self_upgrade.update_issue",
+                return_value=release_issue,
+            ):
+                out = crewai_self_upgrade.sync_milestone_from_doc(task_doc)
+                milestones = plan_store.list_milestones("teamos")
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(task_doc["self_upgrade_milestone"]["github_milestone_number"], 7)
+        self.assertEqual(task_doc["self_upgrade_milestone"]["release_issue_number"], 101)
+        self.assertEqual(task_doc["self_upgrade_milestone"]["state"], "active")
+        managed = [m for m in milestones if m.milestone_id == "v0-1-1"]
+        self.assertEqual(len(managed), 1)
+        self.assertEqual(managed[0].title, "v0.1.1")
+        self.assertEqual(managed[0].release_issue_number, 101)
 
     def test_task_issue_labels_include_module_stage_and_version(self):
         finding = crewai_self_upgrade.UpgradeFinding(
