@@ -47,7 +47,44 @@ class CrewAIRuntimeTests(unittest.TestCase):
             self.assertEqual(info["source_path"], str(src.resolve()))
             self.assertTrue(info["importable"])
             self.assertEqual(info["version"], "0.test")
-            mocked_import.assert_called_once_with("crewai")
+            self.assertGreaterEqual(mocked_import.call_count, 1)
+
+    def test_probe_uses_installed_crewai_when_no_src_override_is_set(self):
+        fake_mod = SimpleNamespace(__version__="1.10.0", __file__="/tmp/site-packages/crewai/__init__.py")
+        with mock.patch("app.crewai_runtime.importlib.import_module", return_value=fake_mod):
+            info = crewai_runtime.probe_crewai(refresh=True)
+
+        self.assertFalse(info["configured"])
+        self.assertEqual(info["source_path"], "")
+        self.assertTrue(info["importable"])
+        self.assertEqual(info["module_path"], "/tmp/site-packages/crewai/__init__.py")
+
+    def test_probe_reloads_cached_crewai_when_existing_module_is_outside_selected_src(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td)
+            pkg = src / "crewai"
+            pkg.mkdir(parents=True, exist_ok=True)
+            init_py = pkg / "__init__.py"
+            init_py.write_text("__version__='0.test'\n", encoding="utf-8")
+            os.environ["TEAMOS_CREWAI_SRC_PATH"] = str(src)
+
+            stale_mod = SimpleNamespace(__version__="0.old", __file__="/usr/local/lib/python3.11/site-packages/crewai/__init__.py")
+            fresh_mod = SimpleNamespace(__version__="0.test", __file__=str(init_py))
+            sys.modules["crewai"] = stale_mod
+            sys.modules["crewai.foo"] = SimpleNamespace(__file__="/usr/local/lib/python3.11/site-packages/crewai/foo.py")
+
+            def _fake_import(name: str):
+                if name == "crewai":
+                    self.assertNotIn("crewai.foo", sys.modules)
+                    sys.modules["crewai"] = fresh_mod
+                    return fresh_mod
+                raise AssertionError(f"unexpected import: {name}")
+
+            with mock.patch("app.crewai_runtime.importlib.import_module", side_effect=_fake_import):
+                info = crewai_runtime.probe_crewai(refresh=True)
+
+            self.assertEqual(info["module_path"], str(init_py))
+            self.assertEqual(sys.modules["crewai"], fresh_mod)
 
     def test_require_crewai_importable_raises_with_context_when_import_fails(self):
         os.environ["TEAMOS_CREWAI_SRC_PATH"] = "/tmp/path-that-does-not-exist"

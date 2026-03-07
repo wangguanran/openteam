@@ -23,7 +23,7 @@ from .github_projects_client import (
 from .panel_mapping import MappingDoc, PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import list_milestones
 from .runtime_db import RuntimeDB
-from .state_store import ledger_tasks_dir, load_focus, team_os_root, teamos_requirements_dir
+from .state_store import ledger_tasks_dir, load_focus, runtime_state_root, team_os_root, teamos_requirements_dir
 from .workspace_store import ensure_project_scaffold, ledger_tasks_dir as ws_ledger_tasks_dir, requirements_dir as ws_requirements_dir
 
 
@@ -121,6 +121,31 @@ def _load_requirements(project_id: str) -> list[dict[str, Any]]:
         return []
     data = yaml.safe_load(y.read_text(encoding="utf-8")) or {}
     return list(data.get("requirements") or [])
+
+
+def _load_self_upgrade_feature_proposals(project_id: str) -> list[dict[str, Any]]:
+    path = runtime_state_root() / "self_upgrade_proposals.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    items = data.get("items") if isinstance(data, dict) else {}
+    if not isinstance(items, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for proposal_id, raw in items.items():
+        doc = raw if isinstance(raw, dict) else {}
+        if str(doc.get("project_id") or "teamos").strip() != str(project_id):
+            continue
+        if str(doc.get("lane") or "").strip().lower() != "feature":
+            continue
+        status = str(doc.get("status") or "").strip().upper()
+        if status in ("REJECTED", "MATERIALIZED"):
+            continue
+        out.append({"proposal_id": proposal_id, **doc})
+    return sorted(out, key=lambda x: (str(x.get("updated_at") or ""), str(x.get("proposal_id") or "")), reverse=True)
 
 
 def _join_links(links: Any) -> str:
@@ -301,6 +326,52 @@ def _desired_items(
                 links_text=links_text,
                 repo_locator="",
                 repo_mode="",
+            )
+        )
+
+    # Feature proposals waiting for discussion / confirmation.
+    for p in _load_self_upgrade_feature_proposals(project_id):
+        proposal_id = str(p.get("proposal_id") or "").strip()
+        status = str(p.get("status") or "").strip().upper()
+        links_text = "\n".join(
+            [
+                f"discussion_issue={str(p.get('discussion_issue_url') or '').strip()}",
+                f"repo={str(p.get('repo_locator') or '').strip()}",
+            ]
+        ).strip()
+        status_key = "TODO" if status == "APPROVED" else "BLOCKED"
+        items.append(
+            DesiredItem(
+                key=f"FEATURE_PROPOSAL:{proposal_id}",
+                kind="DECISION",
+                title=f"[FEATURE] {proposal_id} {str(p.get('title') or '').strip()}".strip(),
+                body="\n".join(
+                    [
+                        f"Feature proposal: {proposal_id}",
+                        f"Status: {status}",
+                        f"Target version: {str(p.get('target_version') or '').strip()}",
+                        f"Cooldown until: {str(p.get('cooldown_until') or '').strip()}",
+                        "",
+                        "Summary:",
+                        str(p.get("summary") or "").strip() or "(none)",
+                        "",
+                        "Discussion issue:",
+                        str(p.get("discussion_issue_url") or "").strip() or "(missing)",
+                    ]
+                ).strip()
+                + "\n",
+                workstreams=[str(p.get("workstream_id") or "general").strip() or "general"],
+                status_key=status_key,
+                risk_key="MED",
+                need_pm=True,
+                focus=focus_obj,
+                active_agents=0,
+                last_heartbeat=str(p.get("discussion_reply_updated_at") or p.get("updated_at") or ""),
+                start_date="",
+                target_date=_parse_date_from_iso(str(p.get("cooldown_until") or "")),
+                links_text=links_text,
+                repo_locator=str(p.get("repo_locator") or "").strip(),
+                repo_mode="proposal",
             )
         )
 

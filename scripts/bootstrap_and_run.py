@@ -16,6 +16,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
+_DEFAULT_CREWAI_GIT_URL = "https://github.com/wangguanran/crewAI.git"
+_DEFAULT_CREWAI_GIT_REF = "main"
+_DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/wangguanran/crewAI/tar.gz/refs/heads/main"
+
 
 class BootstrapError(Exception):
     pass
@@ -162,6 +166,13 @@ def _quarantine_legacy_team_os_dir(repo: Path, runtime_root: Path) -> dict[str, 
     legacy = repo / ".team-os"
     if not legacy.exists():
         return {"ok": True, "found": False}
+    try:
+        next(legacy.iterdir())
+    except StopIteration:
+        legacy.rmdir()
+        return {"ok": True, "found": True, "removed_empty": True}
+    except Exception:
+        pass
     dst = runtime_root / "state" / "audit" / "legacy_team_os" / _utc_compact()
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(legacy), str(dst))
@@ -174,6 +185,25 @@ def _venv_python(runtime_root: Path) -> Path:
     return runtime_root / "cache" / "py-venv" / "bin" / "python"
 
 
+def _crewai_archive_url() -> str:
+    explicit = str(os.getenv("TEAMOS_CREWAI_ARCHIVE_URL") or "").strip()
+    if explicit:
+        return explicit.split("#", 1)[0]
+    git_url = str(os.getenv("TEAMOS_CREWAI_GIT_URL") or _DEFAULT_CREWAI_GIT_URL).strip()
+    git_ref = str(os.getenv("TEAMOS_CREWAI_GIT_REF") or _DEFAULT_CREWAI_GIT_REF).strip()
+    normalized = git_url.removesuffix(".git").rstrip("/")
+    prefix = "https://github.com/"
+    if normalized.startswith(prefix):
+        slug = normalized[len(prefix) :].strip("/")
+        if slug:
+            return f"https://codeload.github.com/{slug}/tar.gz/refs/heads/{git_ref}"
+    return _DEFAULT_CREWAI_ARCHIVE_URL
+
+
+def _crewai_pip_spec() -> str:
+    return f"crewai @ {_crewai_archive_url()}#subdirectory=lib/crewai"
+
+
 def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
     required: list[tuple[str, str]] = [
         ("uvicorn", "uvicorn"),
@@ -183,6 +213,8 @@ def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
         ("redis", "redis"),
         ("yaml", "PyYAML"),
         ("psycopg", "psycopg[binary]"),
+        ("temporalio", "temporalio"),
+        ("crewai", _crewai_pip_spec()),
     ]
     code = (
         "import importlib.util,json,sys;"
@@ -355,6 +387,25 @@ def _mask_secret(v: str) -> str:
     return f"{s[:4]}***{s[-4:]}"
 
 
+def _codex_login_status() -> tuple[bool, str]:
+    try:
+        p = subprocess.run(
+            ["codex", "login", "status"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False, "codex CLI not found in PATH"
+    except Exception as e:
+        return False, f"codex login status failed: {e}"
+
+    msg = (p.stdout or "").strip() or (p.stderr or "").strip()
+    return p.returncode == 0, (msg or f"exit_code={p.returncode}")
+
+
 def _llm_config() -> dict[str, Any]:
     base = str(
         os.getenv("TEAMOS_LLM_BASE_URL")
@@ -367,12 +418,29 @@ def _llm_config() -> dict[str, Any]:
         or os.getenv("OPENAI_API_KEY")
         or ""
     ).strip()
-    ok = bool(base and key)
+    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.3-codex").strip()
+    needs_codex = "codex" in model.lower()
+    codex_logged_in, codex_login_message = _codex_login_status()
+    codex_oauth_ready = bool(needs_codex and codex_logged_in)
+    api_key_ready = bool(base and key)
+    ok = bool(api_key_ready or codex_oauth_ready)
+    auth_strategy = ""
+    if codex_oauth_ready:
+        auth_strategy = "codex_oauth"
+    elif api_key_ready:
+        auth_strategy = "api_key"
     return {
         "ok": ok,
+        "model": model,
         "base_url": base,
         "api_key_masked": _mask_secret(key),
-        "required": ["TEAMOS_LLM_BASE_URL(or OPENAI_BASE_URL/OPENAI_API_BASE)", "TEAMOS_LLM_API_KEY(or OPENAI_API_KEY)"],
+        "auth_strategy": auth_strategy,
+        "codex_login_status": codex_login_message,
+        "codex_oauth_ready": codex_oauth_ready,
+        "required": [
+            "Codex OAuth login via `codex login` for codex models",
+            "or TEAMOS_LLM_BASE_URL(or OPENAI_BASE_URL/OPENAI_API_BASE) + TEAMOS_LLM_API_KEY(or OPENAI_API_KEY)",
+        ],
     }
 
 
@@ -380,10 +448,19 @@ def _require_llm_config(runtime_root: Path) -> dict[str, Any]:
     cfg = _llm_config()
     if not bool(cfg.get("ok")):
         raise BootstrapError(
-            "missing required LLM config: set TEAMOS_LLM_BASE_URL and TEAMOS_LLM_API_KEY "
+            "missing required LLM config: either run `codex login` for codex models, "
+            "or set TEAMOS_LLM_BASE_URL and TEAMOS_LLM_API_KEY "
             "(or OPENAI_BASE_URL/OPENAI_API_BASE and OPENAI_API_KEY)"
         )
-    _append_audit(runtime_root, f"llm config ready base_url={cfg.get('base_url')} api_key={cfg.get('api_key_masked')}")
+    _append_audit(
+        runtime_root,
+        "llm config ready "
+        f"strategy={cfg.get('auth_strategy') or 'unknown'} "
+        f"model={cfg.get('model') or ''} "
+        f"base_url={cfg.get('base_url')} "
+        f"api_key={cfg.get('api_key_masked')} "
+        f"codex_login={cfg.get('codex_login_status') or ''}",
+    )
     return cfg
 
 
@@ -455,6 +532,8 @@ def _start_control_plane(
     env["TEAMOS_BASE_URL"] = base_url
     env["CONTROL_PLANE_BASE_URL"] = base_url
     env["TEAMOS_PIPELINE_PYTHON"] = str(sys.executable)
+    env["TEAMOS_SELF_UPGRADE_AUTO"] = "0"
+    env.setdefault("CREWAI_TRACING_ENABLED", "false")
     py_path = str(orch_dir)
     if str(env.get("PYTHONPATH") or "").strip():
         py_path = py_path + os.pathsep + str(env.get("PYTHONPATH"))
@@ -492,63 +571,38 @@ def _ensure_crewai_ready(base_url: str) -> dict[str, Any]:
     }
 
 
-def _run_self_improve_start(repo: Path, workspace_root: Path, base_url: str) -> dict[str, Any]:
-    return _run_json(
-        [
-            sys.executable,
-            str(repo / "scripts" / "pipelines" / "self_improve_daemon.py"),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(workspace_root),
-            "--base-url",
-            base_url,
-            "start",
-        ],
-        cwd=repo,
-        timeout_sec=120,
-    )
+def _self_upgrade_state_path(runtime_root: Path) -> Path:
+    return runtime_root / "state" / "self_upgrade_state.json"
 
 
-def _run_self_improve_status(repo: Path, workspace_root: Path, base_url: str) -> dict[str, Any]:
-    return _run_json(
-        [
-            sys.executable,
-            str(repo / "scripts" / "pipelines" / "self_improve_daemon.py"),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(workspace_root),
-            "--base-url",
-            base_url,
-            "status",
-        ],
-        cwd=repo,
-        timeout_sec=60,
-    )
+def _read_self_upgrade_state(runtime_root: Path) -> dict[str, Any]:
+    p = _self_upgrade_state_path(runtime_root)
+    if not p.exists():
+        return {}
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
 
 
-def _run_self_improve_bootstrap(repo: Path, workspace_root: Path, base_url: str) -> dict[str, Any]:
-    out = _run_json(
-        [
-            sys.executable,
-            str(repo / "scripts" / "pipelines" / "self_improve_daemon.py"),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(workspace_root),
-            "--base-url",
-            base_url,
-            "run-once",
-            "--scope",
-            "teamos",
-            "--force",
-        ],
-        cwd=repo,
-        timeout_sec=300,
+def _run_self_upgrade_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
+    out = _http_json(
+        "POST",
+        base_url + "/v1/self_upgrade/run",
+        {
+            "project_id": "teamos",
+            "workstream_id": "general",
+            "repo_path": str(repo),
+            "objective": "Bootstrap self-upgrade for current repository",
+            "dry_run": False,
+            "force": True,
+            "trigger": "bootstrap",
+        },
+        timeout_sec=900,
     )
     if not bool(out.get("ok")):
-        raise BootstrapError(f"self-improve bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
+        raise BootstrapError(f"self-upgrade bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
     return out
 
 
@@ -593,21 +647,9 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
     except Exception as e:
         hub_status = {"ok": False, "error": str(e)[:300]}
 
-    si_status: dict[str, Any] = {}
-    try:
-        si_status = _run_self_improve_status(repo, workspace_root, base_url)
-    except Exception as e:
-        si_status = {"ok": False, "error": str(e)[:300]}
-
-    si_state_path = runtime_root / "state" / "self_improve_state.json"
-    si_last: dict[str, Any] = {}
-    if si_state_path.exists():
-        try:
-            raw = json.loads(si_state_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                si_last = (raw.get("last_run") or {}) if isinstance(raw.get("last_run"), dict) else {}
-        except Exception:
-            si_last = {}
+    su_state_path = _self_upgrade_state_path(runtime_root)
+    su_state = _read_self_upgrade_state(runtime_root)
+    su_last = (su_state.get("last_run") or {}) if isinstance(su_state.get("last_run"), dict) else {}
 
     return {
         "ok": True,
@@ -617,10 +659,9 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "llm": _llm_config(),
         "hub": hub_status,
         "control_plane": control,
-        "self_improve": {
-            "daemon": si_status,
-            "last_run": si_last,
-            "state_path": str(si_state_path),
+        "self_upgrade": {
+            "last_run": su_last,
+            "state_path": str(su_state_path),
         },
     }
 
@@ -662,7 +703,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     _append_audit(runtime_root, "python dependencies ready")
     control_python = str(python_deps.get("python") or sys.executable)
 
-    # Build DB/Redis URLs from hub env for control plane + daemon pipelines.
+    # Build DB/Redis URLs from hub env for control plane runtime.
     hub_env = _parse_env_file(runtime_root / "hub" / "env" / ".env")
     db_url = _db_url_from_hub_env(hub_env)
     redis_url = _redis_url_from_hub_env(hub_env)
@@ -688,29 +729,21 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     crew_ready = _ensure_crewai_ready(base_url)
     _append_audit(runtime_root, "crewai orchestrator readiness check passed")
 
-    # 9) self-improve daemon
-    si_daemon = _run_self_improve_start(repo, workspace_root, base_url)
-    _append_audit(runtime_root, "self-improve daemon started")
-
-    # 10) force one bootstrap run (must actually execute)
-    si_bootstrap = _run_self_improve_bootstrap(repo, workspace_root, base_url)
-    _append_audit(runtime_root, "self-improve bootstrap run executed")
+    # 9) force one bootstrap self-upgrade run (must actually execute)
+    su_bootstrap = _run_self_upgrade_bootstrap(repo, base_url)
+    _append_audit(runtime_root, "self-upgrade bootstrap run executed")
 
     # hard check: last_run must exist after bootstrap
-    st_path = runtime_root / "state" / "self_improve_state.json"
-    try:
-        st = json.loads(st_path.read_text(encoding="utf-8")) if st_path.exists() else {}
-    except Exception:
-        st = {}
+    st = _read_self_upgrade_state(runtime_root)
     last_run = (st.get("last_run") or {}) if isinstance(st, dict) else {}
     if not str(last_run.get("ts") or "").strip():
-        raise BootstrapError("self-improve bootstrap not persisted: missing last_run.ts")
+        raise BootstrapError("self-upgrade bootstrap not persisted: missing last_run.ts")
 
-    # 11) resume unfinished tasks
+    # 10) resume unfinished tasks
     recovered = _resume_tasks(base_url)
     _append_audit(runtime_root, "recovery resume executed")
 
-    # 12) final summary
+    # 11) final summary
     summary = _status_snapshot(repo, runtime_root, workspace_root, base_url)
     summary.update(
         {
@@ -724,8 +757,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
                 "python_dependencies": python_deps,
                 "control_plane": control_plane,
                 "crewai_ready": crew_ready,
-                "self_improve_daemon": si_daemon,
-                "self_improve_bootstrap": si_bootstrap,
+                "self_upgrade_bootstrap": su_bootstrap,
                 "recovery": recovered,
             }
         }
@@ -735,28 +767,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
 
 
 def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, keep_hub: bool = False) -> dict[str, Any]:
-    base_url = f"http://127.0.0.1:{int(os.getenv('TEAMOS_CONTROL_PLANE_PORT') or '8787')}"
     _append_audit(runtime_root, "stop start")
-
-    si_stop: dict[str, Any]
-    try:
-        si_stop = _run_json(
-            [
-                sys.executable,
-                str(repo / "scripts" / "pipelines" / "self_improve_daemon.py"),
-                "--repo-root",
-                str(repo),
-                "--workspace-root",
-                str(workspace_root),
-                "--base-url",
-                base_url,
-                "stop",
-            ],
-            cwd=repo,
-            timeout_sec=60,
-        )
-    except Exception as e:
-        si_stop = {"ok": False, "error": str(e)[:300]}
 
     cp_stop = _stop_pid(_pid_path(runtime_root, "control_plane"))
 
@@ -768,7 +779,7 @@ def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, keep_hub
             hub_down = {"ok": False, "error": str(e)[:300]}
 
     _append_audit(runtime_root, "stop completed")
-    return {"ok": True, "self_improve": si_stop, "control_plane": cp_stop, "hub": hub_down}
+    return {"ok": True, "self_upgrade": {"ok": True, "mode": "no_daemon"}, "control_plane": cp_stop, "hub": hub_down}
 
 
 def _doctor(repo: Path, workspace_root: Path) -> dict[str, Any]:

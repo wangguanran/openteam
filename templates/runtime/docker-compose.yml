@@ -106,6 +106,22 @@ services:
   control-plane:
     build:
       context: ./orchestrator
+      args:
+        TEAMOS_PYTHON_BASE_IMAGE: ${TEAMOS_PYTHON_BASE_IMAGE:-python:3.11-slim-bookworm}
+        HTTP_PROXY: ${TEAMOS_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${TEAMOS_BUILD_HTTPS_PROXY:-}
+        ALL_PROXY: ${TEAMOS_BUILD_ALL_PROXY:-}
+        NO_PROXY: ${TEAMOS_BUILD_NO_PROXY:-}
+        http_proxy: ${TEAMOS_BUILD_HTTP_PROXY:-}
+        https_proxy: ${TEAMOS_BUILD_HTTPS_PROXY:-}
+        all_proxy: ${TEAMOS_BUILD_ALL_PROXY:-}
+        no_proxy: ${TEAMOS_BUILD_NO_PROXY:-}
+        TEAMOS_CREWAI_GIT_URL: ${TEAMOS_CREWAI_GIT_URL:-https://github.com/wangguanran/crewAI.git}
+        TEAMOS_CREWAI_GIT_REF: ${TEAMOS_CREWAI_GIT_REF:-main}
+        TEAMOS_APT_MIRROR_URL: ${TEAMOS_APT_MIRROR_URL:-http://deb.debian.org/debian}
+        TEAMOS_APT_SECURITY_MIRROR_URL: ${TEAMOS_APT_SECURITY_MIRROR_URL:-http://deb.debian.org/debian-security}
+        TEAMOS_PIP_INDEX_URL: ${TEAMOS_PIP_INDEX_URL:-https://pypi.org/simple}
+        TEAMOS_PIP_TRUSTED_HOST: ${TEAMOS_PIP_TRUSTED_HOST:-}
     restart: unless-stopped
     depends_on:
       temporal:
@@ -114,6 +130,8 @@ services:
         condition: service_healthy
     environment:
       TEAM_OS_REPO_PATH: /team-os
+      # Runtime root for all runtime-generated state/artifacts.
+      TEAMOS_RUNTIME_ROOT: /teamos-runtime
       # Workspace root (project truth sources live here; must be outside the team-os git repo).
       TEAMOS_WORKSPACE_ROOT: /teamos-workspace
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -124,29 +142,58 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-temporal}:${POSTGRES_PASSWORD}@postgres:5432/team_os
       TEAMOS_DEMO_SEED: ${TEAMOS_DEMO_SEED:-0}
       TEAMOS_CODEX_MODEL: ${TEAMOS_CODEX_MODEL:-}
+      TEAMOS_SELF_UPGRADE_AUTO: ${TEAMOS_SELF_UPGRADE_AUTO:-1}
+      TEAMOS_SELF_UPGRADE_CONTINUOUS: ${TEAMOS_SELF_UPGRADE_CONTINUOUS:-1}
+      TEAMOS_SELF_UPGRADE_LOOP_INTERVAL_SEC: ${TEAMOS_SELF_UPGRADE_LOOP_INTERVAL_SEC:-300}
+      TEAMOS_SELF_UPGRADE_LOOP_INITIAL_DELAY_SEC: ${TEAMOS_SELF_UPGRADE_LOOP_INITIAL_DELAY_SEC:-90}
+      TEAMOS_SELF_UPGRADE_DISCUSSION_AUTO: ${TEAMOS_SELF_UPGRADE_DISCUSSION_AUTO:-1}
+      TEAMOS_SELF_UPGRADE_DISCUSSION_INTERVAL_SEC: ${TEAMOS_SELF_UPGRADE_DISCUSSION_INTERVAL_SEC:-90}
+      TEAMOS_SELF_UPGRADE_DISCUSSION_INITIAL_DELAY_SEC: ${TEAMOS_SELF_UPGRADE_DISCUSSION_INITIAL_DELAY_SEC:-30}
+      TEAMOS_SELF_UPGRADE_DELIVERY_AUTO: ${TEAMOS_SELF_UPGRADE_DELIVERY_AUTO:-1}
+      TEAMOS_SELF_UPGRADE_DELIVERY_INTERVAL_SEC: ${TEAMOS_SELF_UPGRADE_DELIVERY_INTERVAL_SEC:-180}
+      TEAMOS_SELF_UPGRADE_DELIVERY_INITIAL_DELAY_SEC: ${TEAMOS_SELF_UPGRADE_DELIVERY_INITIAL_DELAY_SEC:-45}
+      TEAMOS_SELF_UPGRADE_DELIVERY_MAX_TASKS_PER_SWEEP: ${TEAMOS_SELF_UPGRADE_DELIVERY_MAX_TASKS_PER_SWEEP:-1}
+      TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS: ${TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS:-2}
+      TEAMOS_SELF_UPGRADE_SHIP_ENABLED: ${TEAMOS_SELF_UPGRADE_SHIP_ENABLED:-1}
+      TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS: ${TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS:-1}
+      TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS: ${TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS:-24}
+      TEAMOS_SELF_UPGRADE_FAILURE_BACKOFF_HOURS: ${TEAMOS_SELF_UPGRADE_FAILURE_BACKOFF_HOURS:-1}
+      TEAMOS_SELF_UPGRADE_MAX_FINDINGS: ${TEAMOS_SELF_UPGRADE_MAX_FINDINGS:-3}
+      CREWAI_OPENAI_AUTH_MODE: ${CREWAI_OPENAI_AUTH_MODE:-oauth_codex}
+      TEAMOS_CREWAI_MODEL: ${TEAMOS_CREWAI_MODEL:-openai-codex/gpt-5.3-codex}
+      HTTP_PROXY: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
+      HTTPS_PROXY: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
+      ALL_PROXY: ${TEAMOS_RUNTIME_ALL_PROXY:-}
+      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-}
+      http_proxy: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
+      https_proxy: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
+      all_proxy: ${TEAMOS_RUNTIME_ALL_PROXY:-}
+      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-}
       # GitHub Projects panel sync (view-layer)
       TEAMOS_PANEL_GH_AUTO_SYNC: ${TEAMOS_PANEL_GH_AUTO_SYNC:-0}
       TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}
       TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC: ${TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC:-60}
       TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC: ${TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC:-30}
-      # Prefer local crewAI source checkout (host: ~/Codes/crewAI/lib/crewai/src).
-      TEAMOS_CREWAI_SRC_PATH: /opt/crewai-src
       CREWAI_DISABLE_TELEMETRY: ${CREWAI_DISABLE_TELEMETRY:-1}
-      # Optional override; default is /team-os/.team-os/state/runtime.db
-      RUNTIME_DB_PATH: ${RUNTIME_DB_PATH:-}
+      # Runtime DB path (runtime-only; host path under team-os-runtime/state).
+      RUNTIME_DB_PATH: ${RUNTIME_DB_PATH:-/teamos-runtime/state/runtime.db}
     ports:
       - "127.0.0.1:${CONTROL_PLANE_PORT:-8787}:8787"
     volumes:
       # Default: read-only repo mount, with minimal writable subpaths layered on top.
       - ../team-os:/team-os:ro
-      - ../team-os/.team-os:/team-os/.team-os
+      - ./state/teamos:/team-os/.team-os:rw
       - ../team-os/docs:/team-os/docs
+      # Runtime root persistence (all runtime outputs stay in team-os-runtime).
+      - ./state:/teamos-runtime/state:rw
+      - ./hub:/teamos-runtime/hub:rw
+      - ./workspace:/teamos-runtime/workspace:rw
+      - ./tmp:/teamos-runtime/tmp:rw
+      - ./cache:/teamos-runtime/cache:rw
       # Workspace: all project truth sources live here (must be OUTSIDE the team-os git repo).
       - ${HOME}/.teamos/workspace:/teamos-workspace:rw
       # OAuth: reuse host Codex login state (do not commit; local-only).
       - ${HOME}/.codex:/root/.codex:rw
-      # Local crewAI Python source checkout.
-      - ${HOME}/Codes/crewAI/lib/crewai/src:/opt/crewai-src:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=2).read()\""]
       interval: 10s

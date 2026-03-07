@@ -12,10 +12,6 @@ class CrewAIRuntimeError(RuntimeError):
     pass
 
 
-_DEFAULT_CONTAINER_CREWAI_SRC = Path("/opt/crewai-src")
-_DEFAULT_HOST_CREWAI_SRC = (Path.home() / "Codes" / "crewAI" / "lib" / "crewai" / "src").resolve()
-
-
 def _normalize_path(raw: str) -> Path:
     return Path(raw).expanduser().resolve()
 
@@ -32,9 +28,6 @@ def _candidate_paths() -> list[Path]:
         p = _normalize_path(raw)
         if p not in out:
             out.append(p)
-    for p in (_DEFAULT_CONTAINER_CREWAI_SRC, _DEFAULT_HOST_CREWAI_SRC):
-        if p not in out:
-            out.append(p)
     return out
 
 
@@ -43,6 +36,41 @@ def _is_valid_crewai_src(path: Path) -> bool:
         return path.is_dir() and (path / "crewai" / "__init__.py").is_file()
     except Exception:
         return False
+
+
+def _module_uses_selected_src(module: Any, selected: Path) -> bool:
+    try:
+        module_path = Path(str(getattr(module, "__file__", "") or "")).resolve()
+    except Exception:
+        return False
+    try:
+        module_path.relative_to(selected.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _purge_crewai_modules() -> None:
+    for name in [x for x in list(sys.modules.keys()) if x == "crewai" or x.startswith("crewai.")]:
+        sys.modules.pop(name, None)
+
+
+def _ensure_crewai_from_selected_src(selected: Path) -> None:
+    existing = sys.modules.get("crewai")
+    if existing is not None and _module_uses_selected_src(existing, selected):
+        return
+
+    if existing is not None:
+        _purge_crewai_modules()
+
+    importlib.invalidate_caches()
+    imported = importlib.import_module("crewai")
+    if not _module_uses_selected_src(imported, selected):
+        module_path = str(getattr(imported, "__file__", "") or "")
+        raise CrewAIRuntimeError(
+            "crewai import did not resolve to configured source path; "
+            f"selected_path={selected}; module_path={module_path or '(unknown)'}"
+        )
 
 
 def configure_crewai_src_path() -> dict[str, Any]:
@@ -89,7 +117,11 @@ def _probe_crewai_uncached() -> dict[str, Any]:
         "error": "",
         "candidates": list(cfg.get("candidates") or []),
     }
+    selected_path = str(cfg.get("selected_path") or "").strip()
+    selected = Path(selected_path) if selected_path else None
     try:
+        if selected is not None:
+            _ensure_crewai_from_selected_src(selected)
         mod = importlib.import_module("crewai")
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"

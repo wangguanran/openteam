@@ -108,38 +108,29 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
             pass
 
 
-def _self_improve_daemon_check(repo_root: Path) -> dict[str, Any]:
+def _self_upgrade_check(repo_root: Path) -> dict[str, Any]:
     """
-    Best-effort local check for always-on self-improve daemon.
-    This is a runtime check (not a config gate): report status but do not fail doctor by itself.
+    Best-effort local check for runtime-managed CrewAI self-upgrade state.
+    This is informational only and should not fail doctor by itself.
     """
     runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(repo_root.parent / "team-os-runtime")
     state_root = runtime_state_root(override=runtime_override)
-    pid_path = state_root / "self_improve_daemon.pid"
-    state_path = state_root / "self_improve_state.json"
-    pid = 0
-    if pid_path.exists():
+    state_path = state_root / "self_upgrade_state.json"
+    last_run: dict[str, Any] = {}
+    if state_path.exists():
         try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("last_run"), dict):
+                last_run = raw.get("last_run") or {}
         except Exception:
-            pid = 0
-
-    running = False
-    if pid > 0:
-        try:
-            os.kill(pid, 0)
-            running = True
-        except Exception:
-            running = False
+            last_run = {}
 
     return {
         "ok": True,
-        "running": running,
-        "pid": pid,
         "runtime_state_root": str(state_root),
-        "pid_path": str(pid_path),
         "state_path": str(state_path),
         "state_exists": state_path.exists(),
+        "last_run": last_run,
     }
 
 
@@ -231,8 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     if not bool(db.get("ok")):
         ok = False
 
-    # Always-on daemon status (informational).
-    report["self_improve_daemon"] = _self_improve_daemon_check(repo)
+    # Runtime-managed self-upgrade status (informational).
+    report["self_upgrade"] = _self_upgrade_check(repo)
 
     # Control plane health + API coverage (best-effort; should pass when runtime matches repo template).
     base = str(args.base_url or "").strip().rstrip("/") or _load_base_url(profile=str(args.profile or ""))
@@ -276,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             "/v1/tasks/new",
             "/v1/recovery/scan",
             "/v1/recovery/resume",
-            "/v1/self_improve/run",
+            "/v1/self_upgrade/run",
         ]
         missing = [p for p in required if p not in paths]
         report["control_plane"]["api_coverage"] = {"ok": not missing, "missing_paths": missing[:50]}
@@ -320,9 +311,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gh: {'OK' if gh_ok else 'FAIL'} {gh_msg}")
         dbs = report.get("postgres_db") or {}
         print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
-        sd = report.get("self_improve_daemon") or {}
-        if isinstance(sd, dict):
-            print(f"self_improve_daemon.running={str(bool(sd.get('running'))).lower()} pid={sd.get('pid',0)}")
+        su = report.get("self_upgrade") or {}
+        if isinstance(su, dict):
+            last = su.get("last_run") if isinstance(su.get("last_run"), dict) else {}
+            print(
+                "self_upgrade: "
+                f"state_exists={str(bool(su.get('state_exists'))).lower()} "
+                f"status={str(last.get('status') or '').strip() or 'UNKNOWN'} "
+                f"ts={str(last.get('ts') or '').strip()}"
+            )
         print(f"workspace_root={ws}")
         print(f"workspace: {'OK' if w.get('ok') else 'FAIL'}")
         print(f"repo: {'OK' if purity.get('ok') else 'FAIL'}")

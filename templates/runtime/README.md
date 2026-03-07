@@ -17,7 +17,8 @@
 
 Team OS 有两个层级的“真相源”：
 
-- **Team OS 自身**（scope=`teamos`）：允许落盘在 `team-os/` git 仓库内（例如 `docs/teamos/requirements`、`.team-os/ledger`）。
+- **Team OS 自身**（scope=`teamos`）：业务真相源可落盘在 `team-os/` git 仓库（例如 `docs/teamos/requirements`）。
+- **运行态文件**（runtime state/db/ledger/logs/cluster）：统一落盘在 `team-os-runtime/`（不再写入 `team-os/.team-os`）。
 - **任何项目**（scope=`project:<id>`）：必须落盘在 **Workspace**（不在 `team-os/` 目录树内）。
 
 默认 Workspace 路径：
@@ -132,3 +133,16 @@ Control Plane now exposes hub APIs for presentation/orchestration layers:
 - `GET /v1/hub/approvals`
 - `GET /v1/runs`
 - `POST /v1/runs/start`
+- `POST /v1/self_upgrade/run` (`/v1/self_improve/run` is kept as a compatibility alias)
+- `GET /v1/self_upgrade/proposals`
+- `POST /v1/self_upgrade/proposals/decide`
+
+Default behavior:
+
+- `control-plane` startup triggers one CrewAI self-upgrade run for the current `team-os` repo.
+- `control-plane` also keeps a continuous self-upgrade loop running for the current repo.
+- The self-upgrade run can also target another local repo via `repo_path`.
+- Bug findings are materialized immediately.
+- Feature findings become proposals, wait for user confirmation, and respect a 1 hour cooldown before materialization.
+- Process optimizations collect telemetry for 24 hours before materialization.
+- Findings are recorded into Team OS task ledgers and, when GitHub auth is available, mirrored to GitHub issues plus the configured GitHub Project panel.

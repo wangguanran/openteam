@@ -50,7 +50,59 @@ class BootstrapAndRunTests(unittest.TestCase):
             self.assertFalse((repo / ".team-os").exists())
             self.assertTrue(Path(str(out.get("moved_to") or "")).exists())
 
-    def test_start_flow_requires_self_improve_actual_execution(self):
+    def test_quarantine_empty_legacy_team_os_dir_removes_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            (repo / ".team-os").mkdir(parents=True, exist_ok=True)
+
+            out = self.mod._quarantine_legacy_team_os_dir(repo, runtime_root)
+
+            self.assertTrue(bool(out.get("ok")))
+            self.assertTrue(bool(out.get("found")))
+            self.assertTrue(bool(out.get("removed_empty")))
+            self.assertFalse((repo / ".team-os").exists())
+
+    def test_llm_config_accepts_codex_oauth_without_api_key(self):
+        with mock.patch.object(self.mod, "_codex_login_status", return_value=(True, "Logged in using ChatGPT")), mock.patch.dict(
+            os.environ,
+            {"TEAMOS_CREWAI_MODEL": "openai-codex/gpt-5.3-codex"},
+            clear=True,
+        ):
+            cfg = self.mod._llm_config()
+
+        self.assertTrue(bool(cfg.get("ok")))
+        self.assertTrue(bool(cfg.get("codex_oauth_ready")))
+        self.assertEqual(cfg.get("auth_strategy"), "codex_oauth")
+        self.assertEqual(cfg.get("model"), "openai-codex/gpt-5.3-codex")
+
+    def test_crewai_pip_spec_prefers_archive_url(self):
+        with mock.patch.dict(
+            os.environ,
+            {"TEAMOS_CREWAI_ARCHIVE_URL": "https://codeload.github.com/acme/crewAI/tar.gz/refs/heads/main"},
+            clear=True,
+        ):
+            spec = self.mod._crewai_pip_spec()
+
+        self.assertEqual(
+            spec,
+            "crewai @ https://codeload.github.com/acme/crewAI/tar.gz/refs/heads/main#subdirectory=lib/crewai",
+        )
+
+    def test_crewai_archive_url_falls_back_to_github_git_url(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TEAMOS_CREWAI_GIT_URL": "https://github.com/example/crewAI.git",
+                "TEAMOS_CREWAI_GIT_REF": "main",
+            },
+            clear=True,
+        ):
+            archive_url = self.mod._crewai_archive_url()
+
+        self.assertEqual(archive_url, "https://codeload.github.com/example/crewAI/tar.gz/refs/heads/main")
+
+    def test_start_flow_requires_self_upgrade_actual_execution(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
             runtime_root = Path(td) / "team-os-runtime"
@@ -83,8 +135,8 @@ class BootstrapAndRunTests(unittest.TestCase):
                 self.mod, "_start_control_plane", return_value={"ok": True, "pid": 1234}
             ), mock.patch.object(
                 self.mod, "_ensure_crewai_ready", return_value={"ok": True}
-            ), mock.patch.object(self.mod, "_run_self_improve_start", return_value={"ok": True}), mock.patch.object(
-                self.mod, "_run_self_improve_bootstrap", return_value={"ok": True}
+            ), mock.patch.object(
+                self.mod, "_run_self_upgrade_bootstrap", return_value={"ok": True}
             ), mock.patch.object(self.mod, "_resume_tasks", return_value={"ok": True, "resumed": []}), mock.patch.object(
                 self.mod, "_status_snapshot", return_value={"ok": True}
             ), mock.patch.dict(os.environ, dict(os.environ), clear=True):
@@ -161,15 +213,10 @@ class BootstrapAndRunTests(unittest.TestCase):
                 calls.append("crewai_ready")
                 return {"ok": True}
 
-            def fake_si_start(*args, **kwargs):
+            def fake_su_boot(*args, **kwargs):
                 _ = args, kwargs
-                calls.append("si_start")
-                return {"ok": True}
-
-            def fake_si_boot(*args, **kwargs):
-                _ = args, kwargs
-                calls.append("si_boot")
-                st = runtime_root / "state" / "self_improve_state.json"
+                calls.append("su_boot")
+                st = runtime_root / "state" / "self_upgrade_state.json"
                 st.parent.mkdir(parents=True, exist_ok=True)
                 st.write_text(json.dumps({"last_run": {"ts": "2026-02-28T00:00:00Z"}}, ensure_ascii=False), encoding="utf-8")
                 return {"ok": True, "applied_count": 0}
@@ -194,8 +241,8 @@ class BootstrapAndRunTests(unittest.TestCase):
                 self.mod, "_start_control_plane", side_effect=fake_cp
             ), mock.patch.object(
                 self.mod, "_ensure_crewai_ready", side_effect=fake_crewai
-            ), mock.patch.object(self.mod, "_run_self_improve_start", side_effect=fake_si_start), mock.patch.object(
-                self.mod, "_run_self_improve_bootstrap", side_effect=fake_si_boot
+            ), mock.patch.object(
+                self.mod, "_run_self_upgrade_bootstrap", side_effect=fake_su_boot
             ), mock.patch.object(self.mod, "_resume_tasks", side_effect=fake_resume), mock.patch.object(
                 self.mod, "_status_snapshot", side_effect=fake_snapshot
             ), mock.patch.dict(os.environ, dict(os.environ), clear=True):
@@ -215,8 +262,7 @@ class BootstrapAndRunTests(unittest.TestCase):
                     "deps",
                     "control_plane",
                     "crewai_ready",
-                    "si_start",
-                    "si_boot",
+                    "su_boot",
                     "resume",
                     "snapshot",
                 ],

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import crewai_runtime
+from . import crewai_self_upgrade
 from . import crew_tools
 from .state_store import team_os_root
 from . import redis_bus
@@ -16,6 +17,11 @@ class RunSpec:
     objective: str
     flow: str
     task_id: str = ""
+    repo_path: str = ""
+    repo_locator: str = ""
+    dry_run: bool = False
+    force: bool = False
+    trigger: str = ""
 
 
 def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payload: dict[str, Any]) -> None:
@@ -65,6 +71,93 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             payload=err_payload,
         )
         return {"ok": False, "run_id": run_id, "flow": flow, "task_id": task_id, "error": str(e), "crewai": err_payload["crewai"]}
+
+    if crew_tools.is_native_crewai_flow(flow):
+        run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
+        write_delegate = {
+            "write_mode": "crewai_self_upgrade",
+            "writer": "crewai_agents",
+            "truth_sources": ["task_ledger", "github_issues", "github_projects"],
+        }
+        db.add_event(
+            event_type="RUN_STARTED",
+            actor=actor,
+            project_id=spec.project_id,
+            workstream_id=spec.workstream_id,
+            payload={
+                "run_id": run_id,
+                "flow": flow,
+                "task_id": task_id,
+                "crewai": crewai_info,
+                "write_delegate": write_delegate,
+            },
+        )
+        _publish_redis_run_event(
+            event_type="RUN_STARTED",
+            actor=actor,
+            spec=spec,
+            payload={"run_id": run_id, "flow": flow, "task_id": task_id, "crewai": crewai_info, "write_delegate": write_delegate},
+        )
+        try:
+            out = crewai_self_upgrade.run_self_upgrade(
+                db=db,
+                spec=spec,
+                actor=actor,
+                run_id=run_id,
+                crewai_info=crewai_info,
+            )
+        except Exception as e:
+            db.update_run_state(run_id=run_id, state="FAILED")
+            err_payload = {
+                "run_id": run_id,
+                "flow": flow,
+                "task_id": task_id,
+                "error": str(e),
+                "crewai": crewai_info,
+                "write_delegate": write_delegate,
+            }
+            db.add_event(
+                event_type="RUN_FAILED",
+                actor=actor,
+                project_id=spec.project_id,
+                workstream_id=spec.workstream_id,
+                payload=err_payload,
+            )
+            _publish_redis_run_event(
+                event_type="RUN_FAILED",
+                actor=actor,
+                spec=spec,
+                payload=err_payload,
+            )
+            return {"ok": False, "run_id": run_id, "flow": flow, "task_id": task_id, "error": str(e), "crewai": crewai_info}
+
+        db.update_run_state(run_id=run_id, state="DONE" if bool(out.get("ok")) else "FAILED")
+        payload = {
+            "run_id": run_id,
+            "flow": flow,
+            "task_id": task_id,
+            "crewai": crewai_info,
+            "write_delegate": out.get("write_delegate") or write_delegate,
+            "summary": str(out.get("summary") or ""),
+            "records": list(out.get("records") or []),
+            "report_path": str(out.get("report_path") or ""),
+            "panel_sync": out.get("panel_sync") or {},
+            "skipped": bool(out.get("skipped")),
+        }
+        db.add_event(
+            event_type="RUN_FINISHED" if bool(out.get("ok")) else "RUN_FAILED",
+            actor=actor,
+            project_id=spec.project_id,
+            workstream_id=spec.workstream_id,
+            payload=payload,
+        )
+        _publish_redis_run_event(
+            event_type="RUN_FINISHED" if bool(out.get("ok")) else "RUN_FAILED",
+            actor=actor,
+            spec=spec,
+            payload=payload,
+        )
+        return {**out, "run_id": run_id, "flow": flow, "task_id": task_id}
 
     try:
         pipelines = crew_tools.flow_to_pipelines(flow)

@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .PHONY: up down pull ps logs doctor config
 
 up:
+	mkdir -p ../team-os/.team-os state/teamos state hub workspace tmp cache
 	docker compose up -d
 
 down:
@@ -34,4 +35,3 @@ doctor:
 	@docker compose version
 	@docker compose config -q
 	@echo "doctor: OK"
-

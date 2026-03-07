@@ -13,12 +13,17 @@
 ```bash
 git clone https://github.com/wangguanran/team-os.git
 cd team-os
-./run.sh            # 一键启动（runtime + Hub + migrate + control-plane + orchestrator + self-improve bootstrap）
+./run.sh            # 一键启动（runtime + Hub + migrate + control-plane + CrewAI self-upgrade bootstrap）
 ./run.sh status
 ./run.sh doctor
 ./run.sh stop
 
-# 必填：LLM 配置（未配置则 ./run.sh 启动会失败）
+# 二选一：
+# 1. Codex OAuth（推荐，和 ~/Codes/crewAI 的 demo 脚本一致）
+codex login
+export TEAMOS_CREWAI_MODEL="openai-codex/gpt-5.3-codex"
+
+# 2. 平台 API Key
 export TEAMOS_LLM_BASE_URL="https://api.openai.com/v1"
 export TEAMOS_LLM_API_KEY="<your_api_key>"
 
@@ -35,9 +40,13 @@ teamos
 # 启动后会提示：输入会落盘为 Raw，不要输入密码/密钥
 # 控制命令：/help /status /exit
 
-# 检查 self-improve 已实际执行（非仅注册定时器）
-cat ../team-os-runtime/state/self_improve_state.json | head -n 40
-ls ../team-os-runtime/state/teamos/self_improve/proposals/
+# 检查 self-upgrade 已触发并落盘
+cat ../team-os-runtime/state/self_upgrade_state.json | head -n 40
+ls ../team-os-runtime/state/self_upgrade/reports/
+
+# 查看 feature/process proposals，并决定哪些进入执行
+./teamos self-upgrade-proposals
+./teamos self-upgrade-decide <proposal_id> approve
 ```
 
 ## Repo vs Workspace（硬隔离）
@@ -78,7 +87,7 @@ cd team-os
 - Team OS 规范与落盘结构已完成：`AGENTS.md`、`TEAMOS.md`、`docs/`（运行态动态数据在 repo 外 runtime root）
 - 默认角色与 Crew Flow 定义已落盘：`roles/`、`workflows/`
 - 统一脚本入口可用：`./scripts/teamos.sh`
-  - `doctor/new-task/skill-boot/retro/self-improve`
+  - `doctor/new-task/skill-boot/retro/self-upgrade`
   - `runtime-init/runtime-secrets`（用于在新环境生成 `team-os-runtime`）
 - Runtime 模板已落盘：`templates/runtime/`
 - Runtime 最小闭环已验证（本机 localhost 绑定）：

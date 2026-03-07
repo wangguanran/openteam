@@ -11,23 +11,26 @@ class CrewToolsError(ValueError):
     pass
 
 
-# CrewAI flow aliases route to deterministic pipeline scripts.
+_FLOW_ALIASES: dict[str, str] = {
+    "self_improve": "self_upgrade",
+}
+
+_NATIVE_CREWAI_FLOWS = frozenset({"self_upgrade"})
+
+# CrewAI flow aliases route to supported runtime pipelines only.
 _FLOW_PIPELINES: dict[str, list[str]] = {
     "genesis": ["doctor"],
     "standard": ["doctor"],
     "maintenance": ["doctor", "db_migrate"],
     "migration": ["db_migrate"],
-    "self_improve": ["self_improve"],
-    "self-improve": ["self_improve"],
 }
 
 # Backward-compatible direct pipeline mode is intentionally narrow.
-_RUN_DIRECT_PIPELINE_ALLOWLIST = frozenset({"doctor", "db_migrate", "self_improve"})
+_RUN_DIRECT_PIPELINE_ALLOWLIST = frozenset({"doctor", "db_migrate"})
 
 _PIPELINE_SCRIPTS: dict[str, str] = {
     "doctor": "doctor.py",
     "db_migrate": "db_migrate.py",
-    "self_improve": "self_improve_daemon.py",
     "task_create": "task_create.py",
 }
 
@@ -40,15 +43,24 @@ def workspace_root() -> Path:
 
 
 def normalize_flow(raw: Optional[str]) -> str:
-    return str(raw or "standard").strip().lower()
+    flow = str(raw or "standard").strip().lower()
+    return _FLOW_ALIASES.get(flow, flow)
 
 
 def supported_flows() -> list[str]:
-    return sorted(_FLOW_PIPELINES.keys())
+    return sorted(set(_FLOW_PIPELINES.keys()) | set(_NATIVE_CREWAI_FLOWS))
 
 
 def direct_pipeline_allowlist() -> list[str]:
     return sorted(_RUN_DIRECT_PIPELINE_ALLOWLIST)
+
+
+def native_crewai_flows() -> list[str]:
+    return sorted(_NATIVE_CREWAI_FLOWS)
+
+
+def is_native_crewai_flow(flow: str) -> bool:
+    return normalize_flow(flow) in _NATIVE_CREWAI_FLOWS
 
 
 def resolve_run_request_flow(*, flow: Optional[str], pipeline: Optional[str]) -> str:
@@ -68,6 +80,8 @@ def resolve_run_request_flow(*, flow: Optional[str], pipeline: Optional[str]) ->
 
 def flow_to_pipelines(flow: str) -> list[str]:
     f = normalize_flow(flow)
+    if f in _NATIVE_CREWAI_FLOWS:
+        raise CrewToolsError(f"native_crewai_flow_has_no_pipeline_mapping: {f}")
     if f in _FLOW_PIPELINES:
         return list(_FLOW_PIPELINES[f])
 
@@ -108,9 +122,6 @@ def pipeline_command(*, pipeline: str, repo_root: Path, workspace_root: Path, ex
     ]
     if extra_args:
         cmd.extend(str(x) for x in extra_args)
-    elif str(pipeline).strip() == "self_improve":
-        # Self-improve pipeline entrypoint requires an explicit subcommand.
-        cmd.extend(["run-once", "--scope", "teamos"])
     return cmd
 
 

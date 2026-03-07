@@ -1,8 +1,6 @@
 import json
 import os
 import socket
-import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -31,6 +29,8 @@ from .requirements_store import (
 from .runtime_db import RuntimeDB
 from . import cluster_manager
 from . import crewai_orchestrator
+from . import crewai_self_upgrade
+from . import crewai_self_upgrade_delivery
 from . import crewai_runtime
 from . import crew_tools
 from .state_store import (
@@ -48,6 +48,13 @@ from .state_store import (
     teamos_requirements_dir,
 )
 from . import workspace_store
+
+try:
+    from .n8n_hook import emit_n8n_event  # type: ignore
+except Exception:  # pragma: no cover
+    def emit_n8n_event(*args, **kwargs):  # type: ignore
+        _ = args, kwargs
+        return None
 
 
 app = FastAPI(title="Team OS Control Plane", version="0.2.0")
@@ -287,6 +294,21 @@ DB = _db()
 # --- Panel sync scheduling (best-effort; GitHub Projects is view-layer) ---
 _PANEL_DIRTY: set[str] = set()
 _PANEL_LOCK = threading.Lock()
+_SELF_UPGRADE_LOCK = threading.Lock()
+_SELF_UPGRADE_DELIVERY_LOCK = threading.Lock()
+_SELF_UPGRADE_STALE_AGENT_ROLES = frozenset(
+    {
+        "Product-Manager",
+        "Test-Manager",
+        "Issue-Drafter",
+        "Review-Agent",
+        "QA-Agent",
+        "Process-Optimization-Analyst",
+        "Scheduler-Agent",
+        "Release-Agent",
+        "Process-Metrics-Agent",
+    }
+)
 
 
 def _is_teamos(project_id: str) -> bool:
@@ -405,6 +427,68 @@ def _require_leader_write() -> dict[str, Any]:
     return cur.__dict__ if cur else {"leader_instance_id": instance_id, "leader_base_url": _local_base_url(), "backend": "local", "lease_expires_at": ""}
 
 
+def _leader_write_allowed() -> bool:
+    try:
+        _require_leader_write()
+        return True
+    except HTTPException as exc:
+        if int(getattr(exc, "status_code", 500)) == 409:
+            return False
+        raise
+
+
+def _iso_age_seconds(ts: Any) -> float:
+    raw = str(ts or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        import datetime as _dt
+
+        dt = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return max(0.0, (_dt.datetime.now(_dt.timezone.utc) - dt).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def _cleanup_stale_self_upgrade_activity() -> None:
+    ttl_sec = max(300, int(os.getenv("TEAMOS_SELF_UPGRADE_STALE_TTL_SEC", "900") or "900"))
+
+    for run in DB.list_runs():
+        if _normalize_run_state(run.state) != "RUNNING":
+            continue
+        objective = str(run.objective or "").strip().lower()
+        run_id = str(run.run_id or "").strip().lower()
+        if "self-upgrade" not in objective and "self-upgrade" not in run_id:
+            continue
+        if _iso_age_seconds(run.last_update) < float(ttl_sec):
+            continue
+        DB.upsert_run(
+            run_id=str(run.run_id),
+            project_id=str(run.project_id or "teamos"),
+            workstream_id=str(run.workstream_id or _default_workstream_id()),
+            objective=str(run.objective or "stale self-upgrade run"),
+            state="FAILED",
+        )
+
+    for agent in DB.list_agents():
+        if str(agent.state or "").strip().upper() != "RUNNING":
+            continue
+        role_id = str(agent.role_id or "").strip()
+        current_action = str(agent.current_action or "").strip().lower()
+        if role_id not in _SELF_UPGRADE_STALE_AGENT_ROLES and "self-upgrade" not in current_action:
+            continue
+        if _iso_age_seconds(agent.last_heartbeat) < float(ttl_sec):
+            continue
+        try:
+            DB.update_assignment(
+                agent_id=str(agent.agent_id),
+                state="FAILED",
+                current_action="stale self-upgrade activity cleaned on startup",
+            )
+        except Exception:
+            pass
+
+
 def _plan_dir(project_id: str, *, ensure: bool) -> Path:
     if _is_teamos(project_id):
         # teamos plan stays in-repo (scope=teamos).
@@ -474,6 +558,137 @@ def _mark_panel_dirty(project_id: Optional[str] = None) -> None:
                 _PANEL_DIRTY.add(pid)
 
 
+def _run_self_upgrade_iteration(
+    *,
+    actor: str,
+    project_id: str = "teamos",
+    workstream_id: str = "general",
+    objective: str = "",
+    repo_path: str = "",
+    repo_locator: str = "",
+    dry_run: bool = False,
+    force: bool = False,
+    trigger: str = "api",
+) -> dict[str, Any]:
+    if not _SELF_UPGRADE_LOCK.acquire(blocking=False):
+        payload = {
+            "ok": True,
+            "skipped": True,
+            "reason": "self_upgrade_already_running",
+            "project_id": project_id,
+            "workstream_id": workstream_id,
+            "trigger": trigger,
+        }
+        try:
+            DB.add_event(
+                event_type="SELF_UPGRADE_ALREADY_RUNNING",
+                actor=actor,
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload=payload,
+            )
+        except Exception:
+            pass
+        return payload
+
+    try:
+        spec = crewai_orchestrator.RunSpec(
+            project_id=project_id,
+            workstream_id=workstream_id,
+            objective=objective or "Run CrewAI self-upgrade for the target repository",
+            flow="self_upgrade",
+            repo_path=repo_path,
+            repo_locator=repo_locator,
+            dry_run=dry_run,
+            force=force,
+            trigger=trigger,
+        )
+        out = crewai_orchestrator.run_once(db=DB, spec=spec, actor=actor)
+        _mark_panel_dirty(project_id)
+        return out
+    finally:
+        _SELF_UPGRADE_LOCK.release()
+
+
+def _run_self_upgrade_discussion_sync(*, actor: str) -> dict[str, Any]:
+    out = crewai_self_upgrade.reconcile_feature_discussions(
+        db=DB,
+        actor=actor,
+        verbose=_env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0"),
+    )
+    _mark_panel_dirty("teamos")
+    return out
+
+
+def _run_self_upgrade_delivery_iteration(
+    *,
+    actor: str,
+    project_id: str = "teamos",
+    task_id: str = "",
+    dry_run: bool = False,
+    force: bool = False,
+    max_tasks: Optional[int] = None,
+) -> dict[str, Any]:
+    current_project_id = str(project_id or "teamos").strip() or "teamos"
+    if not _SELF_UPGRADE_DELIVERY_LOCK.acquire(blocking=False):
+        payload = {
+            "ok": True,
+            "skipped": True,
+            "reason": "self_upgrade_delivery_already_running",
+            "project_id": current_project_id,
+            "task_id": str(task_id or "").strip(),
+        }
+        try:
+            DB.add_event(
+                event_type="SELF_UPGRADE_DELIVERY_ALREADY_RUNNING",
+                actor=actor,
+                project_id=current_project_id,
+                workstream_id=_default_workstream_id(),
+                payload=payload,
+            )
+        except Exception:
+            pass
+        return payload
+
+    run_key = str(task_id or current_project_id or "teamos").strip() or "teamos"
+    run_id = f"run-{run_key}::self-upgrade-delivery"
+    objective = (
+        f"Resume self-upgrade delivery for task {task_id}"
+        if str(task_id or "").strip()
+        else f"Run self-upgrade delivery sweep for project {current_project_id}"
+    )
+    DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state="RUNNING")
+    try:
+        out = crewai_self_upgrade_delivery.run_delivery_sweep(
+            db=DB,
+            actor=actor,
+            project_id=current_project_id,
+            task_id=str(task_id or "").strip(),
+            dry_run=bool(dry_run),
+            force=bool(force),
+            max_tasks=max_tasks,
+        )
+        run_state = "DONE" if bool(out.get("ok")) else "FAILED"
+        DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state=run_state)
+        _mark_panel_dirty(current_project_id)
+        return out
+    except Exception as exc:
+        DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state="FAILED")
+        try:
+            DB.add_event(
+                event_type="SELF_UPGRADE_DELIVERY_SWEEP_FAILED",
+                actor=actor,
+                project_id=current_project_id,
+                workstream_id=_default_workstream_id(),
+                payload={"task_id": str(task_id or ""), "error": str(exc)[:300]},
+            )
+        except Exception:
+            pass
+        raise
+    finally:
+        _SELF_UPGRADE_DELIVERY_LOCK.release()
+
+
 def _panel_auto_sync_loop() -> None:
     # Auto sync is best-effort; missing config/auth will simply skip.
     interval_sec = int(os.getenv("TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60")
@@ -484,6 +699,9 @@ def _panel_auto_sync_loop() -> None:
         try:
             # Safety: default off. Enabling auto-sync implies periodic remote writes to GitHub Projects (view-layer).
             if not _env_truthy("TEAMOS_PANEL_GH_AUTO_SYNC", "0"):
+                time.sleep(5)
+                continue
+            if not _leader_write_allowed():
                 time.sleep(5)
                 continue
             if not _panel_github_writes_enabled():
@@ -572,6 +790,40 @@ def _panel_auto_sync_loop() -> None:
 
 @app.on_event("startup")
 def _startup_background_threads() -> None:
+    try:
+        _cleanup_stale_self_upgrade_activity()
+    except Exception:
+        pass
+
+    def _self_upgrade_worktree_migration_once() -> None:
+        try:
+            time.sleep(1)
+            if not _leader_write_allowed():
+                return
+            out = crewai_self_upgrade_delivery.migrate_legacy_worktrees(project_id="teamos")
+            if int(out.get("updated") or 0) > 0 or int(out.get("moved") or 0) > 0:
+                DB.add_event(
+                    event_type="SELF_UPGRADE_WORKTREE_MIGRATED",
+                    actor="control-plane.startup",
+                    project_id="teamos",
+                    workstream_id=_default_workstream_id(),
+                    payload={"updated": int(out.get("updated") or 0), "moved": int(out.get("moved") or 0)},
+                )
+        except Exception as e:
+            try:
+                DB.add_event(
+                    event_type="SELF_UPGRADE_WORKTREE_MIGRATION_FAILED",
+                    actor="control-plane.startup",
+                    project_id="teamos",
+                    workstream_id=_default_workstream_id(),
+                    payload={"error": str(e)[:300]},
+                )
+            except Exception:
+                pass
+
+    wmt = threading.Thread(target=_self_upgrade_worktree_migration_once, name="self-upgrade-worktree-migration-once", daemon=True)
+    wmt.start()
+
     # GitHub Projects sync loop (view layer). It is a best-effort background thread.
     t = threading.Thread(target=_panel_auto_sync_loop, name="panel-auto-sync", daemon=True)
     t.start()
@@ -591,28 +843,146 @@ def _startup_background_threads() -> None:
     rt = threading.Thread(target=_recovery_auto_once, name="recovery-auto-once", daemon=True)
     rt.start()
 
-    # Always-on self-improve: ensure the host-level daemon is running.
-    def _ensure_self_improve_daemon() -> None:
-        if str(os.getenv("TEAMOS_SELF_IMPROVE_AUTO_START", "1") or "").strip().lower() in ("0", "false", "no", "off"):
+    def _self_upgrade_auto_once() -> None:
+        if not _env_truthy("TEAMOS_SELF_UPGRADE_AUTO", "1"):
             return
         try:
-            time.sleep(3)
-            repo = team_os_root()
-            script = repo / "scripts" / "pipelines" / "self_improve_daemon.py"
-            if not script.exists():
+            time.sleep(4)
+            if not _leader_write_allowed():
                 return
+            _ = _run_self_upgrade_iteration(
+                actor="control-plane.startup",
+                project_id="teamos",
+                workstream_id="general",
+                objective="Startup self-upgrade for the current repository",
+                repo_path=str(team_os_root()),
+                dry_run=False,
+                force=False,
+                trigger="startup_auto",
+            )
+        except Exception as e:
             try:
-                ws = str(_workspace_root())
+                DB.add_event(
+                    event_type="SELF_UPGRADE_AUTO_FAILED",
+                    actor="control-plane.startup",
+                    project_id="teamos",
+                    workstream_id=_default_workstream_id(),
+                    payload={"error": str(e)[:300]},
+                )
             except Exception:
-                ws = str(Path.home() / ".teamos" / "workspace")
-            argv = [sys.executable, str(script), "--repo-root", str(repo), "--workspace-root", ws, "start"]
-            subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                pass
+
+    sut = threading.Thread(target=_self_upgrade_auto_once, name="self-upgrade-auto-once", daemon=True)
+    sut.start()
+
+    def _self_upgrade_continuous_loop() -> None:
+        if not _env_truthy("TEAMOS_SELF_UPGRADE_CONTINUOUS", "1"):
+            return
+        interval_sec = max(60, int(os.getenv("TEAMOS_SELF_UPGRADE_LOOP_INTERVAL_SEC", "300") or "300"))
+        initial_delay_sec = max(10, int(os.getenv("TEAMOS_SELF_UPGRADE_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
+        try:
+            time.sleep(initial_delay_sec)
+            while True:
+                try:
+                    if not _leader_write_allowed():
+                        time.sleep(interval_sec)
+                        continue
+                    _ = _run_self_upgrade_iteration(
+                        actor="control-plane.loop",
+                        project_id="teamos",
+                        workstream_id="general",
+                        objective="Continuous self-upgrade sweep for the current repository",
+                        repo_path=str(team_os_root()),
+                        dry_run=False,
+                        force=False,
+                        trigger="continuous_loop",
+                    )
+                except Exception as e:
+                    try:
+                        DB.add_event(
+                            event_type="SELF_UPGRADE_LOOP_FAILED",
+                            actor="control-plane.loop",
+                            project_id="teamos",
+                            workstream_id=_default_workstream_id(),
+                            payload={"error": str(e)[:300]},
+                        )
+                    except Exception:
+                        pass
+                time.sleep(interval_sec)
         except Exception:
-            # Never crash server because of daemon management.
             pass
 
-    st = threading.Thread(target=_ensure_self_improve_daemon, name="self-improve-daemon-ensure", daemon=True)
-    st.start()
+    clt = threading.Thread(target=_self_upgrade_continuous_loop, name="self-upgrade-continuous-loop", daemon=True)
+    clt.start()
+
+    def _self_upgrade_discussion_loop() -> None:
+        if not _env_truthy("TEAMOS_SELF_UPGRADE_DISCUSSION_AUTO", "1"):
+            return
+        interval_sec = max(30, int(os.getenv("TEAMOS_SELF_UPGRADE_DISCUSSION_INTERVAL_SEC", "90") or "90"))
+        initial_delay_sec = max(10, int(os.getenv("TEAMOS_SELF_UPGRADE_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
+        try:
+            time.sleep(initial_delay_sec)
+            while True:
+                try:
+                    if not _leader_write_allowed():
+                        time.sleep(interval_sec)
+                        continue
+                    _ = _run_self_upgrade_discussion_sync(actor="control-plane.discussion-loop")
+                except Exception as e:
+                    try:
+                        DB.add_event(
+                            event_type="SELF_UPGRADE_DISCUSSION_LOOP_FAILED",
+                            actor="control-plane.discussion-loop",
+                            project_id="teamos",
+                            workstream_id=_default_workstream_id(),
+                            payload={"error": str(e)[:300]},
+                        )
+                    except Exception:
+                        pass
+                time.sleep(interval_sec)
+        except Exception:
+            pass
+
+    dlt = threading.Thread(target=_self_upgrade_discussion_loop, name="self-upgrade-discussion-loop", daemon=True)
+    dlt.start()
+
+    def _self_upgrade_delivery_loop() -> None:
+        if not _env_truthy("TEAMOS_SELF_UPGRADE_DELIVERY_AUTO", "1"):
+            return
+        interval_sec = max(30, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_INTERVAL_SEC", "180") or "180"))
+        initial_delay_sec = max(10, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_INITIAL_DELAY_SEC", "45") or "45"))
+        max_tasks = max(1, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
+        try:
+            time.sleep(initial_delay_sec)
+            while True:
+                try:
+                    if not _leader_write_allowed():
+                        time.sleep(interval_sec)
+                        continue
+                    _ = _run_self_upgrade_delivery_iteration(
+                        actor="control-plane.delivery-loop",
+                        project_id="teamos",
+                        dry_run=False,
+                        force=False,
+                        max_tasks=max_tasks,
+                    )
+                except Exception as e:
+                    try:
+                        DB.add_event(
+                            event_type="SELF_UPGRADE_DELIVERY_LOOP_FAILED",
+                            actor="control-plane.delivery-loop",
+                            project_id="teamos",
+                            workstream_id=_default_workstream_id(),
+                            payload={"error": str(e)[:300]},
+                        )
+                    except Exception:
+                        pass
+                time.sleep(interval_sec)
+        except Exception:
+            pass
+
+    sdt = threading.Thread(target=_self_upgrade_delivery_loop, name="self-upgrade-delivery-loop", daemon=True)
+    sdt.start()
 
     # Startup indicator for optional Redis runtime bus.
     try:
@@ -705,10 +1075,34 @@ class PanelSyncIn(BaseModel):
     dry_run: bool = False
 
 
-class SelfImproveIn(BaseModel):
-    dry_run: bool = True
+class SelfUpgradeIn(BaseModel):
+    dry_run: bool = False
     force: bool = False
     trigger: str = "api"  # api|cli_auto|manual
+    project_id: str = "teamos"
+    workstream_id: str = "general"
+    repo_path: Optional[str] = None
+    repo_locator: Optional[str] = None
+    objective: Optional[str] = None
+
+
+SelfImproveIn = SelfUpgradeIn
+
+
+class SelfUpgradeDeliveryIn(BaseModel):
+    dry_run: bool = False
+    force: bool = False
+    project_id: str = "teamos"
+    task_id: Optional[str] = None
+    max_tasks: Optional[int] = Field(default=None, ge=1, le=20)
+
+
+class SelfUpgradeProposalDecisionIn(BaseModel):
+    proposal_id: str = Field(..., min_length=1)
+    action: str = Field(..., min_length=1, description="approve|reject|hold")
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    version_bump: Optional[str] = None
 
 
 class RunStartIn(BaseModel):
@@ -720,6 +1114,11 @@ class RunStartIn(BaseModel):
     pipeline: Optional[str] = None
     # optional task binding; enables deterministic task/run consistency checks
     task_id: Optional[str] = None
+    repo_path: Optional[str] = None
+    repo_locator: Optional[str] = None
+    dry_run: bool = False
+    force: bool = False
+    trigger: Optional[str] = None
 
 
 class NodeRegisterIn(BaseModel):
@@ -785,6 +1184,15 @@ def v1_status():
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = crewai_runtime.probe_crewai()
+    self_upgrade_state = crewai_self_upgrade._read_state()
+    proposals = crewai_self_upgrade.list_proposals()
+    delivery_tasks = crewai_self_upgrade_delivery.list_delivery_tasks()
+    delivery_summary = crewai_self_upgrade_delivery.delivery_summary()
+    pending_proposals = [
+        p
+        for p in proposals
+        if str(p.get("status") or "").strip().upper() not in ("REJECTED", "MATERIALIZED")
+    ]
 
     pending = _pending_decisions()
 
@@ -799,6 +1207,23 @@ def v1_status():
         "tasks": tasks,
         "task_run_sync": task_run_sync,
         "crewai": crewai_info,
+        "self_upgrade": {
+            "last_run": self_upgrade_state.get("last_run") if isinstance(self_upgrade_state.get("last_run"), dict) else {},
+            "backoff_until": str(self_upgrade_state.get("backoff_until") or ""),
+            "proposal_counts": {
+                "total": len(proposals),
+                "pending": len(pending_proposals),
+                "feature": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "feature"]),
+                "bug": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "bug"]),
+                "process": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "process"]),
+            },
+            "pending_proposals": pending_proposals[:20],
+            "delivery": {
+                "summary": delivery_summary,
+                "active_tasks": [t for t in delivery_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release")][:20],
+                "blocked_tasks": [t for t in delivery_tasks if str(t.get("status") or "") == "blocked"][:20],
+            },
+        },
         "pending_decisions": pending,
         "redis_bus": redis_bus.describe(),
     }
@@ -873,6 +1298,11 @@ def v1_run_start(payload: RunStartIn):
         objective=str(payload.objective),
         flow=flow,
         task_id=task_id,
+        repo_path=str(payload.repo_path or "").strip(),
+        repo_locator=str(payload.repo_locator or "").strip(),
+        dry_run=bool(payload.dry_run),
+        force=bool(payload.force),
+        trigger=str(payload.trigger or ""),
     )
     out = crewai_orchestrator.run_once(db=DB, spec=spec, actor="crewai_orchestrator")
     _mark_panel_dirty(project_id)
@@ -1091,6 +1521,15 @@ def v1_chat(payload: ChatIn):
             payload={"run_id": payload.run_id, "state": desired},
         )
         _mark_panel_dirty(project_id)
+        try:
+            emit_n8n_event(
+                "task_state_changed",
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload={"run_id": payload.run_id, "state": desired},
+            )
+        except Exception:
+            pass
         actions.append(f"run_state={desired}")
         response_lines.append(f"run_id={payload.run_id} state={desired}")
         return {"response_text": "\n".join(response_lines).strip() + "\n", "actions_taken": actions, "pending_decisions": pending}
@@ -1694,6 +2133,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
         target = [t for t in active if str(t.get("task_id") or "") == str(payload.task_id)]
 
     resumed: list[str] = []
+    resumed_details: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     for t in target:
         gates = _gates_for_task(t)
@@ -1701,10 +2141,42 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
             skipped.append({"task_id": t.get("task_id"), "gates": gates})
             continue
 
+        ledger_path = Path(str(t.get("ledger_path") or "")).expanduser()
+        if ledger_path.exists():
+            try:
+                task_doc = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                task_doc = {}
+        else:
+            task_doc = {}
+
+        orchestration = (task_doc.get("orchestration") or {}) if isinstance(task_doc, dict) else {}
+        if (
+            isinstance(orchestration, dict)
+            and str(orchestration.get("engine") or "").strip().lower() == "crewai"
+            and str(orchestration.get("flow") or "").strip().lower() == "self_upgrade"
+        ):
+            delivery = _run_self_upgrade_delivery_iteration(
+                actor="control-plane.recovery",
+                project_id=str(t.get("project_id") or "teamos"),
+                task_id=str(t.get("task_id") or ""),
+                dry_run=False,
+                force=True,
+                max_tasks=1,
+            )
+            resumed.append(str(t.get("task_id") or ""))
+            resumed_details.append(
+                {
+                    "task_id": str(t.get("task_id") or ""),
+                    "mode": "self_upgrade_delivery",
+                    "result": delivery,
+                }
+            )
+            continue
+
         run_id = f"run-{t.get('task_id')}"
         DB.upsert_run(run_id=run_id, project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), objective=str(t.get("title") or ""), state="RUNNING")
 
-        # Ensure a single Process-Guardian placeholder agent per task (best-effort; avoid duplicates).
         existing = DB.list_agents(project_id=str(t.get("project_id") or ""), workstream_id=str(t.get("workstream_id") or ""), role_id="Process-Guardian")
         if not any(str(a.task_id) == str(t.get("task_id") or "") and str(a.state).upper() == "RUNNING" for a in existing):
             _ = DB.register_agent(
@@ -1716,76 +2188,109 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
                 current_action="recovery placeholder (no executor wired)",
             )
         resumed.append(str(t.get("task_id") or ""))
+        resumed_details.append({"task_id": str(t.get("task_id") or ""), "mode": "placeholder"})
 
     DB.add_event(event_type="RECOVERY_RESUME", actor="control-plane", project_id=_default_project_id(), workstream_id=_default_workstream_id(), payload={"resumed": resumed, "skipped": skipped})
     _mark_panel_dirty()
-    return {"ok": True, "resumed": resumed, "skipped": skipped}
+    return {"ok": True, "resumed": resumed, "resumed_details": resumed_details, "skipped": skipped}
+
+
+@app.post("/v1/self_upgrade/run")
+def v1_self_upgrade_run(payload: SelfUpgradeIn):
+    _require_leader_write()
+    project_id = str(payload.project_id or "teamos").strip() or "teamos"
+    workstream_id = str(payload.workstream_id or "general").strip() or "general"
+    return _run_self_upgrade_iteration(
+        actor="self_upgrade_api",
+        project_id=project_id,
+        workstream_id=workstream_id,
+        objective=str(payload.objective or "Run CrewAI self-upgrade for the target repository").strip(),
+        repo_path=str(payload.repo_path or "").strip(),
+        repo_locator=str(payload.repo_locator or "").strip(),
+        dry_run=bool(payload.dry_run),
+        force=bool(payload.force),
+        trigger=str(payload.trigger or "api"),
+    )
+
+
+@app.get("/v1/self_upgrade/proposals")
+def v1_self_upgrade_proposals(
+    lane: str = Query(default=""),
+    status: str = Query(default=""),
+):
+    proposals = crewai_self_upgrade.list_proposals(lane=lane, status=status)
+    return {"total": len(proposals), "proposals": proposals}
+
+
+@app.post("/v1/self_upgrade/proposals/decide")
+def v1_self_upgrade_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
+    _require_leader_write()
+    try:
+        proposal = crewai_self_upgrade.decide_proposal(
+            proposal_id=payload.proposal_id,
+            action=payload.action,
+            title=str(payload.title or "").strip(),
+            summary=str(payload.summary or "").strip(),
+            version_bump=str(payload.version_bump or "").strip(),
+        )
+    except crewai_self_upgrade.SelfUpgradeError as e:
+        raise HTTPException(status_code=400, detail={"error": "self_upgrade_proposal_decision_failed", "message": str(e)})
+    project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
+    workstream_id = str(proposal.get("workstream_id") or "general").strip() or "general"
+    DB.add_event(
+        event_type="SELF_UPGRADE_PROPOSAL_DECIDED",
+        actor="self_upgrade_api",
+        project_id=project_id,
+        workstream_id=workstream_id,
+        payload={"proposal": proposal},
+    )
+    _mark_panel_dirty(project_id)
+    return {"ok": True, "proposal": proposal}
+
+
+@app.post("/v1/self_upgrade/discussions/sync")
+def v1_self_upgrade_discussions_sync():
+    _require_leader_write()
+    out = _run_self_upgrade_discussion_sync(actor="self_upgrade_discussion_api")
+    return {"ok": True, **out}
+
+
+@app.get("/v1/self_upgrade/delivery/tasks")
+def v1_self_upgrade_delivery_tasks(
+    project_id: str = Query(default=""),
+    status: str = Query(default=""),
+):
+    tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=project_id, status=status)
+    return {"total": len(tasks), "tasks": tasks, "summary": crewai_self_upgrade_delivery.delivery_summary()}
+
+
+@app.post("/v1/self_upgrade/delivery/run")
+def v1_self_upgrade_delivery_run(payload: SelfUpgradeDeliveryIn):
+    _require_leader_write()
+    out = _run_self_upgrade_delivery_iteration(
+        actor="self_upgrade_delivery_api",
+        project_id=str(payload.project_id or "teamos").strip() or "teamos",
+        task_id=str(payload.task_id or "").strip(),
+        dry_run=bool(payload.dry_run),
+        force=bool(payload.force),
+        max_tasks=payload.max_tasks,
+    )
+    return out
 
 
 @app.post("/v1/self_improve/run")
-def v1_self_improve_run(payload: SelfImproveIn):
-    """
-    Run one self-improve iteration.
-
-    Notes:
-    - Remote writes (GitHub Issues/Projects/repo creation) remain gated elsewhere.
-    - This endpoint performs local scanning + local truth-source updates (requirements/pending drafts).
-    """
+def v1_self_improve_run(payload: SelfUpgradeIn):
+    out = v1_self_upgrade_run(payload)
     try:
-        repo = team_os_root()
-        ws = _workspace_root()
-        script = repo / "scripts" / "pipelines" / "self_improve_daemon.py"
-        if not script.exists():
-            raise RuntimeError(f"missing pipeline: {script}")
-        runner_py = str(os.getenv("TEAMOS_PIPELINE_PYTHON") or sys.executable).strip() or sys.executable
-        argv = [
-            runner_py,
-            str(script),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(ws),
-            "--base-url",
-            _local_base_url(),
-            "run-once",
-            "--scope",
-            "teamos",
-        ]
-        if bool(payload.force):
-            argv.append("--force")
-        if bool(payload.dry_run):
-            argv.append("--dry-run-local")
-        p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-        out_text = (p.stdout or "").strip()
-        if p.returncode != 0:
-            raise RuntimeError((p.stderr or out_text or f"self_improve run-once failed rc={p.returncode}")[:500])
-        out = json.loads(out_text) if out_text else {}
-        if not isinstance(out, dict):
-            out = {"ok": False, "_raw": out_text}
-        # Best-effort: compute a panel sync plan (dry-run) so the user can see what would appear on the Projects panel.
-        try:
-            svc = GitHubProjectsPanelSync(db=DB)
-            out["panel_sync_dry_run"] = svc.sync(project_id="teamos", mode="incremental", dry_run=True)
-        except Exception as e:
-            out["panel_sync_dry_run_error"] = str(e)[:200]
-        DB.add_event(
-            event_type="SELF_IMPROVE_RUN",
-            actor="user",
-            project_id="teamos",
-            workstream_id=_default_workstream_id(),
-            payload={"dry_run": bool(payload.dry_run), "force": bool(payload.force), "trigger": str(payload.trigger or "api"), "skipped": bool(out.get("skipped"))},
+        emit_n8n_event(
+            "SELF_UPGRADE_RUN",
+            project_id=str(out.get("project_id") or "teamos"),
+            workstream_id=str(payload.workstream_id or _default_workstream_id()),
+            payload=out,
         )
-        _mark_panel_dirty("teamos")
-        return out
-    except Exception as e:
-        DB.add_event(
-            event_type="SELF_IMPROVE_RUN_FAILED",
-            actor="user",
-            project_id="teamos",
-            workstream_id=_default_workstream_id(),
-            payload={"error": str(e)[:500], "dry_run": bool(payload.dry_run), "force": bool(payload.force)},
-        )
-        raise HTTPException(status_code=500, detail=str(e)[:500])
+    except Exception:
+        pass
+    return out
 
 
 @app.get("/v1/events/stream")
@@ -1896,6 +2401,22 @@ def _handle_new_requirement(
         },
     )
     _mark_panel_dirty(project_id)
+    if outcome.classification in ("CONFLICT", "DRIFT", "NEED_PM_DECISION"):
+        try:
+            emit_n8n_event(
+                "need_pm_decision",
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload={
+                    "req_id": outcome.req_id or "",
+                    "conflicts_with": outcome.conflicts_with,
+                    "conflict_report_path": outcome.conflict_report_path or "",
+                    "drift_report_path": outcome.drift_report_path or "",
+                    "feasibility_report_path": outcome.feasibility_report_path or "",
+                },
+            )
+        except Exception:
+            pass
 
     if outcome.classification == "DUPLICATE":
         summary = "\n".join(
@@ -1991,6 +2512,7 @@ def _load_tasks_summary() -> list[dict[str, Any]]:
             project_id = str(data.get("project_id") or pid or _default_project_id())
             risk = str(data.get("risk_level") or data.get("risk") or "")
             need_pm = bool(data.get("need_pm_decision") or False)
+            execution = data.get("self_upgrade_execution") or {}
 
             out.append(
                 {
@@ -2003,6 +2525,9 @@ def _load_tasks_summary() -> list[dict[str, Any]]:
                     "risk": risk,
                     "need_pm_decision": need_pm,
                     "links": data.get("links") or {},
+                    "ledger_path": str(p),
+                    "orchestration": data.get("orchestration") or {},
+                    "self_upgrade_stage": str((execution if isinstance(execution, dict) else {}).get("stage") or ""),
                 }
             )
     return out
@@ -2039,5 +2564,27 @@ def _pending_decisions() -> list[dict[str, Any]]:
     for t in _load_tasks_summary():
         if t.get("need_pm_decision"):
             decisions.append({"type": "TASK_NEED_PM_DECISION", "task_id": t.get("task_id"), "title": t.get("title")})
+
+    # 3) Self-upgrade feature proposals waiting for user input.
+    try:
+        for p in crewai_self_upgrade.list_proposals():
+            status = str(p.get("status") or "").strip().upper()
+            lane = str(p.get("lane") or "").strip().lower()
+            if lane != "feature" or status not in ("PENDING_CONFIRMATION", "HOLD"):
+                continue
+            decisions.append(
+                {
+                    "type": "SELF_UPGRADE_PROPOSAL_DECISION",
+                    "project_id": str(p.get("project_id") or "teamos"),
+                    "proposal_id": p.get("proposal_id"),
+                    "title": p.get("title"),
+                    "lane": lane,
+                    "status": status,
+                    "target_version": p.get("target_version"),
+                    "cooldown_until": p.get("cooldown_until"),
+                }
+            )
+    except Exception:
+        pass
 
     return decisions

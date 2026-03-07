@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -31,18 +32,53 @@ def _run(cmd: list[str], *, input_text: Optional[str] = None, timeout_sec: int =
     )
 
 
+def _codex_home() -> Path:
+    raw = str(os.getenv("CODEX_HOME") or "~/.codex").strip() or "~/.codex"
+    return Path(raw).expanduser()
+
+
+def _auth_json_path() -> Path:
+    return _codex_home() / "auth.json"
+
+
+def _auth_file_login_status() -> tuple[bool, str]:
+    p = _auth_json_path()
+    if not p.is_file():
+        return False, "codex auth.json not found"
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return False, f"codex auth.json unreadable: {e}"
+    if not isinstance(obj, dict):
+        return False, "codex auth.json invalid"
+    tokens = obj.get("tokens") if isinstance(obj.get("tokens"), dict) else {}
+    access_token = str(tokens.get("access_token") or "").strip()
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    auth_mode = str(obj.get("auth_mode") or "").strip()
+    if access_token or refresh_token:
+        detail = auth_mode or "oauth"
+        return True, f"codex auth.json available ({detail})"
+    return False, "codex auth.json missing access/refresh token"
+
+
 def codex_login_status() -> tuple[bool, str]:
     try:
         p = _run(["codex", "login", "status"], timeout_sec=10)
     except FileNotFoundError as e:
-        raise CodexUnavailable("codex CLI not found in PATH") from e
+        ok, msg = _auth_file_login_status()
+        if ok:
+            return ok, msg
+        raise CodexUnavailable("codex CLI not found in PATH and local auth.json is unavailable") from e
     out = (p.stdout or b"").decode("utf-8", errors="replace").strip()
     err = (p.stderr or b"").decode("utf-8", errors="replace").strip()
     # codex prints human status to stderr; rely primarily on exit code.
     msg = out or err
     if p.returncode == 0:
         return True, msg or "ok"
-    return False, msg or "codex login status failed"
+    fallback_ok, fallback_msg = _auth_file_login_status()
+    if fallback_ok:
+        return True, fallback_msg
+    return False, msg or fallback_msg or "codex login status failed"
 
 
 def require_codex_oauth() -> str:

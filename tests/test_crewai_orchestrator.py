@@ -55,21 +55,16 @@ class CrewOrchestratorTests(unittest.TestCase):
     def test_flow_alias_maps_to_deterministic_pipeline_chain(self):
         self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor", "db_migrate"])
 
-    def test_self_improve_flow_maps_to_self_improve_pipeline(self):
-        self.assertEqual(crew_tools.flow_to_pipelines("self_improve"), ["self_improve"])
+    def test_self_improve_alias_maps_to_native_self_upgrade_flow(self):
+        self.assertEqual(crew_tools.normalize_flow("self_improve"), "self_upgrade")
+        self.assertTrue(crew_tools.is_native_crewai_flow("self_improve"))
 
     def test_direct_pipeline_allowlist_accepts_supported_pipeline(self):
         self.assertEqual(crew_tools.flow_to_pipelines("pipeline:doctor"), ["doctor"])
 
-    def test_self_improve_pipeline_command_has_run_once_defaults(self):
-        cmd = crew_tools.pipeline_command(
-            pipeline="self_improve",
-            repo_root=Path("/tmp/team-os"),
-            workspace_root=Path("/tmp/ws"),
-        )
-        self.assertIn("run-once", cmd)
-        self.assertIn("--scope", cmd)
-        self.assertIn("teamos", cmd)
+    def test_direct_pipeline_allowlist_rejects_removed_self_improve_pipeline(self):
+        with self.assertRaises(crew_tools.CrewToolsError):
+            crew_tools.flow_to_pipelines("pipeline:self_improve")
 
     def test_direct_pipeline_allowlist_rejects_unsupported_pipeline(self):
         with self.assertRaises(crew_tools.CrewToolsError):
@@ -127,6 +122,33 @@ class CrewOrchestratorTests(unittest.TestCase):
         self.assertIn("doctor", out["direct_pipeline_allowlist"])
         failed = next(e for e in db.events if e["event_type"] == "RUN_FAILED")
         self.assertIn("direct_pipeline_allowlist", failed["payload"])
+
+    def test_run_once_self_upgrade_uses_crewai_executor(self):
+        db = _FakeDB()
+        spec = RunSpec(project_id="teamos", workstream_id="general", objective="upgrade", flow="self_upgrade", repo_path="/tmp/team-os")
+
+        with mock.patch(
+            "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
+            return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
+        ), mock.patch(
+            "app.crewai_orchestrator.crewai_self_upgrade.run_self_upgrade",
+            return_value={
+                "ok": True,
+                "summary": "planned",
+                "records": [{"title": "Add CI", "task_id": "TEAMOS-0001"}],
+                "panel_sync": {"ok": True},
+                "report_path": "/tmp/report.json",
+                "write_delegate": {"writer": "crewai_agents", "write_mode": "crewai_self_upgrade"},
+            },
+        ) as mocked_run:
+            out = run_once(db=db, spec=spec, actor="test")
+
+        self.assertTrue(out["ok"])
+        mocked_run.assert_called_once()
+        started = next(e for e in db.events if e["event_type"] == "RUN_STARTED")
+        self.assertEqual(started["payload"]["write_delegate"]["writer"], "crewai_agents")
+        finished = next(e for e in db.events if e["event_type"] == "RUN_FINISHED")
+        self.assertEqual(finished["payload"]["write_delegate"]["write_mode"], "crewai_self_upgrade")
 
 
 if __name__ == "__main__":

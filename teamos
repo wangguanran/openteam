@@ -170,7 +170,7 @@ def _display_task_state(state: Any) -> str:
 
 def _agent_is_active(agent_state: Any) -> bool:
     s = _norm(agent_state).upper()
-    return bool(s) and s not in ("IDLE", "DONE")
+    return bool(s) and s not in ("IDLE", "DONE", "FAILED", "STOPPED", "CANCELLED")
 
 
 def _looks_like_teamos_repo(root: Path) -> bool:
@@ -880,8 +880,8 @@ def cmd_project_agents_inject(args: argparse.Namespace) -> None:
 
 
 #
-# NOTE: Self-improve is daemon-based (leader-only).
-# The CLI must NOT auto-wake self-improve on every command, to avoid untasked writes.
+# NOTE: Self-upgrade is runtime-managed via the control-plane.
+# The CLI must NOT auto-trigger self-upgrade on every command.
 #
 
 
@@ -942,8 +942,29 @@ def _base_url(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     return base, prof
 
 
+def _runtime_root_for_repo(repo_root: Path) -> Path:
+    raw = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (repo_root.parent / "team-os-runtime").resolve()
+
+
+def _read_last_self_upgrade_run(repo_root: Path) -> dict[str, Any]:
+    state_path = _runtime_root_for_repo(repo_root) / "state" / "self_upgrade_state.json"
+    if not state_path.exists():
+        return {}
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    last = raw.get("last_run")
+    return last if isinstance(last, dict) else {}
+
+
 def _default_project_id(prof: dict[str, Any], args: argparse.Namespace) -> str:
-    return args.project or (prof.get("default_project_id") or "teamos")
+    return getattr(args, "project", "") or (prof.get("default_project_id") or "teamos")
 
 
 def _default_scope(prof: dict[str, Any], args: argparse.Namespace) -> str:
@@ -1005,11 +1026,24 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"focus.updated_at={focus.get('updated_at','')}")
     repo_root = _find_team_os_repo_root()
     if repo_root:
-        si = _read_last_self_improve_run(repo_root) or {}
-        if si.get("last_run_at"):
-            print(f"self_improve.last_run_at={si.get('last_run_at')}")
-            if si.get("proposals") is not None:
-                print(f"self_improve.proposals={si.get('proposals')}")
+        su = _read_last_self_upgrade_run(repo_root) or {}
+        if su.get("ts"):
+            print(f"self_upgrade.last_run_at={su.get('ts')}")
+            print(f"self_upgrade.status={su.get('status','')}")
+            if su.get("records") is not None:
+                print(f"self_upgrade.records={su.get('records')}")
+    su_api = st.get("self_upgrade") or {}
+    proposal_counts = su_api.get("proposal_counts") or {}
+    if proposal_counts:
+        print(f"self_upgrade.pending_proposals={proposal_counts.get('pending', 0)}")
+        print(f"self_upgrade.proposals_total={proposal_counts.get('total', 0)}")
+    delivery = su_api.get("delivery") or {}
+    delivery_summary = delivery.get("summary") or {}
+    if delivery_summary:
+        print(f"self_upgrade.delivery_total={delivery_summary.get('total', 0)}")
+        print(f"self_upgrade.delivery_queued={delivery_summary.get('queued', 0)}")
+        print(f"self_upgrade.delivery_coding={delivery_summary.get('coding', 0)}")
+        print(f"self_upgrade.delivery_blocked={delivery_summary.get('blocked', 0)}")
     print()
 
     agents = st.get("agents") or []
@@ -1705,84 +1739,208 @@ def cmd_panel_open(args: argparse.Namespace) -> None:
 
 def cmd_self_improve(args: argparse.Namespace) -> None:
     """
-    Run one self-improve iteration.
-
-    Deterministic + governance-safe:
-    - Runs the host-level deterministic pipeline (no LLM).
-    - Enforces leader-only writes (non-leader is scan-only).
-    - Remote writes (GitHub) are gated by policy; defaults to panel sync dry-run only.
+    Run one CrewAI self-upgrade iteration through the control-plane.
     """
+    if bool(getattr(args, "local", False)):
+        raise RuntimeError("Local self-improve pipeline has been removed. Use the runtime-managed self-upgrade flow instead.")
+    base, prof = _base_url(args)
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    argv = [
-        "--repo-root",
-        str(repo_root),
-        "--workspace-root",
-        str(_workspace_root(args)),
-    ]
-    if args.profile:
-        argv += ["--profile", args.profile]
-    argv += ["run-once", "--scope", "teamos"]
-    if bool(args.force):
-        argv.append("--force")
-    # NOTE:
-    # - `--dry-run` / `--local` are kept for backwards compatibility; remote writes are governed by policy.
-    # - To compute proposals only (no local writes), run: teamos daemon status / or pipeline --dry-run-local
-    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
+    target_repo = Path(str(getattr(args, "repo_path", "") or "").strip()).expanduser().resolve() if str(getattr(args, "repo_path", "") or "").strip() else repo_root
+    payload = {
+        "project_id": _default_project_id(prof, args),
+        "workstream_id": str(getattr(args, "workstream", "") or "general").strip() or "general",
+        "objective": "CLI-triggered CrewAI self-upgrade",
+        "repo_path": str(target_repo),
+        "repo_locator": str(getattr(args, "repo_locator", "") or "").strip(),
+        "dry_run": bool(args.dry_run),
+        "force": bool(args.force),
+        "trigger": "cli_auto" if bool(getattr(args, "auto", False)) else "cli",
+    }
+    out = _http_json("POST", base + "/v1/self_upgrade/run", payload)
+    if not bool(out.get("ok")):
+        raise RuntimeError(str(out.get("error") or "self_upgrade_failed"))
+    if bool(getattr(args, "quiet", False)):
+        return
+    print(
+        json.dumps(
+            {
+                "ok": bool(out.get("ok")),
+                "skipped": bool(out.get("skipped")),
+                "run_id": str(out.get("run_id") or ""),
+                "repo_root": str(out.get("repo_root") or ""),
+                "repo_locator": str(out.get("repo_locator") or ""),
+                "summary": str(out.get("summary") or ""),
+                "records": list(out.get("records") or []),
+                "panel_sync": out.get("panel_sync") or {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def cmd_self_upgrade_proposals(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    query: dict[str, str] = {}
+    lane = _norm(getattr(args, "lane", "") or "")
+    status = _norm(getattr(args, "status", "") or "")
+    if lane:
+        query["lane"] = lane
+    if status:
+        query["status"] = status
+    url = base + "/v1/self_upgrade/proposals"
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    out = _http_json("GET", url)
+    proposals = list(out.get("proposals") or [])
+    if bool(getattr(args, "json", False)):
+        print(json.dumps({"total": len(proposals), "proposals": proposals}, ensure_ascii=False, indent=2))
+        return
+    print(f"proposals_total={len(proposals)}")
+    if not proposals:
+        print("(none)")
+        return
+    rows: list[list[str]] = []
+    for p in proposals:
+        rows.append(
+            [
+                str(p.get("proposal_id") or ""),
+                str(p.get("lane") or ""),
+                str(p.get("status") or ""),
+                str(p.get("version_bump") or ""),
+                str(p.get("target_version") or ""),
+                str(p.get("cooldown_until") or ""),
+                str(p.get("discussion_issue_url") or "")[:48],
+                str(p.get("title") or "")[:60],
+            ]
+        )
+    print(_fmt_table(["proposal_id", "lane", "status", "bump", "target", "cooldown_until", "discussion_issue", "title"], rows))
+
+
+def cmd_self_upgrade_decide(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    payload = {
+        "proposal_id": str(args.proposal_id),
+        "action": str(args.action),
+        "title": str(getattr(args, "title", "") or "").strip() or None,
+        "summary": str(getattr(args, "summary", "") or "").strip() or None,
+        "version_bump": str(getattr(args, "version_bump", "") or "").strip() or None,
+    }
+    out = _http_json("POST", base + "/v1/self_upgrade/proposals/decide", payload)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    proposal = out.get("proposal") or {}
+    print(f"proposal_id={proposal.get('proposal_id','')}")
+    print(f"status={proposal.get('status','')}")
+    print(f"lane={proposal.get('lane','')}")
+    print(f"title={proposal.get('title','')}")
+    print(f"version_bump={proposal.get('version_bump','')}")
+    print(f"target_version={proposal.get('target_version','')}")
+    print(f"discussion_issue_url={proposal.get('discussion_issue_url','')}")
+
+
+def cmd_self_upgrade_discussions_sync(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    out = _http_json("POST", base + "/v1/self_upgrade/discussions/sync", {})
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"ok={bool(out.get('ok'))}")
+    print(f"scanned={out.get('scanned', 0)}")
+    print(f"updated={out.get('updated', 0)}")
+    print(f"replied={out.get('replied', 0)}")
+    print(f"errors={out.get('errors', 0)}")
+
+
+def cmd_self_upgrade_delivery(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    payload = {
+        "project_id": _default_project_id(prof, args),
+        "task_id": str(getattr(args, "task_id", "") or "").strip() or None,
+        "dry_run": bool(getattr(args, "dry_run", False)),
+        "force": bool(getattr(args, "force", False)),
+        "max_tasks": int(getattr(args, "max_tasks", 1) or 1),
+    }
+    out = _http_json("POST", base + "/v1/self_upgrade/delivery/run", payload)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"ok={bool(out.get('ok'))}")
+    print(f"scanned={out.get('scanned', 0)}")
+    print(f"processed={out.get('processed', 0)}")
+    summary = out.get("summary") or {}
+    if summary:
+        print(f"delivery.total={summary.get('total', 0)}")
+        print(f"delivery.queued={summary.get('queued', 0)}")
+        print(f"delivery.coding={summary.get('coding', 0)}")
+        print(f"delivery.blocked={summary.get('blocked', 0)}")
+
+
+def cmd_self_upgrade_delivery_tasks(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    query: dict[str, str] = {}
+    project_id = _default_project_id(prof, args)
+    status = _norm(getattr(args, "status", "") or "")
+    if project_id:
+        query["project_id"] = project_id
+    if status:
+        query["status"] = status
+    url = base + "/v1/self_upgrade/delivery/tasks"
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    out = _http_json("GET", url)
+    tasks = list(out.get("tasks") or [])
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    summary = out.get("summary") or {}
+    print(f"delivery_tasks_total={len(tasks)}")
+    if summary:
+        print(f"delivery.queued={summary.get('queued', 0)} delivery.coding={summary.get('coding', 0)} delivery.blocked={summary.get('blocked', 0)}")
+    if not tasks:
+        print("(none)")
+        return
+    rows: list[list[str]] = []
+    for task in tasks:
+        rows.append(
+            [
+                str(task.get("task_id") or ""),
+                str(task.get("status") or ""),
+                str(task.get("stage") or ""),
+                str(task.get("owner_role") or ""),
+                str(task.get("attempt_count") or ""),
+                str(task.get("pull_request_url") or "")[:48],
+                str(task.get("title") or "")[:60],
+            ]
+        )
+    print(_fmt_table(["task_id", "status", "stage", "owner_role", "attempts", "pull_request", "title"], rows))
 
 
 def cmd_daemon_start(args: argparse.Namespace) -> None:
     """
-    Start Team OS background daemons (currently: self-improve).
+    Legacy daemon mode has been removed.
     """
-    repo_root = _find_team_os_repo_root()
-    if not repo_root:
-        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-
-    argv = [
-        "--repo-root",
-        str(repo_root),
-        "--workspace-root",
-        str(_workspace_root(args)),
-    ]
-    if args.profile:
-        argv += ["--profile", args.profile]
-    # Foreground is useful for debugging.
-    argv += ["daemon" if bool(getattr(args, "foreground", False)) else "start"]
-    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
+    raise RuntimeError("Legacy self-improve daemon has been removed. Start team-os-runtime or run `teamos self-upgrade --force`.")
 
 
 def cmd_daemon_stop(args: argparse.Namespace) -> None:
-    repo_root = _find_team_os_repo_root()
-    if not repo_root:
-        raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    argv = [
-        "--repo-root",
-        str(repo_root),
-        "--workspace-root",
-        str(_workspace_root(args)),
-    ]
-    if args.profile:
-        argv += ["--profile", args.profile]
-    argv += ["stop"]
-    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
+    print("legacy_self_improve_daemon.removed=true")
 
 
 def cmd_daemon_status(args: argparse.Namespace) -> None:
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
-    argv = [
-        "--repo-root",
-        str(repo_root),
-        "--workspace-root",
-        str(_workspace_root(args)),
-    ]
-    if args.profile:
-        argv += ["--profile", args.profile]
-    argv += ["status"]
-    _run_pipeline(repo_root, "scripts/pipelines/self_improve_daemon.py", argv)
+    last = _read_last_self_upgrade_run(repo_root)
+    payload = {
+        "legacy_self_improve_daemon": "removed",
+        "runtime_state_root": str(_runtime_root_for_repo(repo_root) / "state"),
+        "last_self_upgrade": last,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 def cmd_audit_deterministic_gov(args: argparse.Namespace) -> None:
@@ -2701,23 +2859,95 @@ def main(argv: Optional[list[str]] = None) -> int:
     doc = sp.add_parser("doctor")
     doc.set_defaults(fn=cmd_doctor)
 
-    dm = sp.add_parser("daemon", help="Background daemons (self-improve, etc.)")
+    dm = sp.add_parser("daemon", help="Legacy daemon commands (self-improve daemon removed)")
     dm_sp = dm.add_subparsers(dest="subcmd", required=True)
-    ds = dm_sp.add_parser("start", help="Start daemons (default: self-improve)")
+    ds = dm_sp.add_parser("start", help="Daemon mode removed; kept only as compatibility stub")
     ds.add_argument("--foreground", action="store_true", help="run in foreground (do not detach)")
     ds.set_defaults(fn=cmd_daemon_start)
-    dx = dm_sp.add_parser("stop", help="Stop daemons (best-effort)")
+    dx = dm_sp.add_parser("stop", help="Daemon mode removed; kept only as compatibility stub")
     dx.set_defaults(fn=cmd_daemon_stop)
-    dy = dm_sp.add_parser("status", help="Show daemon status/state")
+    dy = dm_sp.add_parser("status", help="Show legacy daemon removal notice and current self-upgrade state")
     dy.set_defaults(fn=cmd_daemon_status)
 
-    si = sp.add_parser("self-improve", help="Always-on self improvement (scan -> proposals -> pending issues)")
-    si.add_argument("--dry-run", action="store_true", help="no remote writes; still writes local proposal artifacts")
-    si.add_argument("--force", action="store_true", help="ignore debounce and run now")
-    si.add_argument("--local", action="store_true", help="run local scanner (skip control-plane call)")
-    si.add_argument("--auto", action="store_true", help="internal: invoked by auto scheduler")
-    si.add_argument("--quiet", action="store_true", help="suppress output (for auto scheduler)")
-    si.set_defaults(fn=cmd_self_improve)
+    def _configure_self_upgrade_parser(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--dry-run", action="store_true", help="plan only; do not materialize GitHub issues/tasks/panel writes")
+        parser.add_argument("--force", action="store_true", help="ignore debounce and run now")
+        parser.add_argument("--local", action="store_true", help="deprecated compatibility flag; local pipeline mode has been removed")
+        parser.add_argument("--auto", action="store_true", help="internal compatibility flag for auto triggers")
+        parser.add_argument("--quiet", action="store_true", help="suppress normal output")
+        parser.add_argument("--repo-path", default="", help="target repository path (defaults to current Team OS repo)")
+        parser.add_argument("--repo-locator", default="", help="override GitHub repo locator owner/name")
+        parser.set_defaults(fn=cmd_self_improve)
+
+    su = sp.add_parser("self-upgrade", help="Run CrewAI self-upgrade for the current or specified repository")
+    _configure_self_upgrade_parser(su)
+
+    si = sp.add_parser("self-improve", help="Compatibility alias for `self-upgrade`")
+    _configure_self_upgrade_parser(si)
+
+    sup = sp.add_parser("self-upgrade-proposals", help="List self-upgrade feature/process proposals managed by the runtime")
+    sup.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
+    sup.add_argument("--status", default="", help="filter by status: PENDING_CONFIRMATION|APPROVED|COLLECTING|HOLD|REJECTED|MATERIALIZED")
+    sup.add_argument("--json", action="store_true", help="print raw JSON")
+    sup.set_defaults(fn=cmd_self_upgrade_proposals)
+
+    sip = sp.add_parser("self-improve-proposals", help="Compatibility alias for `self-upgrade-proposals`")
+    sip.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
+    sip.add_argument("--status", default="", help="filter by status: PENDING_CONFIRMATION|APPROVED|COLLECTING|HOLD|REJECTED|MATERIALIZED")
+    sip.add_argument("--json", action="store_true", help="print raw JSON")
+    sip.set_defaults(fn=cmd_self_upgrade_proposals)
+
+    sud = sp.add_parser("self-upgrade-decide", help="Approve, reject, or hold a self-upgrade proposal")
+    sud.add_argument("proposal_id", help="proposal id from `teamos self-upgrade-proposals`")
+    sud.add_argument("action", choices=["approve", "reject", "hold"])
+    sud.add_argument("--title", default="", help="optional title override")
+    sud.add_argument("--summary", default="", help="optional summary override")
+    sud.add_argument("--version-bump", default="", help="optional version bump override: major|minor|patch|none")
+    sud.add_argument("--json", action="store_true", help="print raw JSON")
+    sud.set_defaults(fn=cmd_self_upgrade_decide)
+
+    sid = sp.add_parser("self-improve-decide", help="Compatibility alias for `self-upgrade-decide`")
+    sid.add_argument("proposal_id", help="proposal id from `teamos self-upgrade-proposals`")
+    sid.add_argument("action", choices=["approve", "reject", "hold"])
+    sid.add_argument("--title", default="", help="optional title override")
+    sid.add_argument("--summary", default="", help="optional summary override")
+    sid.add_argument("--version-bump", default="", help="optional version bump override: major|minor|patch|none")
+    sid.add_argument("--json", action="store_true", help="print raw JSON")
+    sid.set_defaults(fn=cmd_self_upgrade_decide)
+
+    sus = sp.add_parser("self-upgrade-discussions-sync", help="Poll GitHub issue comments for feature proposals and let the discussion agent reply")
+    sus.add_argument("--json", action="store_true", help="print raw JSON")
+    sus.set_defaults(fn=cmd_self_upgrade_discussions_sync)
+
+    sis = sp.add_parser("self-improve-discussions-sync", help="Compatibility alias for `self-upgrade-discussions-sync`")
+    sis.add_argument("--json", action="store_true", help="print raw JSON")
+    sis.set_defaults(fn=cmd_self_upgrade_discussions_sync)
+
+    sudr = sp.add_parser("self-upgrade-delivery", help="Run the self-upgrade delivery executor for queued tasks")
+    sudr.add_argument("--task-id", default="", help="resume or force a specific task id")
+    sudr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
+    sudr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
+    sudr.add_argument("--max-tasks", type=int, default=1, help="max tasks to process in one sweep")
+    sudr.add_argument("--json", action="store_true", help="print raw JSON")
+    sudr.set_defaults(fn=cmd_self_upgrade_delivery)
+
+    sidr = sp.add_parser("self-improve-delivery", help="Compatibility alias for `self-upgrade-delivery`")
+    sidr.add_argument("--task-id", default="", help="resume or force a specific task id")
+    sidr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
+    sidr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
+    sidr.add_argument("--max-tasks", type=int, default=1, help="max tasks to process in one sweep")
+    sidr.add_argument("--json", action="store_true", help="print raw JSON")
+    sidr.set_defaults(fn=cmd_self_upgrade_delivery)
+
+    sudt = sp.add_parser("self-upgrade-delivery-tasks", help="List self-upgrade delivery tasks and their execution state")
+    sudt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
+    sudt.add_argument("--json", action="store_true", help="print raw JSON")
+    sudt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
+
+    sidt = sp.add_parser("self-improve-delivery-tasks", help="Compatibility alias for `self-upgrade-delivery-tasks`")
+    sidt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
+    sidt.add_argument("--json", action="store_true", help="print raw JSON")
+    sidt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
 
     args = p.parse_args(argv)
     try:
