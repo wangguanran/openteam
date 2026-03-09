@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any
+
+from app import crewai_role_registry
+from app import crewai_spec_loader
+
+
+@dataclass(frozen=True)
+class WorkflowSpec:
+    workflow_id: str
+    lane: str
+    display_name_zh: str = ""
+    description: str = ""
+    stages: tuple[str, ...] = ()
+    task_source: str = "proposal"
+    requires_user_confirmation: bool = False
+    materialize_requires_approval: bool = False
+    materialize_blocked_statuses: tuple[str, ...] = ("REJECTED", "HOLD", "MATERIALIZED")
+    default_version_bump: str = "none"
+    cooldown_env_var: str = ""
+    default_cooldown_hours: int = 0
+    baseline_action_default: str = ""
+    baseline_action_by_bump: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def uses_proposal(self) -> bool:
+        return self.task_source != "direct_task"
+
+    def cooldown_hours(self) -> int:
+        if self.cooldown_env_var:
+            raw = str(os.getenv(self.cooldown_env_var, str(self.default_cooldown_hours)) or "").strip()
+            try:
+                return max(0, int(raw))
+            except Exception:
+                return max(0, int(self.default_cooldown_hours))
+        return max(0, int(self.default_cooldown_hours))
+
+    def default_baseline_action(self, version_bump: str) -> str:
+        bump = str(version_bump or "").strip().lower()
+        mapping = {str(k).strip().lower(): str(v).strip() for k, v in self.baseline_action_by_bump}
+        return mapping.get(bump) or self.baseline_action_default
+
+    def should_materialize(self, *, status: str, due: bool) -> bool:
+        if self.task_source == "direct_task":
+            return True
+        if not due:
+            return False
+        normalized_status = str(status or "").strip().upper()
+        if self.materialize_requires_approval:
+            return normalized_status == "APPROVED"
+        return normalized_status not in {str(item).strip().upper() for item in self.materialize_blocked_statuses}
+
+
+FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
+    crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT: WorkflowSpec(
+        workflow_id=crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
+        lane="feature",
+        display_name_zh="功能改进流程",
+        description="Discover feature opportunities, wait for proposal approval, then deliver approved work items.",
+        stages=(
+            crewai_role_registry.STAGE_PLANNING,
+            crewai_role_registry.STAGE_PROPOSAL_CONFIRMATION,
+            crewai_role_registry.STAGE_DELIVERY,
+        ),
+        task_source="proposal",
+        requires_user_confirmation=True,
+        materialize_requires_approval=True,
+        default_version_bump="minor",
+        cooldown_env_var="TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS",
+        default_cooldown_hours=1,
+        baseline_action_default="feature_followup",
+        baseline_action_by_bump=(("major", "new_baseline"), ("minor", "new_baseline")),
+    ),
+    crewai_role_registry.WORKFLOW_BUG_FIX: WorkflowSpec(
+        workflow_id=crewai_role_registry.WORKFLOW_BUG_FIX,
+        lane="bug",
+        display_name_zh="缺陷修复流程",
+        description="Discover actionable bugs and deliver them directly without proposal approval.",
+        stages=(
+            crewai_role_registry.STAGE_PLANNING,
+            crewai_role_registry.STAGE_DELIVERY,
+        ),
+        task_source="direct_task",
+        requires_user_confirmation=False,
+        materialize_requires_approval=False,
+        default_version_bump="patch",
+        default_cooldown_hours=0,
+        baseline_action_default="patch_release",
+    ),
+    crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT: WorkflowSpec(
+        workflow_id=crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
+        lane="quality",
+        display_name_zh="质量改进流程",
+        description="Discover code-quality improvements, confirm proposals, then deliver approved tasks.",
+        stages=(
+            crewai_role_registry.STAGE_PLANNING,
+            crewai_role_registry.STAGE_PROPOSAL_CONFIRMATION,
+            crewai_role_registry.STAGE_DELIVERY,
+        ),
+        task_source="proposal",
+        requires_user_confirmation=True,
+        materialize_requires_approval=True,
+        default_version_bump="none",
+        cooldown_env_var="TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS",
+        default_cooldown_hours=1,
+        baseline_action_default="quality_improvement",
+    ),
+    crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT: WorkflowSpec(
+        workflow_id=crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
+        lane="process",
+        display_name_zh="流程改进流程",
+        description="Discover runtime and delivery process improvements, then deliver them with governance and cooldown controls.",
+        stages=(
+            crewai_role_registry.STAGE_PLANNING,
+            crewai_role_registry.STAGE_DELIVERY,
+        ),
+        task_source="proposal",
+        requires_user_confirmation=False,
+        materialize_requires_approval=False,
+        materialize_blocked_statuses=("REJECTED", "HOLD", "MATERIALIZED"),
+        default_version_bump="none",
+        cooldown_env_var="TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS",
+        default_cooldown_hours=24,
+        baseline_action_default="process_improvement",
+    ),
+}
+
+
+def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
+    baseline_raw = doc.get("baseline_action_by_bump") or {}
+    baseline_items: list[tuple[str, str]] = []
+    if isinstance(baseline_raw, dict):
+        for key, value in baseline_raw.items():
+            baseline_items.append((str(key).strip(), str(value).strip()))
+    return WorkflowSpec(
+        workflow_id=str(doc.get("workflow_id") or "").strip(),
+        lane=str(doc.get("lane") or "").strip().lower(),
+        display_name_zh=str(doc.get("display_name_zh") or "").strip(),
+        description=str(doc.get("description") or "").strip(),
+        stages=tuple(str(item).strip() for item in list(doc.get("stages") or []) if str(item).strip()),
+        task_source=str(doc.get("task_source") or "proposal").strip(),
+        requires_user_confirmation=bool(doc.get("requires_user_confirmation")),
+        materialize_requires_approval=bool(doc.get("materialize_requires_approval")),
+        materialize_blocked_statuses=tuple(str(item).strip() for item in list(doc.get("materialize_blocked_statuses") or []) if str(item).strip()) or ("REJECTED", "HOLD", "MATERIALIZED"),
+        default_version_bump=str(doc.get("default_version_bump") or "none").strip(),
+        cooldown_env_var=str(doc.get("cooldown_env_var") or "").strip(),
+        default_cooldown_hours=max(0, int(doc.get("default_cooldown_hours") or 0)),
+        baseline_action_default=str(doc.get("baseline_action_default") or "").strip(),
+        baseline_action_by_bump=tuple(baseline_items),
+    )
+
+
+def workflow_spec(workflow_id: str) -> WorkflowSpec:
+    wid = str(workflow_id or "").strip()
+    if not wid:
+        raise KeyError("workflow_id is required")
+    loaded = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, wid)
+    if loaded:
+        return _workflow_spec_from_doc(loaded)
+    if wid in FALLBACK_WORKFLOW_SPECS:
+        return FALLBACK_WORKFLOW_SPECS[wid]
+    raise KeyError(f"unknown workflow spec: {wid}")
+
+
+def workflow_for_lane(lane: str) -> WorkflowSpec:
+    normalized_lane = str(lane or "bug").strip().lower() or "bug"
+    for doc in crewai_spec_loader.list_team_workflow_docs(crewai_role_registry.TEAM_REPO_IMPROVEMENT):
+        if str(doc.get("lane") or "").strip().lower() == normalized_lane:
+            return _workflow_spec_from_doc(doc)
+    fallback_map = {
+        "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
+        "bug": crewai_role_registry.WORKFLOW_BUG_FIX,
+        "quality": crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
+        "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
+    }
+    return workflow_spec(fallback_map.get(normalized_lane, crewai_role_registry.WORKFLOW_BUG_FIX))
