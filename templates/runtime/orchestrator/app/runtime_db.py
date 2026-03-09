@@ -60,6 +60,61 @@ class NodeRow:
     tags: list[str]
 
 
+@dataclass(frozen=True)
+class TaskLeaseRow:
+    lease_scope: str
+    lease_key: str
+    project_id: str
+    task_id: str
+    holder_instance_id: str
+    holder_actor: str
+    holder_meta: dict[str, Any]
+    lease_ttl_sec: int
+    lease_acquired_at: str
+    lease_heartbeat_at: str
+    lease_expires_at: str
+    lease_version: int
+    created_at: str
+    updated_at: str
+
+
+def _json_loads(raw: Any, *, default: Any) -> Any:
+    try:
+        return json.loads(str(raw or ""))
+    except Exception:
+        return default
+
+
+def _lease_expires_at_iso(lease_ttl_sec: int) -> str:
+    import datetime as _dt
+
+    ttl = max(1, int(lease_ttl_sec or 1))
+    return (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=ttl)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _task_lease_is_active(lease_expires_at: str, *, now_iso: str) -> bool:
+    return str(lease_expires_at or "").strip() > str(now_iso or "").strip()
+
+
+def _task_lease_row(row: Any) -> TaskLeaseRow:
+    return TaskLeaseRow(
+        lease_scope=str(row["lease_scope"] or ""),
+        lease_key=str(row["lease_key"] or ""),
+        project_id=str(row["project_id"] or ""),
+        task_id=str(row["task_id"] or ""),
+        holder_instance_id=str(row["holder_instance_id"] or ""),
+        holder_actor=str(row["holder_actor"] or ""),
+        holder_meta=_json_loads(row["holder_meta_json"], default={}),
+        lease_ttl_sec=int(row["lease_ttl_sec"] or 0),
+        lease_acquired_at=str(row["lease_acquired_at"] or ""),
+        lease_heartbeat_at=str(row["lease_heartbeat_at"] or ""),
+        lease_expires_at=str(row["lease_expires_at"] or ""),
+        lease_version=int(row["lease_version"] or 0),
+        created_at=str(row["created_at"] or ""),
+        updated_at=str(row["updated_at"] or ""),
+    )
+
+
 class SQLiteRuntimeDB:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -132,6 +187,28 @@ class SQLiteRuntimeDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_leases (
+                  lease_scope TEXT NOT NULL,
+                  lease_key TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  task_id TEXT NOT NULL,
+                  holder_instance_id TEXT NOT NULL,
+                  holder_actor TEXT NOT NULL,
+                  holder_meta_json TEXT NOT NULL,
+                  lease_ttl_sec INTEGER NOT NULL,
+                  lease_acquired_at TEXT NOT NULL,
+                  lease_heartbeat_at TEXT NOT NULL,
+                  lease_expires_at TEXT NOT NULL,
+                  lease_version INTEGER NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_scope_expires ON task_leases(lease_scope, lease_expires_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_holder ON task_leases(holder_instance_id, lease_expires_at)")
 
             # Panel sync runs (GitHub Projects is a view-layer; keep minimal health metadata here).
             conn.execute(
@@ -527,6 +604,186 @@ class SQLiteRuntimeDB:
                     )
                 )
             return out
+        finally:
+            conn.close()
+
+    # --- Task leases ---
+    def claim_task_lease(
+        self,
+        *,
+        lease_scope: str,
+        lease_key: str,
+        project_id: str,
+        task_id: str,
+        holder_instance_id: str,
+        holder_actor: str,
+        lease_ttl_sec: int,
+        holder_meta: Optional[dict[str, Any]] = None,
+    ) -> Optional[TaskLeaseRow]:
+        now = utc_now_iso()
+        exp = _lease_expires_at_iso(lease_ttl_sec)
+        meta_json = json.dumps(holder_meta or {}, ensure_ascii=False)
+        ttl = max(1, int(lease_ttl_sec or 1))
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            inserted = conn.execute(
+                """
+                INSERT OR IGNORE INTO task_leases (
+                  lease_scope, lease_key, project_id, task_id, holder_instance_id, holder_actor, holder_meta_json,
+                  lease_ttl_sec, lease_acquired_at, lease_heartbeat_at, lease_expires_at, lease_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(lease_scope),
+                    str(lease_key),
+                    str(project_id),
+                    str(task_id),
+                    str(holder_instance_id),
+                    str(holder_actor),
+                    meta_json,
+                    ttl,
+                    now,
+                    now,
+                    exp,
+                    1,
+                    now,
+                    now,
+                ),
+            )
+            if int(inserted.rowcount or 0) > 0:
+                conn.commit()
+                return self.get_task_lease(lease_key=lease_key)
+
+            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            current = _task_lease_row(row)
+            active = _task_lease_is_active(current.lease_expires_at, now_iso=now)
+            if active and current.holder_instance_id and current.holder_instance_id != str(holder_instance_id):
+                conn.rollback()
+                return None
+            acquired_at = current.lease_acquired_at if (active and current.holder_instance_id == str(holder_instance_id)) else now
+            conn.execute(
+                """
+                UPDATE task_leases
+                SET lease_scope = ?, project_id = ?, task_id = ?, holder_instance_id = ?, holder_actor = ?, holder_meta_json = ?,
+                    lease_ttl_sec = ?, lease_acquired_at = ?, lease_heartbeat_at = ?, lease_expires_at = ?, lease_version = ?, updated_at = ?
+                WHERE lease_key = ?
+                """,
+                (
+                    str(lease_scope),
+                    str(project_id),
+                    str(task_id),
+                    str(holder_instance_id),
+                    str(holder_actor),
+                    meta_json,
+                    ttl,
+                    acquired_at,
+                    now,
+                    exp,
+                    int(current.lease_version) + 1,
+                    now,
+                    str(lease_key),
+                ),
+            )
+            conn.commit()
+            return self.get_task_lease(lease_key=lease_key)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def renew_task_lease(self, *, lease_key: str, holder_instance_id: str, lease_ttl_sec: int) -> Optional[TaskLeaseRow]:
+        now = utc_now_iso()
+        exp = _lease_expires_at_iso(lease_ttl_sec)
+        ttl = max(1, int(lease_ttl_sec or 1))
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            current = _task_lease_row(row)
+            if current.holder_instance_id != str(holder_instance_id):
+                conn.rollback()
+                return None
+            conn.execute(
+                """
+                UPDATE task_leases
+                SET lease_ttl_sec = ?, lease_heartbeat_at = ?, lease_expires_at = ?, lease_version = ?, updated_at = ?
+                WHERE lease_key = ?
+                """,
+                (ttl, now, exp, int(current.lease_version) + 1, now, str(lease_key)),
+            )
+            conn.commit()
+            return self.get_task_lease(lease_key=lease_key)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def get_task_lease(self, *, lease_key: str) -> Optional[TaskLeaseRow]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
+            return _task_lease_row(row) if row else None
+        finally:
+            conn.close()
+
+    def release_task_lease(self, *, lease_key: str, holder_instance_id: str = "") -> bool:
+        conn = self._connect()
+        try:
+            if str(holder_instance_id or "").strip():
+                cur = conn.execute(
+                    "DELETE FROM task_leases WHERE lease_key = ? AND holder_instance_id = ?",
+                    (str(lease_key), str(holder_instance_id)),
+                )
+            else:
+                cur = conn.execute("DELETE FROM task_leases WHERE lease_key = ?", (str(lease_key),))
+            conn.commit()
+            return int(cur.rowcount or 0) > 0
+        finally:
+            conn.close()
+
+    def list_task_leases(
+        self,
+        *,
+        lease_scope: str = "",
+        holder_instance_id: str = "",
+        active_only: bool = False,
+        limit: int = 1000,
+    ) -> list[TaskLeaseRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if str(lease_scope or "").strip():
+            clauses.append("lease_scope = ?")
+            params.append(str(lease_scope))
+        if str(holder_instance_id or "").strip():
+            clauses.append("holder_instance_id = ?")
+            params.append(str(holder_instance_id))
+        if active_only:
+            clauses.append("lease_expires_at > ?")
+            params.append(utc_now_iso())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(int(limit or 1000), 5000)))
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"SELECT * FROM task_leases {where} ORDER BY lease_expires_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+            return [_task_lease_row(row) for row in rows]
         finally:
             conn.close()
 
@@ -959,6 +1216,28 @@ class PostgresRuntimeDB:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS task_leases (
+                  lease_scope TEXT NOT NULL,
+                  lease_key TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  task_id TEXT NOT NULL,
+                  holder_instance_id TEXT NOT NULL,
+                  holder_actor TEXT NOT NULL,
+                  holder_meta_json TEXT NOT NULL,
+                  lease_ttl_sec INTEGER NOT NULL,
+                  lease_acquired_at TEXT NOT NULL,
+                  lease_heartbeat_at TEXT NOT NULL,
+                  lease_expires_at TEXT NOT NULL,
+                  lease_version BIGINT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_scope_expires ON task_leases(lease_scope, lease_expires_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_holder ON task_leases(holder_instance_id, lease_expires_at)")
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS panel_sync_runs (
                   id BIGSERIAL PRIMARY KEY,
                   ts_start TEXT NOT NULL,
@@ -1138,6 +1417,186 @@ class PostgresRuntimeDB:
                 )
                 for r in rows
             ]
+        finally:
+            conn.close()
+
+    # --- Task leases ---
+    def claim_task_lease(
+        self,
+        *,
+        lease_scope: str,
+        lease_key: str,
+        project_id: str,
+        task_id: str,
+        holder_instance_id: str,
+        holder_actor: str,
+        lease_ttl_sec: int,
+        holder_meta: Optional[dict[str, Any]] = None,
+    ) -> Optional[TaskLeaseRow]:
+        now = utc_now_iso()
+        exp = _lease_expires_at_iso(lease_ttl_sec)
+        meta_json = json.dumps(holder_meta or {}, ensure_ascii=False)
+        ttl = max(1, int(lease_ttl_sec or 1))
+        conn = self._connect()
+        try:
+            inserted = conn.execute(
+                """
+                INSERT INTO task_leases (
+                  lease_scope, lease_key, project_id, task_id, holder_instance_id, holder_actor, holder_meta_json,
+                  lease_ttl_sec, lease_acquired_at, lease_heartbeat_at, lease_expires_at, lease_version, created_at, updated_at
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (lease_key) DO NOTHING
+                """,
+                (
+                    str(lease_scope),
+                    str(lease_key),
+                    str(project_id),
+                    str(task_id),
+                    str(holder_instance_id),
+                    str(holder_actor),
+                    meta_json,
+                    ttl,
+                    now,
+                    now,
+                    exp,
+                    1,
+                    now,
+                    now,
+                ),
+            )
+            if int(inserted.rowcount or 0) > 0:
+                conn.commit()
+                return self.get_task_lease(lease_key=lease_key)
+
+            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = %s FOR UPDATE", (str(lease_key),)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            current = _task_lease_row(row)
+            active = _task_lease_is_active(current.lease_expires_at, now_iso=now)
+            if active and current.holder_instance_id and current.holder_instance_id != str(holder_instance_id):
+                conn.rollback()
+                return None
+            acquired_at = current.lease_acquired_at if (active and current.holder_instance_id == str(holder_instance_id)) else now
+            conn.execute(
+                """
+                UPDATE task_leases
+                SET lease_scope = %s, project_id = %s, task_id = %s, holder_instance_id = %s, holder_actor = %s, holder_meta_json = %s,
+                    lease_ttl_sec = %s, lease_acquired_at = %s, lease_heartbeat_at = %s, lease_expires_at = %s, lease_version = %s, updated_at = %s
+                WHERE lease_key = %s
+                """,
+                (
+                    str(lease_scope),
+                    str(project_id),
+                    str(task_id),
+                    str(holder_instance_id),
+                    str(holder_actor),
+                    meta_json,
+                    ttl,
+                    acquired_at,
+                    now,
+                    exp,
+                    int(current.lease_version) + 1,
+                    now,
+                    str(lease_key),
+                ),
+            )
+            conn.commit()
+            return self.get_task_lease(lease_key=lease_key)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def renew_task_lease(self, *, lease_key: str, holder_instance_id: str, lease_ttl_sec: int) -> Optional[TaskLeaseRow]:
+        now = utc_now_iso()
+        exp = _lease_expires_at_iso(lease_ttl_sec)
+        ttl = max(1, int(lease_ttl_sec or 1))
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = %s FOR UPDATE", (str(lease_key),)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            current = _task_lease_row(row)
+            if current.holder_instance_id != str(holder_instance_id):
+                conn.rollback()
+                return None
+            conn.execute(
+                """
+                UPDATE task_leases
+                SET lease_ttl_sec = %s, lease_heartbeat_at = %s, lease_expires_at = %s, lease_version = %s, updated_at = %s
+                WHERE lease_key = %s
+                """,
+                (ttl, now, exp, int(current.lease_version) + 1, now, str(lease_key)),
+            )
+            conn.commit()
+            return self.get_task_lease(lease_key=lease_key)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def get_task_lease(self, *, lease_key: str) -> Optional[TaskLeaseRow]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = %s", (str(lease_key),)).fetchone()
+            return _task_lease_row(row) if row else None
+        finally:
+            conn.close()
+
+    def release_task_lease(self, *, lease_key: str, holder_instance_id: str = "") -> bool:
+        conn = self._connect()
+        try:
+            if str(holder_instance_id or "").strip():
+                cur = conn.execute(
+                    "DELETE FROM task_leases WHERE lease_key = %s AND holder_instance_id = %s",
+                    (str(lease_key), str(holder_instance_id)),
+                )
+            else:
+                cur = conn.execute("DELETE FROM task_leases WHERE lease_key = %s", (str(lease_key),))
+            conn.commit()
+            return int(cur.rowcount or 0) > 0
+        finally:
+            conn.close()
+
+    def list_task_leases(
+        self,
+        *,
+        lease_scope: str = "",
+        holder_instance_id: str = "",
+        active_only: bool = False,
+        limit: int = 1000,
+    ) -> list[TaskLeaseRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if str(lease_scope or "").strip():
+            clauses.append("lease_scope = %s")
+            params.append(str(lease_scope))
+        if str(holder_instance_id or "").strip():
+            clauses.append("holder_instance_id = %s")
+            params.append(str(holder_instance_id))
+        if active_only:
+            clauses.append("lease_expires_at > %s")
+            params.append(utc_now_iso())
+        params.append(max(1, min(int(limit or 1000), 5000)))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"SELECT * FROM task_leases {where} ORDER BY lease_expires_at DESC LIMIT %s",
+                params,
+            ).fetchall()
+            return [_task_lease_row(row) for row in rows]
         finally:
             conn.close()
 

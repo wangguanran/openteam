@@ -90,6 +90,8 @@ class _IssueRecord(BaseModel):
 ROLE_PRODUCT_MANAGER = "Product-Manager"
 ROLE_TEST_MANAGER = "Test-Manager"
 ROLE_ISSUE_DRAFTER = "Issue-Drafter"
+ROLE_PLAN_REVIEW_AGENT = "Plan-Review-Agent"
+ROLE_PLAN_QA_AGENT = "Plan-QA-Agent"
 ROLE_REVIEW_AGENT = "Review-Agent"
 ROLE_QA_AGENT = "QA-Agent"
 ROLE_PROCESS_OPTIMIZATION_ANALYST = "Process-Optimization-Analyst"
@@ -107,6 +109,8 @@ ROLE_DISPLAY_ZH = {
     ROLE_PRODUCT_MANAGER: "产品经理",
     ROLE_TEST_MANAGER: "测试经理",
     ROLE_ISSUE_DRAFTER: "提单 Agent",
+    ROLE_PLAN_REVIEW_AGENT: "规划评审 Agent",
+    ROLE_PLAN_QA_AGENT: "规划 QA Agent",
     ROLE_REVIEW_AGENT: "评审 Agent",
     ROLE_QA_AGENT: "QA Agent",
     ROLE_PROCESS_OPTIMIZATION_ANALYST: "流程优化分析 Agent",
@@ -1370,7 +1374,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     review_agent = Agent(
-        role=ROLE_REVIEW_AGENT,
+        role=ROLE_PLAN_REVIEW_AGENT,
         goal="Enforce code review constraints so coding agents only touch issue-scoped files and commit history remains task-linked.",
         backstory="You act like an engineering reviewer protecting scope discipline, commit hygiene, and release boundaries.",
         llm=llm,
@@ -1378,7 +1382,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         verbose=verbose,
     )
     qa_agent = Agent(
-        role=ROLE_QA_AGENT,
+        role=ROLE_PLAN_QA_AGENT,
         goal="Ensure each work item has explicit verification, QA handoff, and close criteria before it can be considered done.",
         backstory="You are the final delivery gate. No item closes without review and QA evidence.",
         llm=llm,
@@ -3303,16 +3307,16 @@ def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str) -
             state="RUNNING",
             current_action="splitting work into executable items",
         ),
-        ROLE_REVIEW_AGENT: db.register_agent(
-            role_id=ROLE_REVIEW_AGENT,
+        ROLE_PLAN_REVIEW_AGENT: db.register_agent(
+            role_id=ROLE_PLAN_REVIEW_AGENT,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,
             state="RUNNING",
             current_action="checking scope and review gates",
         ),
-        ROLE_QA_AGENT: db.register_agent(
-            role_id=ROLE_QA_AGENT,
+        ROLE_PLAN_QA_AGENT: db.register_agent(
+            role_id=ROLE_PLAN_QA_AGENT,
             project_id=project_id,
             workstream_id=workstream_id,
             task_id=task_id,

@@ -6,17 +6,21 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, Field
 
+from . import cluster_manager
 from . import crewai_runtime
 from . import improvement_store
 from . import crewai_self_upgrade as planning
 from . import workspace_store
 from .github_issues_bus import GitHubAuthError, GitHubIssuesBusError, get_issue, update_issue
+from .state_store import ensure_instance_id
 
 
 class DeliveryError(RuntimeError):
@@ -36,8 +40,12 @@ class DeliveryImplementationResult(BaseModel):
 
 class DeliveryReviewResult(BaseModel):
     approved: bool = False
+    code_approved: Optional[bool] = None
+    docs_approved: Optional[bool] = None
     summary: str = ""
     feedback: list[str] = Field(default_factory=list)
+    code_feedback: list[str] = Field(default_factory=list)
+    docs_feedback: list[str] = Field(default_factory=list)
 
 
 class DeliveryQAResult(BaseModel):
@@ -82,6 +90,8 @@ _SAFE_TEST_PREFIXES = (
     "go test",
     "cargo test",
 )
+
+_DELIVERY_LEASE_SCOPE = "self_upgrade_delivery"
 
 
 def _utc_now_iso() -> str:
@@ -220,6 +230,129 @@ def _execution_state(doc: dict[str, Any]) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def _delivery_lease_key(*, project_id: str, task_id: str) -> str:
+    return f"{_DELIVERY_LEASE_SCOPE}:{str(project_id or 'teamos').strip() or 'teamos'}:{str(task_id or '').strip()}"
+
+
+def _delivery_lease_settings() -> dict[str, int]:
+    ttl = 600
+    renew = 300
+    try:
+        cfg = cluster_manager.load_cluster_config()
+        cluster_cfg = (cfg.get("cluster") or {}) if isinstance(cfg.get("cluster"), dict) else {}
+        task_cfg = (cluster_cfg.get("task_lease") or {}) if isinstance(cluster_cfg.get("task_lease"), dict) else {}
+        ttl = max(30, int(task_cfg.get("lease_ttl_sec") or ttl))
+        renew = max(15, int(task_cfg.get("renew_interval_sec") or renew))
+    except Exception:
+        pass
+    heartbeat = max(15, min(renew, max(15, ttl // 3)))
+    return {"ttl_sec": ttl, "renew_interval_sec": renew, "heartbeat_interval_sec": heartbeat}
+
+
+def _delivery_lease_meta(*, actor: str, ledger_path: Path, task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "actor": str(actor or "").strip(),
+        "pid": int(os.getpid()),
+        "ledger_path": str(ledger_path),
+        "status": str(task.get("status") or ""),
+        "title": str(task.get("title") or ""),
+    }
+
+
+class _DeliveryLeaseGuard:
+    def __init__(
+        self,
+        *,
+        db: Any,
+        lease_key: str,
+        holder_instance_id: str,
+        lease_ttl_sec: int,
+        heartbeat_interval_sec: int,
+    ) -> None:
+        self._db = db
+        self._lease_key = str(lease_key)
+        self._holder_instance_id = str(holder_instance_id)
+        self._lease_ttl_sec = max(30, int(lease_ttl_sec or 30))
+        self._heartbeat_interval_sec = max(5, int(heartbeat_interval_sec or 5))
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._last_success_monotonic = time.monotonic()
+        self._lost_reason = ""
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._loop, name=f"delivery-lease-{self._holder_instance_id[:8]}", daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self._heartbeat_interval_sec):
+            try:
+                renewed = self._db.renew_task_lease(
+                    lease_key=self._lease_key,
+                    holder_instance_id=self._holder_instance_id,
+                    lease_ttl_sec=self._lease_ttl_sec,
+                )
+                if renewed is None:
+                    self._lost_reason = "lease_not_held"
+                    return
+                self._last_success_monotonic = time.monotonic()
+            except Exception as exc:
+                if (time.monotonic() - self._last_success_monotonic) >= float(self._lease_ttl_sec):
+                    self._lost_reason = f"lease_heartbeat_failed: {str(exc)[:200]}"
+                    return
+
+    def assert_held(self, *, task_id: str) -> None:
+        if self._lost_reason:
+            raise DeliveryError(f"task lease lost for {task_id}: {self._lost_reason}")
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+
+def _claim_delivery_task_lease(*, db: Any, actor: str, task: dict[str, Any]) -> Optional[dict[str, Any]]:
+    task_id = str(task.get("task_id") or "").strip()
+    project_id = str(task.get("project_id") or "teamos").strip() or "teamos"
+    if not task_id:
+        return None
+    instance_id = ensure_instance_id()
+    settings = _delivery_lease_settings()
+    lease_key = _delivery_lease_key(project_id=project_id, task_id=task_id)
+    ledger_path = Path(str(task.get("ledger_path") or _fallback_ledger_path(project_id=project_id, task_id=task_id))).expanduser().resolve()
+    row = db.claim_task_lease(
+        lease_scope=_DELIVERY_LEASE_SCOPE,
+        lease_key=lease_key,
+        project_id=project_id,
+        task_id=task_id,
+        holder_instance_id=instance_id,
+        holder_actor=str(actor or "").strip(),
+        lease_ttl_sec=int(settings["ttl_sec"]),
+        holder_meta=_delivery_lease_meta(actor=actor, ledger_path=ledger_path, task=task),
+    )
+    if row is None:
+        return None
+    return {
+        "lease_key": lease_key,
+        "instance_id": instance_id,
+        "ttl_sec": int(settings["ttl_sec"]),
+        "renew_interval_sec": int(settings["renew_interval_sec"]),
+        "heartbeat_interval_sec": int(settings["heartbeat_interval_sec"]),
+        "row": row,
+    }
+
+
+def _release_delivery_task_lease(*, db: Any, lease: Optional[dict[str, Any]]) -> None:
+    if not lease:
+        return
+    try:
+        db.release_task_lease(
+            lease_key=str(lease.get("lease_key") or ""),
+            holder_instance_id=str(lease.get("instance_id") or ""),
+        )
+    except Exception:
+        pass
+
+
 def _task_lane(doc: dict[str, Any]) -> str:
     su = doc.get("self_upgrade") or {}
     if not isinstance(su, dict):
@@ -336,6 +469,56 @@ def _issue_url(doc: dict[str, Any]) -> str:
 def _documentation_policy(doc: dict[str, Any]) -> dict[str, Any]:
     raw = doc.get("documentation_policy")
     return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _merge_allowed_paths(*groups: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw in group:
+            rel = _normalize_repo_relative_path(raw)
+            if not rel or rel in seen:
+                continue
+            seen.add(rel)
+            out.append(rel)
+    return out
+
+
+def _documentation_allowed_paths(doc: dict[str, Any]) -> list[str]:
+    policy = _documentation_policy(doc)
+    return [str(x).strip() for x in (policy.get("allowed_paths") or []) if str(x).strip()]
+
+
+def _review_allowed_paths(doc: dict[str, Any]) -> list[str]:
+    allowed_paths = _allowed_paths(doc)
+    if bool(_documentation_policy(doc).get("required")):
+        return _merge_allowed_paths(allowed_paths, _documentation_allowed_paths(doc))
+    return allowed_paths
+
+
+def _release_allowed_paths(doc: dict[str, Any]) -> list[str]:
+    return _review_allowed_paths(doc)
+
+
+def _reset_documentation_policy(doc: dict[str, Any], *, pending: bool, feedback: Optional[list[str]] = None) -> dict[str, Any]:
+    policy = _documentation_policy(doc)
+    if not policy:
+        return doc
+    if bool(policy.get("required")):
+        policy.update(
+            {
+                "status": "pending" if pending else "done",
+                "updated_at": _utc_now_iso(),
+                "completed_at": "" if pending else str(policy.get("completed_at") or ""),
+                "summary": "" if pending else str(policy.get("summary") or ""),
+                "changed_files": [] if pending else [str(x).strip() for x in (policy.get("changed_files") or []) if str(x).strip()],
+                "followups": [str(x).strip() for x in (feedback or []) if str(x).strip()] if pending else [str(x).strip() for x in (policy.get("followups") or []) if str(x).strip()],
+            }
+        )
+    else:
+        policy.update({"status": "not_required", "updated_at": _utc_now_iso()})
+    doc["documentation_policy"] = policy
+    return doc
 
 
 def _issue_snapshot(doc: dict[str, Any]) -> dict[str, Any]:
@@ -899,16 +1082,19 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
     crewai_runtime.require_crewai_importable()
     from crewai import Agent
 
-    allowed_paths = _allowed_paths(task_doc)
+    allowed_paths = _review_allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
     tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
     llm = planning._crewai_llm()
+    documentation_policy = _documentation_policy(task_doc)
     blob = json.dumps(
         {
             "task_id": task_doc.get("id") or "",
             "title": task_doc.get("title") or "",
             "issue_url": _issue_url(task_doc),
             "allowed_paths": allowed_paths,
+            "code_paths": _allowed_paths(task_doc),
+            "documentation_policy": documentation_policy,
             "acceptance": _acceptance_items(task_doc),
             "git_status": _git_status_text(worktree_root),
         },
@@ -929,18 +1115,21 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
         name="review_self_upgrade_task",
         description=(
             "Review the current repository diff for this self-upgrade task.\n"
-            "Approve only when:\n"
-            "- changed files stay inside allowed_paths\n"
-            "- the change matches the task title/summary\n"
-            "- validation/test coverage looks adequate\n"
-            "- there are no obvious review blockers\n\n"
+            "Return a structured review decision with separate code_approved and docs_approved fields.\n"
+            "Rules:\n"
+            "- Review both code changes and documentation changes under allowed_paths.\n"
+            "- Put code-specific blockers in code_feedback.\n"
+            "- Put documentation-specific blockers in docs_feedback.\n"
+            "- If documentation_policy.required is false, set docs_approved=true.\n"
+            "- Set approved=true only when both code_approved and docs_approved are true.\n"
+            "- Reject if changed files leave allowed_paths, the task is inconsistent with the issue, or validation/test coverage is weak.\n\n"
             f"Task context:\n{blob}"
         ),
         expected_output="A structured JSON review decision.",
         model_cls=DeliveryReviewResult,
         verbose=verbose,
     )
-    return DeliveryReviewResult.model_validate(out.model_dump())
+    return _normalize_review_result(task_doc=task_doc, result=DeliveryReviewResult.model_validate(out.model_dump()))
 
 
 def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryQAResult:
@@ -1019,6 +1208,36 @@ def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditRe
         module=str(result.module or "").strip(),
         summary=str(result.summary or "").strip(),
         feedback=feedback,
+    )
+
+
+def _normalize_review_result(*, task_doc: dict[str, Any], result: DeliveryReviewResult) -> DeliveryReviewResult:
+    docs_required = bool(_documentation_policy(task_doc).get("required"))
+    feedback = [str(x).strip() for x in (result.feedback or []) if str(x).strip()]
+    code_feedback = [str(x).strip() for x in (result.code_feedback or []) if str(x).strip()]
+    docs_feedback = [str(x).strip() for x in (result.docs_feedback or []) if str(x).strip()]
+    code_approved = bool(result.approved) if result.code_approved is None else bool(result.code_approved)
+    if docs_required:
+        docs_approved = bool(result.approved) if result.docs_approved is None else bool(result.docs_approved)
+    else:
+        docs_approved = True
+        docs_feedback = []
+    if not code_approved and not code_feedback:
+        code_feedback = list(feedback or ["review rejected the code changes"])
+    if docs_required and not docs_approved and not docs_feedback:
+        docs_feedback = list(feedback or ["review rejected the documentation changes"])
+    merged_feedback = list(feedback)
+    for item in code_feedback + docs_feedback:
+        if item not in merged_feedback:
+            merged_feedback.append(item)
+    return DeliveryReviewResult(
+        approved=bool(code_approved and docs_approved),
+        code_approved=code_approved,
+        docs_approved=docs_approved,
+        summary=str(result.summary or "").strip(),
+        feedback=merged_feedback,
+        code_feedback=code_feedback,
+        docs_feedback=docs_feedback,
     )
 
 
@@ -1131,7 +1350,7 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
 
 def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root: Path) -> dict[str, Any]:
     task_id = str(task_doc.get("id") or ledger_path.stem).strip()
-    allowed_paths = _allowed_paths(task_doc)
+    allowed_paths = _release_allowed_paths(task_doc)
     execution_policy = task_doc.get("execution_policy") or {}
     if not isinstance(execution_policy, dict):
         execution_policy = {}
@@ -1265,7 +1484,16 @@ def _resume_feedback(doc: dict[str, Any]) -> list[str]:
     return feedback
 
 
-def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[str, Any], dry_run: bool = False, force: bool = False) -> dict[str, Any]:
+def execute_task_delivery(
+    *,
+    db: Any,
+    actor: str,
+    ledger_path: Path,
+    doc: dict[str, Any],
+    dry_run: bool = False,
+    force: bool = False,
+    lease: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     task_id = str(doc.get("id") or ledger_path.stem).strip()
     source_repo_root = _source_repo_root(doc)
     logs_dir = _logs_dir_for_doc(doc, ledger_path=ledger_path, source_repo_root=source_repo_root)
@@ -1285,323 +1513,404 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
     verbose = _env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0")
     max_attempts = max(1, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS", "2") or "2"))
     ship_enabled = _env_truthy("TEAMOS_SELF_UPGRADE_SHIP_ENABLED", "1")
+    lease_guard: Optional[_DeliveryLeaseGuard] = None
+    agent_ids: dict[str, str] = {}
+    if lease:
+        lease_guard = _DeliveryLeaseGuard(
+            db=db,
+            lease_key=str(lease.get("lease_key") or ""),
+            holder_instance_id=str(lease.get("instance_id") or ""),
+            lease_ttl_sec=int(lease.get("ttl_sec") or 600),
+            heartbeat_interval_sec=int(lease.get("heartbeat_interval_sec") or 60),
+        )
+        lease_guard.start()
 
-    doc, worktree_root, _ = _ensure_task_worktree(ledger_path, doc)
-    agent_ids = _register_delivery_agents(db=db, task_doc=doc)
-    prior_status = status
-    _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
-    _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
-    _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
-    audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
-    if force or str(audit_doc.get("status") or "").strip().lower() != "approved":
-        doc = _update_task_state(
-            ledger_path,
-            doc,
-            status="doing",
-            stage="audit",
-            owner_role=owner_role,
-            extra_execution={"active_role": planning.ROLE_ISSUE_AUDIT_AGENT},
-        )
-        _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="RUNNING", action="auditing issue before scheduling")
-        audit_result = _run_issue_audit_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
-        doc = _load_yaml(ledger_path)
+    try:
+        doc, worktree_root, _ = _ensure_task_worktree(ledger_path, doc)
+        agent_ids = _register_delivery_agents(db=db, task_doc=doc)
+        prior_status = status
+        _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
+        _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
+        _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
         audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
-        audit_doc.update(
-            {
-                "status": "approved" if audit_result.approved else audit_result.closure,
-                "classification": audit_result.classification,
-                "module": str(audit_result.module or audit_doc.get("module") or ""),
-                "worth_doing": bool(audit_result.worth_doing),
-                "closure": audit_result.closure,
-                "docs_required": bool(audit_result.docs_required),
-                "summary": str(audit_result.summary or "").strip(),
-                "feedback": [str(x).strip() for x in (audit_result.feedback or []) if str(x).strip()],
-                "audit_role": planning.ROLE_ISSUE_AUDIT_AGENT,
-                "updated_at": _utc_now_iso(),
-                "approved_at": _utc_now_iso() if audit_result.approved else str(audit_doc.get("approved_at") or ""),
-                "issue_title_snapshot": str((_issue_snapshot(doc).get("title") or "")),
-            }
-        )
-        doc["self_upgrade_audit"] = audit_doc
-        doc_policy = _documentation_policy(doc)
-        doc_policy.update(
-            {
-                "required": bool(audit_result.docs_required or doc_policy.get("required")),
-                "status": str(doc_policy.get("status") or ("pending" if bool(audit_result.docs_required or doc_policy.get("required")) else "not_required")),
-                "documentation_role": str(doc_policy.get("documentation_role") or documentation_role or planning.ROLE_DOCUMENTATION_AGENT),
-                "updated_at": _utc_now_iso(),
-            }
-        )
-        if not bool(doc_policy.get("required")):
-            doc_policy["status"] = "not_required"
-        doc["documentation_policy"] = doc_policy
-        if audit_result.approved:
+        if force or str(audit_doc.get("status") or "").strip().lower() != "approved":
             doc = _update_task_state(
                 ledger_path,
                 doc,
                 status="doing",
                 stage="audit",
                 owner_role=owner_role,
-                extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
+                extra_execution={"active_role": planning.ROLE_ISSUE_AUDIT_AGENT},
             )
-            _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="DONE", action="issue audit approved")
-            _append_markdown(logs_dir, "02_plan.md", "Issue Audit", [audit_result.summary or "Issue 审计通过。", *[f"feedback: {x}" for x in audit_result.feedback]])
-            _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
-            _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
-        else:
-            blocked_status = "needs_clarification" if audit_result.closure in ("needs_clarification", "split_required", "duplicate", "misclassified", "pending") else "blocked"
-            doc = _update_task_state(
-                ledger_path,
-                doc,
-                status=blocked_status,
-                stage="needs_clarification" if blocked_status == "needs_clarification" else "audit",
-                owner_role=owner_role,
-                extra_execution={"active_role": planning.ROLE_ISSUE_AUDIT_AGENT, "last_error": str(audit_result.summary or audit_result.closure or "issue audit failed"), "last_feedback": audit_result.feedback},
+            _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="RUNNING", action="auditing issue before scheduling")
+            audit_result = _run_issue_audit_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+            if lease_guard:
+                lease_guard.assert_held(task_id=task_id)
+            doc = _load_yaml(ledger_path)
+            audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+            audit_doc.update(
+                {
+                    "status": "approved" if audit_result.approved else audit_result.closure,
+                    "classification": audit_result.classification,
+                    "module": str(audit_result.module or audit_doc.get("module") or ""),
+                    "worth_doing": bool(audit_result.worth_doing),
+                    "closure": audit_result.closure,
+                    "docs_required": bool(audit_result.docs_required),
+                    "summary": str(audit_result.summary or "").strip(),
+                    "feedback": [str(x).strip() for x in (audit_result.feedback or []) if str(x).strip()],
+                    "audit_role": planning.ROLE_ISSUE_AUDIT_AGENT,
+                    "updated_at": _utc_now_iso(),
+                    "approved_at": _utc_now_iso() if audit_result.approved else str(audit_doc.get("approved_at") or ""),
+                    "issue_title_snapshot": str((_issue_snapshot(doc).get("title") or "")),
+                }
             )
-            _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="FAILED", action=f"issue audit {audit_result.closure}")
-            _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery waiting for issue clarification")
-            _append_markdown(logs_dir, "02_plan.md", "Issue Audit Blocked", [audit_result.summary or audit_result.closure, *[f"feedback: {x}" for x in audit_result.feedback]])
+            doc["self_upgrade_audit"] = audit_doc
+            doc_policy = _documentation_policy(doc)
+            doc_policy.update(
+                {
+                    "required": bool(audit_result.docs_required or doc_policy.get("required")),
+                    "status": str(doc_policy.get("status") or ("pending" if bool(audit_result.docs_required or doc_policy.get("required")) else "not_required")),
+                    "documentation_role": str(doc_policy.get("documentation_role") or documentation_role or planning.ROLE_DOCUMENTATION_AGENT),
+                    "updated_at": _utc_now_iso(),
+                }
+            )
+            if not bool(doc_policy.get("required")):
+                doc_policy["status"] = "not_required"
+            doc["documentation_policy"] = doc_policy
+            if audit_result.approved:
+                doc = _update_task_state(
+                    ledger_path,
+                    doc,
+                    status="doing",
+                    stage="audit",
+                    owner_role=owner_role,
+                    extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
+                )
+                _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="DONE", action="issue audit approved")
+                _append_markdown(logs_dir, "02_plan.md", "Issue Audit", [audit_result.summary or "Issue 审计通过。", *[f"feedback: {x}" for x in audit_result.feedback]])
+                _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
+                _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
+            else:
+                blocked_status = "needs_clarification" if audit_result.closure in ("needs_clarification", "split_required", "duplicate", "misclassified", "pending") else "blocked"
+                doc = _update_task_state(
+                    ledger_path,
+                    doc,
+                    status=blocked_status,
+                    stage="needs_clarification" if blocked_status == "needs_clarification" else "audit",
+                    owner_role=owner_role,
+                    extra_execution={"active_role": planning.ROLE_ISSUE_AUDIT_AGENT, "last_error": str(audit_result.summary or audit_result.closure or "issue audit failed"), "last_feedback": audit_result.feedback},
+                )
+                _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="FAILED", action=f"issue audit {audit_result.closure}")
+                _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery waiting for issue clarification")
+                _append_markdown(logs_dir, "02_plan.md", "Issue Audit Blocked", [audit_result.summary or audit_result.closure, *[f"feedback: {x}" for x in audit_result.feedback]])
+                _append_metric(
+                    logs_dir,
+                    event_type="SELF_UPGRADE_ISSUE_AUDIT_BLOCKED",
+                    actor=actor,
+                    task_id=task_id,
+                    project_id=project_id,
+                    workstream_id=workstream_id,
+                    message=f"issue audit blocked delivery: {audit_result.closure}",
+                    payload=audit_result.model_dump(),
+                    severity="WARN",
+                )
+                _emit_event(
+                    db,
+                    event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_BLOCKED",
+                    actor=actor,
+                    task_doc=doc,
+                    payload={"task_id": task_id, **audit_result.model_dump()},
+                )
+                return {"ok": False, "task_id": task_id, "status": blocked_status, "feedback": audit_result.feedback, "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
+
+        _update_task_state(
+            ledger_path,
+            doc,
+            status="doing",
+            stage="coding",
+            owner_role=owner_role,
+            extra_execution={"last_error": "" if status != "merge_conflict" else str((_execution_state(doc).get("last_error") or "")).strip(), "last_feedback": _resume_feedback(doc)},
+        )
+        if prior_status == "merge_conflict":
+            _append_markdown(logs_dir, "03_work.md", "Merge Conflict Recovery", ["Scheduler-Agent reassigned the task back to coding after a release-time merge conflict."])
             _append_metric(
                 logs_dir,
-                event_type="SELF_UPGRADE_ISSUE_AUDIT_BLOCKED",
+                event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
                 actor=actor,
                 task_id=task_id,
                 project_id=project_id,
                 workstream_id=workstream_id,
-                message=f"issue audit blocked delivery: {audit_result.closure}",
-                payload=audit_result.model_dump(),
-                severity="WARN",
+                message="merge conflict recovery resumed in coding stage",
+                payload={"task_id": task_id, "worktree": str(worktree_root)},
             )
             _emit_event(
                 db,
-                event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_BLOCKED",
+                event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
                 actor=actor,
                 task_doc=doc,
-                payload={"task_id": task_id, **audit_result.model_dump()},
+                payload={"task_id": task_id, "worktree": str(worktree_root)},
             )
-            return {"ok": False, "task_id": task_id, "status": blocked_status, "feedback": audit_result.feedback, "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
 
-    _update_task_state(
-        ledger_path,
-        doc,
-        status="doing",
-        stage="coding",
-        owner_role=owner_role,
-        extra_execution={"last_error": "" if status != "merge_conflict" else str((_execution_state(doc).get("last_error") or "")).strip(), "last_feedback": _resume_feedback(doc)},
-    )
-    if prior_status == "merge_conflict":
-        _append_markdown(logs_dir, "03_work.md", "Merge Conflict Recovery", ["Scheduler-Agent reassigned the task back to coding after a release-time merge conflict."])
-        _append_metric(
-            logs_dir,
-            event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
-            actor=actor,
-            task_id=task_id,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            message="merge conflict recovery resumed in coding stage",
-            payload={"task_id": task_id, "worktree": str(worktree_root)},
+        feedback: list[str] = _resume_feedback(doc)
+        last_audit = DeliveryAuditResult(
+            approved=True,
+            classification=str((audit_doc or {}).get("classification") or lane),
+            closure=str((audit_doc or {}).get("closure") or "ready"),
+            worth_doing=bool((audit_doc or {}).get("worth_doing", True)),
+            docs_required=bool((audit_doc or {}).get("docs_required", _documentation_policy(doc).get("required"))),
+            module=str((audit_doc or {}).get("module") or ""),
+            summary=str((audit_doc or {}).get("summary") or ""),
+            feedback=[str(x).strip() for x in ((audit_doc or {}).get("feedback") or []) if str(x).strip()],
         )
-        _emit_event(
-            db,
-            event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
-            actor=actor,
-            task_doc=doc,
-            payload={"task_id": task_id, "worktree": str(worktree_root)},
-        )
-
-    feedback: list[str] = _resume_feedback(doc)
-    last_audit = DeliveryAuditResult(
-        approved=True,
-        classification=str((audit_doc or {}).get("classification") or lane),
-        closure=str((audit_doc or {}).get("closure") or "ready"),
-        worth_doing=bool((audit_doc or {}).get("worth_doing", True)),
-        docs_required=bool((audit_doc or {}).get("docs_required", _documentation_policy(doc).get("required"))),
-        module=str((audit_doc or {}).get("module") or ""),
-        summary=str((audit_doc or {}).get("summary") or ""),
-        feedback=[str(x).strip() for x in ((audit_doc or {}).get("feedback") or []) if str(x).strip()],
-    )
-    last_review = DeliveryReviewResult(approved=False)
-    last_qa = DeliveryQAResult(approved=False)
-    last_docs = DeliveryDocumentationResult(approved=not bool(_documentation_policy(doc).get("required")), updated=False, summary="")
-    try:
-        for attempt in range(1, max_attempts + 1):
+        last_review = DeliveryReviewResult(approved=False, code_approved=False, docs_approved=not bool(_documentation_policy(doc).get("required")))
+        last_qa = DeliveryQAResult(approved=False)
+        last_docs = DeliveryDocumentationResult(approved=not bool(_documentation_policy(doc).get("required")), updated=False, summary="")
+        attempt = 0
+        needs_coding = True
+        docs_retry_exhausted = False
+        while attempt < max_attempts:
             doc = _load_yaml(ledger_path)
-            exec_state = _execution_state(doc)
-            exec_state["attempt_count"] = attempt
-            doc = _update_task_state(ledger_path, doc, status="doing", stage="coding", owner_role=owner_role, extra_execution={"attempt_count": attempt, "last_feedback": feedback})
-            _set_agent_state(db, agent_ids, "Scheduler-Agent", state="RUNNING", action=f"dispatching attempt {attempt}")
-            _set_agent_state(db, agent_ids, owner_role, state="RUNNING", action=f"implementing attempt {attempt}")
-            impl = _run_coding_stage(task_doc=doc, worktree_root=worktree_root, feedback=feedback, verbose=verbose)
-            changed_files = _changed_files(worktree_root)
-            if changed_files and not impl.changed_files:
-                impl.changed_files = changed_files[:50]
-            _append_markdown(logs_dir, "03_work.md", f"Coding Attempt {attempt}", [impl.summary or "(no summary)", *[f"changed_file: {p}" for p in impl.changed_files], *[f"unresolved: {u}" for u in impl.unresolved]])
-            _append_metric(logs_dir, event_type="SELF_UPGRADE_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
-            _set_agent_state(db, agent_ids, owner_role, state="DONE", action=f"coding attempt {attempt} finished")
-
-            doc = _load_yaml(ledger_path)
-            doc = _update_task_state(ledger_path, doc, status="doing", stage="review", owner_role=owner_role, extra_execution={"active_role": review_role})
-            _set_agent_state(db, agent_ids, review_role, state="RUNNING", action=f"reviewing attempt {attempt}")
-            last_review = _run_review_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
-            _append_markdown(logs_dir, "04_test.md", f"Review Attempt {attempt}", [last_review.summary or "(no summary)", *[f"feedback: {x}" for x in last_review.feedback]])
-            _append_metric(logs_dir, event_type="SELF_UPGRADE_REVIEW_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"review attempt {attempt}", payload=last_review.model_dump())
-            _set_agent_state(db, agent_ids, review_role, state="DONE" if last_review.approved else "FAILED", action=f"review attempt {attempt} {'approved' if last_review.approved else 'rejected'}")
-            if not last_review.approved:
-                feedback = list(last_review.feedback or ([last_review.summary] if last_review.summary else ["review rejected the task"]))
-                doc = _load_yaml(ledger_path)
-                doc = _update_task_state(ledger_path, doc, status="doing", stage="coding", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": "review_rejected"})
-                continue
-
-            doc = _load_yaml(ledger_path)
-            doc = _update_task_state(ledger_path, doc, status="test", stage="qa", owner_role=owner_role, extra_execution={"active_role": qa_role})
-            _set_agent_state(db, agent_ids, qa_role, state="RUNNING", action=f"running QA attempt {attempt}")
-            last_qa = _run_qa_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
-            _append_markdown(logs_dir, "04_test.md", f"QA Attempt {attempt}", [last_qa.summary or "(no summary)", *[f"command: {x}" for x in last_qa.commands], *[f"failure: {x}" for x in last_qa.failures]])
-            _append_metric(logs_dir, event_type="SELF_UPGRADE_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
-            _set_agent_state(db, agent_ids, qa_role, state="DONE" if last_qa.approved else "FAILED", action=f"qa attempt {attempt} {'approved' if last_qa.approved else 'rejected'}")
-            if not last_qa.approved:
-                feedback = list(last_qa.failures or ([last_qa.summary] if last_qa.summary else ["qa rejected the task"]))
-                doc = _load_yaml(ledger_path)
-                doc = _update_task_state(ledger_path, doc, status="doing", stage="coding", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": "qa_rejected"})
-                continue
-
-            doc = _load_yaml(ledger_path)
-            documentation_policy = _documentation_policy(doc)
-            docs_required = bool(documentation_policy.get("required"))
-            if docs_required:
-                doc = _update_task_state(ledger_path, doc, status="doing", stage="docs", owner_role=owner_role, extra_execution={"active_role": documentation_role})
-                _set_agent_state(db, agent_ids, documentation_role, state="RUNNING", action=f"updating documentation for attempt {attempt}")
-                last_docs = _run_documentation_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
-                docs_paths = [str(x).strip() for x in (documentation_policy.get("allowed_paths") or []) if str(x).strip()]
-                if not last_docs.changed_files:
-                    changed_doc_files = [path for path in _changed_files(worktree_root) if _is_allowed_path(path, docs_paths)]
-                    if changed_doc_files:
-                        last_docs.changed_files = changed_doc_files[:50]
-                doc = _load_yaml(ledger_path)
-                documentation_policy = _documentation_policy(doc)
-                documentation_policy.update(
-                    {
-                        "status": "done" if last_docs.approved else "blocked",
-                        "required": True,
-                        "updated_at": _utc_now_iso(),
-                        "completed_at": _utc_now_iso() if last_docs.approved else str(documentation_policy.get("completed_at") or ""),
-                        "summary": str(last_docs.summary or "").strip(),
-                        "changed_files": [str(x).strip() for x in (last_docs.changed_files or []) if str(x).strip()],
-                        "followups": [str(x).strip() for x in (last_docs.followups or []) if str(x).strip()],
-                    }
-                )
-                doc["documentation_policy"] = documentation_policy
+            if needs_coding:
+                attempt += 1
+                doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
                 doc = _update_task_state(
                     ledger_path,
                     doc,
-                    status="doing" if last_docs.approved else "blocked",
-                    stage="docs" if not last_docs.approved else "docs",
+                    status="doing",
+                    stage="coding",
                     owner_role=owner_role,
-                    extra_execution={"active_role": documentation_role, "last_feedback": list(last_docs.followups or []), "last_error": "" if last_docs.approved else str(last_docs.summary or "documentation update blocked")},
+                    extra_execution={"attempt_count": attempt, "last_feedback": feedback, "last_error": ""},
                 )
-                _append_markdown(logs_dir, "05_release.md", f"Documentation Attempt {attempt}", [last_docs.summary or "(no summary)", *[f"changed_file: {x}" for x in last_docs.changed_files], *[f"followup: {x}" for x in last_docs.followups]])
-                _append_metric(logs_dir, event_type="SELF_UPGRADE_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}", payload=last_docs.model_dump())
-                _set_agent_state(db, agent_ids, documentation_role, state="DONE" if last_docs.approved else "FAILED", action=f"documentation attempt {attempt} {'approved' if last_docs.approved else 'blocked'}")
-                if not last_docs.approved:
-                    feedback = list(last_docs.followups or ([last_docs.summary] if last_docs.summary else ["documentation update blocked"]))
-                    break
-            else:
+                _set_agent_state(db, agent_ids, "Scheduler-Agent", state="RUNNING", action=f"dispatching attempt {attempt}")
+                _set_agent_state(db, agent_ids, owner_role, state="RUNNING", action=f"implementing attempt {attempt}")
+                impl = _run_coding_stage(task_doc=doc, worktree_root=worktree_root, feedback=feedback, verbose=verbose)
+                if lease_guard:
+                    lease_guard.assert_held(task_id=task_id)
+                changed_files = _changed_files(worktree_root)
+                if changed_files and not impl.changed_files:
+                    impl.changed_files = changed_files[:50]
+                _append_markdown(logs_dir, "03_work.md", f"Coding Attempt {attempt}", [impl.summary or "(no summary)", *[f"changed_file: {p}" for p in impl.changed_files], *[f"unresolved: {u}" for u in impl.unresolved]])
+                _append_metric(logs_dir, event_type="SELF_UPGRADE_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
+                _set_agent_state(db, agent_ids, owner_role, state="DONE", action=f"coding attempt {attempt} finished")
+                needs_coding = False
+
+            docs_round = 0
+            while True:
                 doc = _load_yaml(ledger_path)
                 documentation_policy = _documentation_policy(doc)
-                if documentation_policy:
-                    documentation_policy.update({"status": "not_required", "updated_at": _utc_now_iso()})
-                    doc["documentation_policy"] = documentation_policy
-                    doc = _update_task_state(ledger_path, doc, status="doing", stage="docs", owner_role=owner_role, extra_execution={"active_role": documentation_role})
-                _set_agent_state(db, agent_ids, documentation_role, state="DONE", action="documentation not required")
-
-            doc = _load_yaml(ledger_path)
-            doc = _update_task_state(ledger_path, doc, status="release", stage="release", owner_role=owner_role, extra_execution={"active_role": "Release-Agent"})
-            _set_agent_state(db, agent_ids, "Release-Agent", state="RUNNING", action="shipping validated task")
-            if dry_run or not ship_enabled:
-                release_result = {"branch": _execution_state(doc).get("branch_name") or "", "base_branch": _execution_state(doc).get("base_branch") or "main", "commit_sha": "", "pull_request_url": "", "issue_url": _issue_url(doc), "staged_files": _changed_files(worktree_root)}
-            else:
-                try:
-                    release_result = _release_task(task_doc=doc, ledger_path=ledger_path, worktree_root=worktree_root)
-                except DeliveryMergeConflictError as e:
-                    conflict_error = str(e)[:500]
-                    feedback = [conflict_error]
-                    doc = _load_yaml(ledger_path)
-                    execution = _execution_state(doc)
-                    merge_conflict_count = int(execution.get("merge_conflict_count") or 0) + 1
-                    doc = _update_task_state(
-                        ledger_path,
-                        doc,
-                        status="merge_conflict",
-                        stage="merge_conflict",
-                        owner_role=owner_role,
-                        extra_execution={
-                            "active_role": "Scheduler-Agent",
-                            "last_feedback": feedback,
-                            "last_error": conflict_error,
-                            "last_merge_conflict_at": _utc_now_iso(),
-                            "merge_conflict_count": merge_conflict_count,
-                        },
-                    )
-                    _set_agent_state(db, agent_ids, "Release-Agent", state="FAILED", action="merge conflict detected during release")
-                    _set_agent_state(db, agent_ids, "Scheduler-Agent", state="RUNNING", action="re-dispatching merge conflict back to coding")
-                    _append_markdown(logs_dir, "05_release.md", f"Merge Conflict Attempt {attempt}", [conflict_error])
-                    _append_metric(
-                        logs_dir,
-                        event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT",
-                        actor=actor,
-                        task_id=task_id,
-                        project_id=project_id,
-                        workstream_id=workstream_id,
-                        message=f"merge conflict during release attempt {attempt}",
-                        payload={"error": conflict_error, "attempt": attempt, "owner_role": owner_role},
-                        severity="WARN",
-                    )
-                    _emit_event(
-                        db,
-                        event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT",
-                        actor=actor,
-                        task_doc=doc,
-                        payload={"task_id": task_id, "error": conflict_error, "attempt": attempt, "owner_role": owner_role},
-                    )
-                    if attempt >= max_attempts:
-                        break
-                    doc = _load_yaml(ledger_path)
+                docs_required = bool(documentation_policy.get("required"))
+                if docs_required:
+                    docs_round += 1
+                    doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
                     doc = _update_task_state(
                         ledger_path,
                         doc,
                         status="doing",
-                        stage="coding",
+                        stage="docs",
                         owner_role=owner_role,
-                        extra_execution={
-                            "active_role": owner_role,
-                            "last_feedback": feedback,
-                            "last_error": conflict_error,
-                        },
+                        extra_execution={"active_role": documentation_role, "last_feedback": feedback, "last_error": ""},
                     )
+                    _set_agent_state(db, agent_ids, documentation_role, state="RUNNING", action=f"updating documentation for attempt {attempt}.{docs_round}")
+                    last_docs = _run_documentation_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+                    if lease_guard:
+                        lease_guard.assert_held(task_id=task_id)
+                    docs_paths = [str(x).strip() for x in (documentation_policy.get("allowed_paths") or []) if str(x).strip()]
+                    if not last_docs.changed_files:
+                        changed_doc_files = [path for path in _changed_files(worktree_root) if _is_allowed_path(path, docs_paths)]
+                        if changed_doc_files:
+                            last_docs.changed_files = changed_doc_files[:50]
+                    doc = _load_yaml(ledger_path)
+                    documentation_policy = _documentation_policy(doc)
+                    documentation_policy.update(
+                        {
+                            "status": "done" if last_docs.approved else "blocked",
+                            "required": True,
+                            "updated_at": _utc_now_iso(),
+                            "completed_at": _utc_now_iso() if last_docs.approved else str(documentation_policy.get("completed_at") or ""),
+                            "summary": str(last_docs.summary or "").strip(),
+                            "changed_files": [str(x).strip() for x in (last_docs.changed_files or []) if str(x).strip()],
+                            "followups": [str(x).strip() for x in (last_docs.followups or []) if str(x).strip()],
+                        }
+                    )
+                    doc["documentation_policy"] = documentation_policy
+                    doc = _update_task_state(
+                        ledger_path,
+                        doc,
+                        status="doing" if last_docs.approved else "blocked",
+                        stage="docs",
+                        owner_role=owner_role,
+                        extra_execution={"active_role": documentation_role, "last_feedback": list(last_docs.followups or []), "last_error": "" if last_docs.approved else str(last_docs.summary or "documentation update blocked")},
+                    )
+                    _append_markdown(logs_dir, "05_release.md", f"Documentation Attempt {attempt}.{docs_round}", [last_docs.summary or "(no summary)", *[f"changed_file: {x}" for x in last_docs.changed_files], *[f"followup: {x}" for x in last_docs.followups]])
+                    _append_metric(logs_dir, event_type="SELF_UPGRADE_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}.{docs_round}", payload=last_docs.model_dump())
+                    _set_agent_state(db, agent_ids, documentation_role, state="DONE" if last_docs.approved else "FAILED", action=f"documentation attempt {attempt}.{docs_round} {'approved' if last_docs.approved else 'blocked'}")
+                    if not last_docs.approved:
+                        feedback = list(last_docs.followups or ([last_docs.summary] if last_docs.summary else ["documentation update blocked"]))
+                        docs_retry_exhausted = True
+                        break
+                else:
+                    last_docs = DeliveryDocumentationResult(approved=True, updated=False, summary="documentation not required")
+                    if documentation_policy:
+                        documentation_policy.update({"status": "not_required", "updated_at": _utc_now_iso()})
+                        doc["documentation_policy"] = documentation_policy
+                        doc = _update_task_state(ledger_path, doc, status="doing", stage="docs", owner_role=owner_role, extra_execution={"active_role": documentation_role})
+                    _set_agent_state(db, agent_ids, documentation_role, state="DONE", action="documentation not required")
+
+                doc = _load_yaml(ledger_path)
+                doc = _update_task_state(ledger_path, doc, status="doing", stage="review", owner_role=owner_role, extra_execution={"active_role": review_role})
+                _set_agent_state(db, agent_ids, review_role, state="RUNNING", action=f"reviewing attempt {attempt}.{max(1, docs_round)}")
+                last_review = _normalize_review_result(
+                    task_doc=doc,
+                    result=_run_review_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose),
+                )
+                if lease_guard:
+                    lease_guard.assert_held(task_id=task_id)
+                _append_markdown(
+                    logs_dir,
+                    "04_test.md",
+                    f"Review Attempt {attempt}.{max(1, docs_round)}",
+                    [
+                        last_review.summary or "(no summary)",
+                        f"code_approved: {bool(last_review.code_approved)}",
+                        f"docs_approved: {bool(last_review.docs_approved)}",
+                        *[f"code_feedback: {x}" for x in last_review.code_feedback],
+                        *[f"docs_feedback: {x}" for x in last_review.docs_feedback],
+                        *[f"feedback: {x}" for x in last_review.feedback],
+                    ],
+                )
+                _append_metric(logs_dir, event_type="SELF_UPGRADE_REVIEW_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"review attempt {attempt}.{max(1, docs_round)}", payload=last_review.model_dump())
+                _set_agent_state(db, agent_ids, review_role, state="DONE" if last_review.approved else "FAILED", action=f"review attempt {attempt}.{max(1, docs_round)} {'approved' if last_review.approved else 'rejected'}")
+                if not bool(last_review.code_approved):
+                    feedback = list(last_review.code_feedback or last_review.feedback or ([last_review.summary] if last_review.summary else ["review rejected the code changes"]))
+                    doc = _load_yaml(ledger_path)
+                    doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
+                    doc = _update_task_state(ledger_path, doc, status="doing", stage="coding", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": "review_code_rejected"})
+                    needs_coding = True
+                    break
+                if docs_required and not bool(last_review.docs_approved):
+                    feedback = list(last_review.docs_feedback or last_review.feedback or ([last_review.summary] if last_review.summary else ["review rejected the documentation changes"]))
+                    doc = _load_yaml(ledger_path)
+                    doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
+                    doc = _update_task_state(ledger_path, doc, status="doing", stage="docs", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": "review_docs_rejected"})
+                    if docs_round >= max_attempts:
+                        docs_retry_exhausted = True
+                        break
                     continue
-            doc = _load_yaml(ledger_path)
-            doc = _update_task_state(
-                ledger_path,
-                doc,
-                status="closed",
-                stage="closed",
-                owner_role=owner_role,
-                extra_execution={
-                    "active_role": "Release-Agent",
-                    "commit_sha": str(release_result.get("commit_sha") or ""),
-                    "pull_request_url": str(release_result.get("pull_request_url") or ""),
-                    "closed_at": _utc_now_iso(),
-                    "issue_url": str(release_result.get("issue_url") or ""),
-                    "last_error": "",
-                    "last_feedback": [],
-                },
-            )
-            _set_agent_state(db, agent_ids, "Release-Agent", state="DONE", action="task released")
-            _finish_delivery_agents(db, agent_ids, state="DONE", action="delivery finished")
-            _append_markdown(logs_dir, "05_release.md", "Release", [f"branch: {release_result.get('branch') or ''}", f"commit_sha: {release_result.get('commit_sha') or ''}", f"pull_request_url: {release_result.get('pull_request_url') or ''}"])
-            _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_FINISHED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery finished", payload=release_result)
-            _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_FINISHED", actor=actor, task_doc=doc, payload={"task_id": task_id, "release": release_result})
-            return {"ok": True, "task_id": task_id, "status": "closed", "attempt_count": attempt, "release": release_result, "worktree": str(worktree_root), "project_id": project_id}
+
+                doc = _load_yaml(ledger_path)
+                doc = _update_task_state(ledger_path, doc, status="test", stage="qa", owner_role=owner_role, extra_execution={"active_role": qa_role})
+                _set_agent_state(db, agent_ids, qa_role, state="RUNNING", action=f"running QA attempt {attempt}")
+                last_qa = _run_qa_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+                if lease_guard:
+                    lease_guard.assert_held(task_id=task_id)
+                _append_markdown(logs_dir, "04_test.md", f"QA Attempt {attempt}", [last_qa.summary or "(no summary)", *[f"command: {x}" for x in last_qa.commands], *[f"failure: {x}" for x in last_qa.failures]])
+                _append_metric(logs_dir, event_type="SELF_UPGRADE_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
+                _set_agent_state(db, agent_ids, qa_role, state="DONE" if last_qa.approved else "FAILED", action=f"qa attempt {attempt} {'approved' if last_qa.approved else 'rejected'}")
+                if not last_qa.approved:
+                    feedback = list(last_qa.failures or ([last_qa.summary] if last_qa.summary else ["qa rejected the task"]))
+                    doc = _load_yaml(ledger_path)
+                    doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
+                    doc = _update_task_state(ledger_path, doc, status="doing", stage="coding", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": "qa_rejected"})
+                    needs_coding = True
+                    break
+
+                doc = _load_yaml(ledger_path)
+                doc = _update_task_state(ledger_path, doc, status="release", stage="release", owner_role=owner_role, extra_execution={"active_role": "Release-Agent"})
+                _set_agent_state(db, agent_ids, "Release-Agent", state="RUNNING", action="shipping validated task")
+                if lease_guard:
+                    lease_guard.assert_held(task_id=task_id)
+                if dry_run or not ship_enabled:
+                    release_result = {"branch": _execution_state(doc).get("branch_name") or "", "base_branch": _execution_state(doc).get("base_branch") or "main", "commit_sha": "", "pull_request_url": "", "issue_url": _issue_url(doc), "staged_files": _changed_files(worktree_root)}
+                else:
+                    try:
+                        release_result = _release_task(task_doc=doc, ledger_path=ledger_path, worktree_root=worktree_root)
+                    except DeliveryMergeConflictError as e:
+                        conflict_error = str(e)[:500]
+                        feedback = [conflict_error]
+                        doc = _load_yaml(ledger_path)
+                        doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
+                        execution = _execution_state(doc)
+                        merge_conflict_count = int(execution.get("merge_conflict_count") or 0) + 1
+                        doc = _update_task_state(
+                            ledger_path,
+                            doc,
+                            status="merge_conflict",
+                            stage="merge_conflict",
+                            owner_role=owner_role,
+                            extra_execution={
+                                "active_role": "Scheduler-Agent",
+                                "last_feedback": feedback,
+                                "last_error": conflict_error,
+                                "last_merge_conflict_at": _utc_now_iso(),
+                                "merge_conflict_count": merge_conflict_count,
+                            },
+                        )
+                        _set_agent_state(db, agent_ids, "Release-Agent", state="FAILED", action="merge conflict detected during release")
+                        _set_agent_state(db, agent_ids, "Scheduler-Agent", state="RUNNING", action="re-dispatching merge conflict back to coding")
+                        _append_markdown(logs_dir, "05_release.md", f"Merge Conflict Attempt {attempt}", [conflict_error])
+                        _append_metric(
+                            logs_dir,
+                            event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT",
+                            actor=actor,
+                            task_id=task_id,
+                            project_id=project_id,
+                            workstream_id=workstream_id,
+                            message=f"merge conflict during release attempt {attempt}",
+                            payload={"error": conflict_error, "attempt": attempt, "owner_role": owner_role},
+                            severity="WARN",
+                        )
+                        _emit_event(
+                            db,
+                            event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT",
+                            actor=actor,
+                            task_doc=doc,
+                            payload={"task_id": task_id, "error": conflict_error, "attempt": attempt, "owner_role": owner_role},
+                        )
+                        if attempt >= max_attempts:
+                            docs_retry_exhausted = True
+                            break
+                        doc = _load_yaml(ledger_path)
+                        doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
+                        doc = _update_task_state(
+                            ledger_path,
+                            doc,
+                            status="doing",
+                            stage="coding",
+                            owner_role=owner_role,
+                            extra_execution={
+                                "active_role": owner_role,
+                                "last_feedback": feedback,
+                                "last_error": conflict_error,
+                            },
+                        )
+                        needs_coding = True
+                        break
+                doc = _load_yaml(ledger_path)
+                doc = _update_task_state(
+                    ledger_path,
+                    doc,
+                    status="closed",
+                    stage="closed",
+                    owner_role=owner_role,
+                    extra_execution={
+                        "active_role": "Release-Agent",
+                        "commit_sha": str(release_result.get("commit_sha") or ""),
+                        "pull_request_url": str(release_result.get("pull_request_url") or ""),
+                        "closed_at": _utc_now_iso(),
+                        "issue_url": str(release_result.get("issue_url") or ""),
+                        "last_error": "",
+                        "last_feedback": [],
+                    },
+                )
+                _set_agent_state(db, agent_ids, "Release-Agent", state="DONE", action="task released")
+                _finish_delivery_agents(db, agent_ids, state="DONE", action="delivery finished")
+                _append_markdown(logs_dir, "05_release.md", "Release", [f"branch: {release_result.get('branch') or ''}", f"commit_sha: {release_result.get('commit_sha') or ''}", f"pull_request_url: {release_result.get('pull_request_url') or ''}"])
+                _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_FINISHED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery finished", payload=release_result)
+                _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_FINISHED", actor=actor, task_doc=doc, payload={"task_id": task_id, "release": release_result})
+                return {"ok": True, "task_id": task_id, "status": "closed", "attempt_count": attempt, "release": release_result, "worktree": str(worktree_root), "project_id": project_id}
+
+            if docs_retry_exhausted:
+                break
 
         doc = _load_yaml(ledger_path)
         blocked_reason = "; ".join(feedback[:5]) if feedback else "delivery attempts exhausted"
@@ -1619,6 +1928,9 @@ def execute_task_delivery(*, db: Any, actor: str, ledger_path: Path, doc: dict[s
         _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": str(e)[:800]}, severity="ERROR")
         _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": str(e)[:500]})
         raise
+    finally:
+        if lease_guard is not None:
+            lease_guard.stop()
 
 
 def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: str = "") -> list[dict[str, Any]]:
@@ -1702,7 +2014,9 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
     for task in list_delivery_tasks(project_id=project_id):
         if wanted_task_id and str(task.get("task_id") or "") != wanted_task_id:
             continue
-        ledger_path = Path(str(task.get("ledger_path") or "")).expanduser().resolve()
+        ledger_path = Path(
+            str(task.get("ledger_path") or _fallback_ledger_path(project_id=str(task.get("project_id") or "teamos"), task_id=str(task.get("task_id") or "")))
+        ).expanduser().resolve()
         doc = _load_yaml(ledger_path)
         if not _is_self_upgrade_task(doc):
             continue
@@ -1794,11 +2108,36 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
             continue
         scanned += 1
         ledger_path = Path(str(task.get("ledger_path") or "")).expanduser().resolve()
-        doc = _load_yaml(ledger_path)
-        result = execute_task_delivery(db=db, actor=actor, ledger_path=ledger_path, doc=doc, dry_run=dry_run, force=force)
-        out.append(result)
-        if not result.get("skipped"):
-            processed += 1
+        lease = _claim_delivery_task_lease(db=db, actor=actor, task=task)
+        if lease is None:
+            current = None
+            lease_key = _delivery_lease_key(project_id=str(task.get("project_id") or "teamos"), task_id=str(task.get("task_id") or ""))
+            try:
+                current = db.get_task_lease(lease_key=lease_key)
+            except Exception:
+                current = None
+            lease_payload = current.__dict__ if current is not None else {}
+            out.append(
+                {
+                    "ok": True,
+                    "task_id": str(task.get("task_id") or ""),
+                    "project_id": str(task.get("project_id") or ""),
+                    "skipped": True,
+                    "reason": "lease_held_by_other",
+                    "lease": lease_payload,
+                }
+            )
+            if wanted_task_id:
+                break
+            continue
+        try:
+            doc = _load_yaml(ledger_path)
+            result = execute_task_delivery(db=db, actor=actor, ledger_path=ledger_path, doc=doc, dry_run=dry_run, force=force, lease=lease)
+            out.append(result)
+            if not result.get("skipped"):
+                processed += 1
+        finally:
+            _release_delivery_task_lease(db=db, lease=lease)
         if not wanted_task_id and processed >= limit:
             break
     overall_ok = all(bool(item.get("ok")) or bool(item.get("skipped")) for item in out)

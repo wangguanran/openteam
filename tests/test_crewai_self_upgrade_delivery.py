@@ -19,6 +19,7 @@ _add_template_app_to_syspath()
 os.environ.setdefault("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "0")
 
 from app import crewai_self_upgrade_delivery  # noqa: E402
+from app.runtime_db import RuntimeDB  # noqa: E402
 
 
 class _FakeDB:
@@ -88,6 +89,19 @@ def _base_task_doc(*, repo_root: Path, task_id: str = "TEAMOS-1001", status: str
 
 
 class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env_patch = mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_FILE_MIRROR": "1"}, clear=False)
+        self._env_patch.start()
+        self._sync_issue_patch = mock.patch(
+            "app.crewai_self_upgrade_delivery.planning.sync_task_issue_from_doc",
+            return_value={"ok": False, "reason": "disabled_for_test"},
+        )
+        self._sync_issue_patch.start()
+
+    def tearDown(self) -> None:
+        self._sync_issue_patch.stop()
+        self._env_patch.stop()
+
     def test_list_delivery_tasks_only_returns_self_upgrade_ledgers(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"
@@ -478,6 +492,200 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             self.assertEqual(policy.get("status"), "done")
             self.assertEqual(policy.get("changed_files"), ["README.md"])
 
+    def test_execute_task_delivery_retries_docs_without_rerunning_coding_when_review_rejects_docs(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["documentation_policy"]["required"] = True
+            task_doc["documentation_policy"]["status"] = "pending"
+            docs_statuses: list[str] = []
+
+            def _docs_side_effect(*, task_doc, worktree_root, verbose):
+                docs_statuses.append(str((task_doc.get("documentation_policy") or {}).get("status") or ""))
+                return crewai_self_upgrade_delivery.DeliveryDocumentationResult(
+                    approved=True,
+                    updated=True,
+                    summary="README 已同步。",
+                    changed_files=["README.md"],
+                )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=True,
+                        summary="审计通过，需同步文档。",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryImplementationResult(summary="implemented"),
+                ) as coding_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_documentation_stage",
+                    side_effect=_docs_side_effect,
+                ) as docs_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_review_stage",
+                    side_effect=[
+                        crewai_self_upgrade_delivery.DeliveryReviewResult(
+                            approved=False,
+                            code_approved=True,
+                            docs_approved=False,
+                            summary="文档不完整",
+                            docs_feedback=["README 缺少回滚说明"],
+                        ),
+                        crewai_self_upgrade_delivery.DeliveryReviewResult(
+                            approved=True,
+                            code_approved=True,
+                            docs_approved=True,
+                            summary="review ok",
+                        ),
+                    ],
+                ) as review_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_qa_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryQAResult(approved=True, summary="qa ok"),
+                ) as qa_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._changed_files",
+                    return_value=["src/demo.py", "README.md"],
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["status"], "closed")
+            self.assertEqual(coding_mock.call_count, 1)
+            self.assertEqual(docs_mock.call_count, 2)
+            self.assertEqual(review_mock.call_count, 2)
+            self.assertEqual(qa_mock.call_count, 1)
+            self.assertEqual(docs_statuses, ["pending", "pending"])
+            self.assertEqual((updated.get("documentation_policy") or {}).get("status"), "done")
+
+    def test_execute_task_delivery_reruns_docs_after_qa_sends_task_back_to_coding(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["documentation_policy"]["required"] = True
+            task_doc["documentation_policy"]["status"] = "pending"
+            docs_statuses: list[str] = []
+
+            def _docs_side_effect(*, task_doc, worktree_root, verbose):
+                docs_statuses.append(str((task_doc.get("documentation_policy") or {}).get("status") or ""))
+                return crewai_self_upgrade_delivery.DeliveryDocumentationResult(
+                    approved=True,
+                    updated=True,
+                    summary="README 已同步。",
+                    changed_files=["README.md"],
+                )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                    "TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS": "2",
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=True,
+                        summary="审计通过，需同步文档。",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryImplementationResult(summary="implemented"),
+                ) as coding_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_documentation_stage",
+                    side_effect=_docs_side_effect,
+                ) as docs_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_review_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryReviewResult(
+                        approved=True,
+                        code_approved=True,
+                        docs_approved=True,
+                        summary="review ok",
+                    ),
+                ) as review_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_qa_stage",
+                    side_effect=[
+                        crewai_self_upgrade_delivery.DeliveryQAResult(
+                            approved=False,
+                            summary="qa rejected",
+                            failures=["missing regression coverage"],
+                        ),
+                        crewai_self_upgrade_delivery.DeliveryQAResult(
+                            approved=True,
+                            summary="qa ok",
+                        ),
+                    ],
+                ) as qa_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._changed_files",
+                    return_value=["src/demo.py", "README.md"],
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["status"], "closed")
+            self.assertEqual(coding_mock.call_count, 2)
+            self.assertEqual(docs_mock.call_count, 2)
+            self.assertEqual(review_mock.call_count, 2)
+            self.assertEqual(qa_mock.call_count, 2)
+            self.assertEqual(docs_statuses, ["pending", "pending"])
+            self.assertEqual((updated.get("documentation_policy") or {}).get("status"), "done")
+
     def test_migrate_legacy_worktrees_rehomes_paths_into_runtime_workspace(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"
@@ -534,6 +742,69 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             self.assertFalse(legacy_root.exists())
             self.assertEqual((updated.get("self_upgrade_execution") or {}).get("worktree_path"), str(moved_to.resolve()))
             self.assertEqual((updated.get("execution_policy") or {}).get("worktree_hint"), str(moved_to.resolve()))
+
+    def test_run_delivery_sweep_skips_task_leased_by_other_instance(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            db_path = runtime_root / "state" / "runtime.db"
+            task_one = _base_task_doc(repo_root=repo_root, task_id="TEAMOS-1001", status="todo")
+            task_two = _base_task_doc(repo_root=repo_root, task_id="TEAMOS-1002", status="todo")
+            task_two["title"] = "Second task"
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                    "RUNTIME_DB_PATH": str(db_path),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_one = task_dir / "TEAMOS-1001.yaml"
+                ledger_two = task_dir / "TEAMOS-1002.yaml"
+                ledger_one.write_text(yaml.safe_dump(task_one, sort_keys=False), encoding="utf-8")
+                ledger_two.write_text(yaml.safe_dump(task_two, sort_keys=False), encoding="utf-8")
+
+                db = RuntimeDB(str(db_path))
+                other_lease = db.claim_task_lease(
+                    lease_scope="self_upgrade_delivery",
+                    lease_key=crewai_self_upgrade_delivery._delivery_lease_key(project_id="teamos", task_id="TEAMOS-1001"),
+                    project_id="teamos",
+                    task_id="TEAMOS-1001",
+                    holder_instance_id="node-a",
+                    holder_actor="other-worker",
+                    lease_ttl_sec=600,
+                    holder_meta={"source": "test"},
+                )
+                self.assertIsNotNone(other_lease)
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery.execute_task_delivery",
+                    return_value={"ok": True, "task_id": "TEAMOS-1002", "status": "closed", "project_id": "teamos"},
+                ) as execute_mock:
+                    out = crewai_self_upgrade_delivery.run_delivery_sweep(
+                        db=db,
+                        actor="test-worker",
+                        project_id="teamos",
+                        dry_run=True,
+                        max_tasks=1,
+                    )
+
+                self.assertEqual(execute_mock.call_count, 1)
+                called_path = Path(str(execute_mock.call_args.kwargs["ledger_path"]))
+                self.assertEqual(called_path.name, "TEAMOS-1002.yaml")
+                self.assertEqual(out["processed"], 1)
+                self.assertEqual(out["scanned"], 2)
+                skipped = [item for item in out["tasks"] if item.get("reason") == "lease_held_by_other"]
+                self.assertEqual(len(skipped), 1)
+                self.assertEqual(skipped[0]["task_id"], "TEAMOS-1001")
+                self.assertIsNotNone(db.get_task_lease(lease_key=crewai_self_upgrade_delivery._delivery_lease_key(project_id="teamos", task_id="TEAMOS-1001")))
+                self.assertIsNone(db.get_task_lease(lease_key=crewai_self_upgrade_delivery._delivery_lease_key(project_id="teamos", task_id="TEAMOS-1002")))
 
 
 if __name__ == "__main__":
