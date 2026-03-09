@@ -13,7 +13,7 @@ from db_migrate import apply_migrations
 
 def _migrations(repo: Path) -> list[tuple[str, Path]]:
     out: list[tuple[str, Path]] = []
-    for p in sorted((repo / "migrations").glob("*.sql")):
+    for p in sorted((repo / "tooling" / "migrations").glob("*.sql")):
         if len(p.name) >= 4 and p.name[:4].isdigit():
             out.append((p.name[:4], p))
     return out

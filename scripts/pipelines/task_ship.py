@@ -151,7 +151,7 @@ def _mark_blocked(
 ) -> None:
     now = utc_now_iso()
     ledger = read_yaml(ledger_path)
-    validate_or_die(ledger, repo / "schemas" / "task_ledger.schema.json", label="task_ledger")
+    validate_or_die(ledger, repo / "specs" / "schemas" / "task_ledger.schema.json", label="task_ledger")
     ledger["status"] = "blocked"
     ledger["updated_at"] = now
     ledger.setdefault("blockers", [])
@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     ws_root = resolve_workspace_root(args)
     scope, pid, ledger_path, logs_dir = _locate_task(repo, ws_root, scope=str(args.scope or ""), task_id=str(args.task_id))
     ledger = read_yaml(ledger_path)
-    validate_or_die(ledger, repo / "schemas" / "task_ledger.schema.json", label="task_ledger")
+    validate_or_die(ledger, repo / "specs" / "schemas" / "task_ledger.schema.json", label="task_ledger")
     task_id = str(ledger.get("id") or args.task_id).strip()
     workstream_id = str(ledger.get("workstream_id") or "")
     metrics_path = logs_dir / "metrics.jsonl"

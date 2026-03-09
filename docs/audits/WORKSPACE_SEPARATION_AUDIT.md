@@ -32,11 +32,11 @@ Project requirements currently exist under `team-os/docs/requirements/`:
 - `docs/requirements/DEMO/` (project_id=DEMO)
 - `docs/requirements/demo_panel/` (project_id=demo)
 
-Note: Team OS self requirements will be relocated to `docs/teamos/` to avoid any `docs/requirements/` folder inside the repo.
+Note: Team OS self requirements live under `docs/product/teamos/` to avoid any `docs/requirements/` folder inside the repo.
 
 ### 2) Project Plan Overlay Stored In Repo (Must Move Out)
 
-- `docs/plan/demo/` (project_id=demo)
+- `docs/plans/demo/` (project_id=demo)
 
 ### 3) Project Conversations Stored In Repo (Must Move Out)
 

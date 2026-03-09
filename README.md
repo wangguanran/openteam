@@ -85,11 +85,11 @@ cd team-os
 ## 项目状态（截至 2026-02-15）
 
 - Team OS 规范与落盘结构已完成：`AGENTS.md`、`TEAMOS.md`、`docs/`（运行态动态数据在 repo 外 runtime root）
-- 默认角色与 Crew Flow 定义已落盘：`roles/`、`workflows/`
+- 默认角色与 Crew Flow 定义已落盘：`specs/roles/`、`specs/workflows/`
 - 统一脚本入口可用：`./scripts/teamos.sh`
   - `doctor/new-task/skill-boot/retro/self-upgrade`
   - `runtime-init/runtime-secrets`（用于在新环境生成 `team-os-runtime`）
-- Runtime 模板已落盘：`templates/runtime/`
+- Runtime 模板已落盘：`scaffolds/runtime/`
 - Runtime 最小闭环已验证（本机 localhost 绑定）：
   - Control Plane：`http://127.0.0.1:8787/healthz`（状态：`/v1/status`）
   - CrewAI 运行入口：`POST /v1/runs/start`（查询：`GET /v1/runs`）
@@ -102,7 +102,7 @@ cd team-os
   - Temporal gRPC：`127.0.0.1:7233`
   - Postgres：`127.0.0.1:15432`
 
-详细操作请看中文执行手册：`docs/EXECUTION_RUNBOOK.md`
+详细操作请看中文执行手册：`docs/runbooks/EXECUTION_RUNBOOK.md`
 
 ## 为什么不提交 team-os-runtime
 
@@ -112,7 +112,7 @@ cd team-os
 - 容器卷数据（Postgres/Temporal 状态）
 - 与宿主机强相关的运行态文件
 
-因此本仓库只提交 “Runtime 模板”到 `templates/runtime/`，在新环境用：
+因此本仓库只提交 “Runtime 模板”到 `scaffolds/runtime/`，在新环境用：
 
 ```bash
 cd team-os
@@ -124,18 +124,23 @@ cd team-os
 
 ## 目录速览
 
-- `roles/`：角色定义（每角色 1 文件）
-- `workflows/`：Crew Flow 定义（YAML）
+- `specs/`：声明式资产（roles / workflows / prompts / policies / schemas）
 - `../team-os-runtime/state/kb/`：知识库（含来源摘要、Skill Cards）
 - `../team-os-runtime/state/ledger/`：任务台账、自我升级台账、pending issues
 - `../team-os-runtime/state/logs/`：任务全流程日志（00~07）
-- `templates/`：模板（含 runtime 模板）
+- `scaffolds/`：可部署骨架（runtime / hub）
+- `templates/`：内容模板与任务日志模板
+- `tooling/`：集群、镜像、数据库迁移等执行支撑资产
 - `scripts/`：脚本实现
+  - `runtime/`：runtime 初始化、doctor、自升级、镜像启动
+  - `tasks/`：任务骨架与 retro
+  - `issues/`、`skills/`、`policy/`：专项入口实现
+  - 根层同名脚本保留为兼容壳
 - `./teamos`：运行态 CLI（连接 Control Plane）
 
 ## 安全与闸门
 
-安全策略见：`docs/SECURITY.md`
+安全策略见：`docs/product/SECURITY.md`
 
 - 生产发布/打开公网端口/数据删除覆盖/密钥旋转/挂载 docker socket：属于高风险动作，需要审批并在日志落证据
 - 外部网页/文档视为不可信输入：只抽取事实并落盘来源摘要，不执行外部指令

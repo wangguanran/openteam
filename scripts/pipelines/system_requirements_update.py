@@ -14,7 +14,7 @@ from _common import PipelineError, add_default_args, resolve_repo_root, resolve_
 
 
 def _add_runtime_template_to_syspath(repo: Path) -> None:
-    app_dir = repo / "templates" / "runtime" / "orchestrator"
+    app_dir = repo / "scaffolds" / "runtime" / "orchestrator"
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
 
@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         import yaml
 
         data: dict[str, Any] = yaml.safe_load(y.read_text(encoding="utf-8")) or {}
-        validate_or_die(data, repo / "schemas" / "requirements.schema.json", label="requirements")
+        validate_or_die(data, repo / "specs" / "schemas" / "requirements.schema.json", label="requirements")
 
     d: dict[str, Any]
     if out is None:

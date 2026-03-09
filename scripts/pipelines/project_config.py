@@ -68,7 +68,7 @@ def _set_key(doc: dict[str, Any], key: str, value: Any) -> bool:
 
 
 def _render_default_config(repo: Path, *, project_id: str) -> str:
-    tpl_path = repo / "templates" / "project_config.yaml.j2"
+    tpl_path = repo / "templates" / "content" / "project_config.yaml.j2"
     if not tpl_path.exists():
         raise PipelineError(f"missing template: {tpl_path}")
     tpl = read_text(tpl_path)
@@ -112,7 +112,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         raise PipelineError(f"missing project config: {path} (run: teamos project config init --project {pid})")
 
     doc = _load_yaml_obj(path)
-    validate_or_die(doc, repo / "schemas" / "project_config.schema.json", label="project_config")
+    validate_or_die(doc, repo / "specs" / "schemas" / "project_config.schema.json", label="project_config")
     if str(doc.get("project_id") or "").strip() != pid:
         raise PipelineError(f"project_id mismatch in config: want={pid} got={doc.get('project_id')!r}")
 
@@ -137,7 +137,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         value = str(args.value)
 
     changed = _set_key(doc, str(args.key or ""), value)
-    validate_or_die(doc, repo / "schemas" / "project_config.schema.json", label="project_config")
+    validate_or_die(doc, repo / "specs" / "schemas" / "project_config.schema.json", label="project_config")
     if str(doc.get("project_id") or "").strip() != pid:
         raise PipelineError(f"project_id mismatch in config: want={pid} got={doc.get('project_id')!r}")
 
@@ -175,4 +175,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

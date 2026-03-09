@@ -41,7 +41,7 @@ def _render_template(tpl: str, *, task_id: str, title: str, date: str) -> str:
 def _ensure_task_logs(repo: Path, *, task_id: str, title: str, date: str, full: bool, dry_run: bool) -> dict[str, Any]:
     logs_dir = repo / ".team-os" / "logs" / "tasks" / task_id
     logs_dir.mkdir(parents=True, exist_ok=True)
-    tpls = repo / "templates"
+    tpls = repo / "templates" / "tasks"
     created: list[str] = []
     want = [
         ("00_intake.md", "task_log_00_intake.md"),

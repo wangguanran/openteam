@@ -18,7 +18,7 @@ from _common import PipelineError, add_default_args, read_yaml, resolve_repo_roo
 
 
 def _allowlist_path(repo_root: Path) -> Path:
-    return repo_root / "policies" / "central_model_allowlist.yaml"
+    return repo_root / "specs" / "policies" / "central_model_allowlist.yaml"
 
 
 def load_allowlist(repo_root: Path) -> list[str]:
@@ -88,4 +88,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

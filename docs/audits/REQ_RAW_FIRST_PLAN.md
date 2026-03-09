@@ -16,10 +16,10 @@
 ### 2.1 当前需求存储
 
 - Team‑OS 自身需求（scope=teamos）：
-  - `docs/teamos/requirements/requirements.yaml`
-  - `docs/teamos/requirements/REQUIREMENTS.md`
-  - `docs/teamos/requirements/CHANGELOG.md`
-  - `docs/teamos/requirements/conflicts/`
+  - `docs/product/teamos/requirements/requirements.yaml`
+  - `docs/product/teamos/requirements/REQUIREMENTS.md`
+  - `docs/product/teamos/requirements/CHANGELOG.md`
+  - `docs/product/teamos/requirements/conflicts/`
 - 项目需求（scope=project:<id>，Workspace）：
   - `<WORKSPACE>/projects/<id>/state/requirements/requirements.yaml`
   - `<WORKSPACE>/projects/<id>/state/requirements/REQUIREMENTS.md`
@@ -30,11 +30,11 @@
 
 模板控制平面逻辑位于：
 
-- `templates/runtime/orchestrator/app/requirements_store.py`
+- `scaffolds/runtime/orchestrator/app/requirements_store.py`
   - `add_requirement(...)`：写入 `requirements.yaml`/`REQUIREMENTS.md`/`CHANGELOG.md`，并生成 conflict report
   - `req_conflict.py`：提供 duplicate/conflict 的规则检测 + workstream 推断
   - 可选语义检查：通过 `codex exec` + schema（`requirement_distill_and_classify.schema.json`）
-- `templates/runtime/orchestrator/app/main.py`
+- `scaffolds/runtime/orchestrator/app/main.py`
   - `/v1/chat` NEW_REQUIREMENT -> `_handle_new_requirement` -> `add_requirement`
   - `/v1/requirements` POST/GET（旧接口）
 
@@ -57,7 +57,7 @@
 
 ### 3.1 统一 Scope
 
-- `scope=teamos`：允许写入 repo 内 `docs/teamos/requirements/`
+- `scope=teamos`：允许写入 repo 内 `docs/product/teamos/requirements/`
 - `scope=project:<id>`：必须写入 Workspace `.../projects/<id>/state/requirements/`
 - 兼容旧接口：
   - `/v1/requirements`（旧）映射为 `/v1/requirements/add`（scope=project:<project_id>，或 project_id==teamos -> scope=teamos）
@@ -115,15 +115,15 @@
 
 ### 4.1 新增（repo 内）
 
-- `schemas/requirement_raw_input.schema.json`
-- `schemas/requirements.schema.json`
+- `specs/schemas/requirement_raw_input.schema.json`
+- `specs/schemas/requirements.schema.json`
 - `scripts/requirements/*`（脚本入口，调用模板控制平面实现，保证可回归）
 
 ### 4.2 修改（Control Plane 模板）
 
-- `templates/runtime/orchestrator/app/requirements_store.py`
+- `scaffolds/runtime/orchestrator/app/requirements_store.py`
   - 增加 Raw‑First + Baseline + Drift/Conflict 的 v2 pipeline（保持旧 `add_requirement` 兼容或作为 wrapper）
-- `templates/runtime/orchestrator/app/main.py`
+- `scaffolds/runtime/orchestrator/app/main.py`
   - 新增 endpoints：
     - `POST /v1/requirements/add`
     - `POST /v1/requirements/import`
@@ -151,8 +151,8 @@
 
 ### 4.5 文档与治理
 
-- `docs/EXECUTION_RUNBOOK.md`：新增 Raw‑First v2 章节（scope=teamos vs project）
-- `docs/GOVERNANCE.md`：Baseline 不可覆盖、冲突处理/NEED_PM_DECISION
+- `docs/runbooks/EXECUTION_RUNBOOK.md`：新增 Raw‑First v2 章节（scope=teamos vs project）
+- `docs/product/GOVERNANCE.md`：Baseline 不可覆盖、冲突处理/NEED_PM_DECISION
 - `AGENTS.md`：禁止手改 Expanded（会被 rebuild 覆盖并记录）、需求输入必须 Raw‑First
 
 ### 4.6 测试（unittest）
@@ -172,4 +172,3 @@
 - 回滚：
   - teamos scope 可依赖 git 历史回滚
   - project scope 在 workspace 侧写入 `history/` 以便人工回退（不影响 repo purity）
-

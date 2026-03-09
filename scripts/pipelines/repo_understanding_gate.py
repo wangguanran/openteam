@@ -25,8 +25,8 @@ def _git_sha(repo: Path) -> str:
 def _arch_overview() -> str:
     lines = [
         "- `team-os/teamos`：CLI 客户端（默认连本机 Control Plane）。",
-        "- `templates/runtime/orchestrator/app/main.py`：Control Plane（FastAPI）模板代码。",
-        "- 真相源（scope=teamos）在 repo 内：`.team-os/ledger`、`.team-os/logs`、`docs/teamos/requirements`。",
+        "- `scaffolds/runtime/orchestrator/app/main.py`：Control Plane（FastAPI）模板代码。",
+        "- 真相源（scope=teamos）在 repo 内：`.team-os/ledger`、`.team-os/logs`、`docs/product/teamos/requirements`。",
         "- 真相源（scope=project:<id>）必须在 Workspace（repo 外）。",
         "- GitHub Projects v2 为视图层（mapping 在 `integrations/github_projects/mapping.yaml`）。",
     ]
@@ -38,9 +38,10 @@ def _modules() -> str:
         "- CLI：`team-os/teamos`。",
         "- Pipelines（本次新增）：`team-os/scripts/pipelines/`。",
         "- Governance：`team-os/scripts/governance/`（repo purity 等）。",
+        "- Runtime/Task 入口实现：`team-os/scripts/runtime/`、`team-os/scripts/tasks/`、`team-os/scripts/issues/`、`team-os/scripts/skills/`、`team-os/scripts/policy/`。",
         "- Requirements 协议：`team-os/scripts/requirements/` + runtime template `app/requirements_store.py`。",
         "- Panel Sync：runtime template `app/panel_github_sync.py`（通过 Control Plane 触发）。",
-        "- Runtime 模板：`team-os/templates/runtime/`（生成到 repo 外 `team-os-runtime/`）。",
+        "- Runtime 模板：`team-os/scaffolds/runtime/`（生成到 repo 外 `team-os-runtime/`）。",
     ]
     return "\n".join(lines)
 
@@ -50,24 +51,24 @@ def _entrypoints() -> str:
         "- CLI：`team-os/teamos`。",
         "- Shell 入口：`team-os/scripts/teamos.sh` -> `team-os/teamos`。",
         "- Pipelines：`team-os/scripts/pipelines/*.py`。",
-        "- Requirements 真相源：`team-os/docs/teamos/requirements/`。",
-        "- Prompt 真相源（teamos）：`team-os/prompt-library/teamos/`。",
+        "- Requirements 真相源：`team-os/docs/product/teamos/requirements/`。",
+        "- Prompt 真相源（teamos）：`team-os/specs/prompts/teamos/`。",
     ]
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Repo understanding gate (generate docs/team_os/REPO_UNDERSTANDING.md)")
+    ap = argparse.ArgumentParser(description="Repo understanding gate (generate docs/product/teamos/REPO_UNDERSTANDING.md)")
     add_default_args(ap)
     ap.add_argument("--task-id", default="", help="optional task id to embed in the artifact")
-    ap.add_argument("--out", default="docs/team_os/REPO_UNDERSTANDING.md")
+    ap.add_argument("--out", default="docs/product/teamos/REPO_UNDERSTANDING.md")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
     repo = resolve_repo_root(args)
     out_path = repo / str(args.out)
 
-    tpl_path = repo / "templates" / "repo_understanding.md.j2"
+    tpl_path = repo / "templates" / "content" / "repo_understanding.md.j2"
     if not tpl_path.exists():
         raise PipelineError(f"missing template: {tpl_path}")
 
@@ -82,8 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     ).strip()
     evidence_rg = "\n\n".join(
         [
-            "$ rg -n \"@app.(get|post)\\(\\\"/v1/\" templates/runtime/orchestrator/app/main.py | head",
-            _run(repo, ["bash", "-lc", "rg -n \"@app\\.(get|post)\\(\\\"/v1/\" templates/runtime/orchestrator/app/main.py | head -n 40 || true"], timeout_sec=10),
+            "$ rg -n \"@app.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head",
+            _run(repo, ["bash", "-lc", "rg -n \"@app\\.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head -n 40 || true"], timeout_sec=10),
             "",
             "$ rg -n \"cmd_task_new|cmd_req_add|_auto_wake_self_improve\" teamos",
             _run(repo, ["bash", "-lc", "rg -n \"cmd_task_new|cmd_req_add|_auto_wake_self_improve\" teamos | head -n 80 || true"], timeout_sec=10),

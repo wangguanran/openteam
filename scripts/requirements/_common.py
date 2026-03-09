@@ -111,6 +111,6 @@ def add_template_app_to_syspath() -> None:
     Import control-plane logic from the runtime template as the single source of truth.
     """
     rr = repo_root()
-    app_dir = rr / "templates" / "runtime" / "orchestrator"
+    app_dir = rr / "scaffolds" / "runtime" / "orchestrator"
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))

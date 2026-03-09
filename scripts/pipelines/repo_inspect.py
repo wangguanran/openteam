@@ -29,7 +29,7 @@ def inspect_repo(repo: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Inspect repo emptiness and write repo_inspect.md")
     add_default_args(ap)
-    ap.add_argument("--out", default="docs/team_os/repo_inspect.md")
+    ap.add_argument("--out", default="docs/product/teamos/repo_inspect.md")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -58,4 +58,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

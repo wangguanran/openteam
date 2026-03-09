@@ -79,4 +79,6 @@ tmp/
 *.bak.*
 
 # Local safety snapshots (should not exist for scope=teamos; keep local if present)
-docs/teamos/requirements/history/
+docs/product/teamos/requirements/history/
+docs/product/teamos/REPO_UNDERSTANDING_*.md
+docs/product/teamos/repo_inspect.md

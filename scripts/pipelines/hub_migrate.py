@@ -17,7 +17,7 @@ from hub_common import (
 
 
 def _list_migrations(repo_root):
-    mig_dir = repo_root / "migrations"
+    mig_dir = repo_root / "tooling" / "migrations"
     out: list[tuple[str, object]] = []
     for p in sorted(mig_dir.glob("*.sql")):
         name = p.name

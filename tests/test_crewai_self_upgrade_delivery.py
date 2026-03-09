@@ -11,7 +11,7 @@ import yaml
 
 def _add_template_app_to_syspath() -> None:
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    app_dir = os.path.join(repo_root, "templates", "runtime", "orchestrator")
+    app_dir = os.path.join(repo_root, "scaffolds", "runtime", "orchestrator")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
 
@@ -808,7 +808,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             repo_root = Path(td) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
             (repo_root / ".git").mkdir()
-            legacy_root = repo_root / "templates" / "runtime" / "orchestrator" / "wt-bug-startup-fix"
+            legacy_root = repo_root / "scaffolds" / "runtime" / "orchestrator" / "wt-bug-startup-fix"
             legacy_root.mkdir(parents=True, exist_ok=True)
             (legacy_root / ".git").write_text("gitdir: /tmp/demo\n", encoding="utf-8")
             (legacy_root / "demo.txt").write_text("hello\n", encoding="utf-8")

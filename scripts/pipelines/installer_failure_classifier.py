@@ -106,7 +106,7 @@ def classify_failure(*, component: str, stage: str, stdout: str, stderr: str, ok
 
 
 def _ensure_db_schema(conn, *, repo_root: Path) -> None:
-    mig_dir = repo_root / "migrations"
+    mig_dir = repo_root / "tooling" / "migrations"
     migrations: list[tuple[str, Path]] = []
     for p in sorted(mig_dir.glob("*.sql")):
         name = p.name

@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     ledger = read_yaml(ledger_path)
     if not ledger:
         raise PipelineError(f"empty ledger: {ledger_path}")
-    validate_or_die(ledger, repo / "schemas" / "task_ledger.schema.json", label="task_ledger")
+    validate_or_die(ledger, repo / "specs" / "schemas" / "task_ledger.schema.json", label="task_ledger")
 
     want_logs = [
         "00_intake.md",
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     metrics_issues = _metrics_issues(metrics_path)
 
     # Telemetry schema (subset validator). Validate each jsonl line.
-    tel_schema = repo / "schemas" / "telemetry_event.schema.json"
+    tel_schema = repo / "specs" / "schemas" / "telemetry_event.schema.json"
     if tel_schema.exists() and metrics_path.exists():
         sch = read_json(tel_schema)
         for i, raw in enumerate(read_text(metrics_path).splitlines(), start=1):

@@ -312,8 +312,8 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
                 rel = p.relative_to(d)
                 items.append(MoveItem(kind="requirements", project_id=pid, src=str(p), dest=str(rel)))
 
-    # B) plan overlay under docs/plan/*
-    plan_root = repo_root / "docs" / "plan"
+    # B) plan overlay under docs/plans/*
+    plan_root = repo_root / "docs" / "plans"
     if plan_root.exists():
         for d in sorted(plan_root.iterdir()):
             if not d.is_dir():
@@ -380,8 +380,8 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
             items.append(MoveItem(kind="task_ledger_backup", project_id=pid, src=str(y), dest=str(Path("_backups") / y.name)))
     facts["tasks_by_project"] = tasks_by_project
 
-    # E) legacy project prompts under prompt-library/projects (if any)
-    pl = repo_root / "prompt-library" / "projects"
+    # E) legacy project prompts under specs/prompts/projects (if any)
+    pl = repo_root / "specs" / "prompts" / "projects"
     if pl.exists():
         for d in sorted(pl.iterdir()):
             if not d.is_dir():
@@ -468,7 +468,7 @@ def apply_moves(*, repo_root: Path, workspace_root: Path, items: list[MoveItem],
     # Only remove if empty to avoid accidental deletions.
     for p in [
         repo_root / "docs" / "requirements",
-        repo_root / "docs" / "plan",
+        repo_root / "docs" / "plans",
         repo_root / ".team-os" / "ledger" / "conversations",
         repo_root / "prompt-library" / "projects",
     ]:

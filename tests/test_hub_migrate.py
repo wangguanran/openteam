@@ -30,8 +30,8 @@ class HubMigrateTests(unittest.TestCase):
     def test_hub_migrate_creates_missing_db_then_retries(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
-            (repo / "migrations").mkdir(parents=True, exist_ok=True)
-            (repo / "migrations" / "0001_init.sql").write_text("-- test\n", encoding="utf-8")
+            (repo / "tooling" / "migrations").mkdir(parents=True, exist_ok=True)
+            (repo / "tooling" / "migrations" / "0001_init.sql").write_text("-- test\n", encoding="utf-8")
 
             env = {
                 "POSTGRES_DB": "teamos",

@@ -134,7 +134,7 @@ def _read_policy(repo: Path) -> dict[str, Any]:
             "dedupe": {"enabled": True, "max_keys": 300},
         }
     }
-    pol_path = repo / "policies" / "self_improve.yaml"
+    pol_path = repo / "specs" / "policies" / "self_improve.yaml"
     from _common import read_yaml
 
     doc = read_yaml(pol_path) if pol_path.exists() else {}
@@ -560,7 +560,7 @@ def run_once(
 
     # Update state (always; gitignored runtime state).
     state["enabled"] = enabled
-    state["policy_sha256"] = _sha256_text(_read_text(repo / "policies" / "self_improve.yaml"))
+    state["policy_sha256"] = _sha256_text(_read_text(repo / "specs" / "policies" / "self_improve.yaml"))
     state["leader"] = leader
     state["last_run"] = {
         "ts": utc_now_iso(),
@@ -584,7 +584,7 @@ def run_once(
             conn = connect(dsn)
             try:
                 # Ensure schema (migrations are idempotent).
-                mig_dir = repo / "migrations"
+                mig_dir = repo / "tooling" / "migrations"
                 migrations: list[tuple[str, Path]] = []
                 for p in sorted(mig_dir.glob("*.sql")):
                     name = p.name

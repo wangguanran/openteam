@@ -28,7 +28,7 @@ from _common import PipelineError, add_default_args, append_jsonl, read_text, re
 def _add_runtime_template_to_syspath(repo: Path) -> None:
     import sys
 
-    app_dir = repo / "templates" / "runtime" / "orchestrator"
+    app_dir = repo / "scaffolds" / "runtime" / "orchestrator"
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
 
@@ -135,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         "report_sha256": report_sha,
     }
 
-    validate_or_die(record, repo / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
+    validate_or_die(record, repo / "specs" / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
 
     existing = _find_existing_assessment(assess_idx_path, raw_id=raw_id)
     would_write = not (existing and str(existing.get("report_sha256") or "") == report_sha and str(existing.get("outcome") or "") == assessment.outcome)

@@ -10,7 +10,7 @@ from unittest import mock
 
 def _add_template_app_to_syspath() -> None:
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    app_dir = os.path.join(repo_root, "templates", "runtime", "orchestrator")
+    app_dir = os.path.join(repo_root, "scaffolds", "runtime", "orchestrator")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
 
@@ -202,7 +202,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                     repo_root=repo_root,
                     lane="bug",
                     title="Startup fix",
-                    raw_hint=str(repo_root / "templates" / "runtime" / "orchestrator" / "wt-bug-startup-fix"),
+                    raw_hint=str(repo_root / "scaffolds" / "runtime" / "orchestrator" / "wt-bug-startup-fix"),
                 )
 
             self.assertEqual(
@@ -501,7 +501,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                     rationale="旧适配层已经和当前入口脱节，继续保留会增加维护成本。",
                     impact="MED",
                     workstream_id="general",
-                    files=["templates/runtime/orchestrator/app/main.py", "templates/runtime/orchestrator/app/legacy_startup.py"],
+                    files=["scaffolds/runtime/orchestrator/app/main.py", "scaffolds/runtime/orchestrator/app/legacy_startup.py"],
                     version_bump="none",
                     target_version="0.1.0",
                 )
@@ -538,7 +538,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             rationale="当前启动链路仍可能引用旧模块。",
             impact="HIGH",
             workstream_id="general",
-            files=["templates/runtime/orchestrator/app/main.py"],
+            files=["scaffolds/runtime/orchestrator/app/main.py"],
             tests=["python -m unittest tests.test_crewai_runtime"],
             acceptance=["启动后 /healthz 返回 ok"],
             version_bump="patch",
@@ -550,7 +550,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             owner_role=crewai_self_upgrade.ROLE_BUGFIX_CODING_AGENT,
             review_role=crewai_self_upgrade.ROLE_REVIEW_AGENT,
             qa_role=crewai_self_upgrade.ROLE_QA_AGENT,
-            allowed_paths=["templates/runtime/orchestrator/app/main.py"],
+            allowed_paths=["scaffolds/runtime/orchestrator/app/main.py"],
             tests=["python -m unittest tests.test_crewai_runtime"],
             acceptance=["启动后 /healthz 返回 ok"],
             worktree_hint="/tmp/wt-bug",
@@ -659,7 +659,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                     "summary": "修复启动路径中的导入回归。",
                     "rationale": "当前启动链路仍可能引用旧模块。",
                     "impact": "HIGH",
-                    "files": ["templates/runtime/orchestrator/app/main.py"],
+                    "files": ["scaffolds/runtime/orchestrator/app/main.py"],
                     "tests": ["python -m unittest tests.test_crewai_runtime"],
                     "acceptance": ["启动后 /healthz 返回 ok"],
                     "version_bump": "patch",
@@ -672,7 +672,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                         "review_role": crewai_self_upgrade.ROLE_REVIEW_AGENT,
                         "qa_role": crewai_self_upgrade.ROLE_QA_AGENT,
                         "workstream_id": "general",
-                        "allowed_paths": ["templates/runtime/orchestrator/app/main.py"],
+                        "allowed_paths": ["scaffolds/runtime/orchestrator/app/main.py"],
                         "tests": ["python -m unittest tests.test_crewai_runtime"],
                         "acceptance": ["启动后 /healthz 返回 ok"],
                         "worktree_hint": str(runtime_root / "workspace" / "worktrees" / "wt-bug-runtime"),

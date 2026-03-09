@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         daemon_running = False
 
-    cp_main_rel = "templates/runtime/orchestrator/app/main.py"
+    cp_main_rel = "scaffolds/runtime/orchestrator/app/main.py"
     cp_text = ""
     if _exists(repo, cp_main_rel):
         try:
@@ -236,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     controls.append(
         {
             "name": "Cluster election (DB-first) + central model allowlist gate",
-            "status": _status(_exists(repo, "scripts/pipelines/cluster_election.py") and _exists(repo, "policies/central_model_allowlist.yaml")),
+            "status": _status(_exists(repo, "scripts/pipelines/cluster_election.py") and _exists(repo, "specs/policies/central_model_allowlist.yaml")),
             "note": "leader lease TTL/heartbeat + model_id allowlist",
         }
     )
@@ -264,14 +264,14 @@ def main(argv: list[str] | None = None) -> int:
     controls.append(
         {
             "name": "Project config (Workspace-local) + schema",
-            "status": _status(_exists(repo, "scripts/pipelines/project_config.py") and _exists(repo, "schemas/project_config.schema.json")),
+            "status": _status(_exists(repo, "scripts/pipelines/project_config.py") and _exists(repo, "specs/schemas/project_config.schema.json")),
             "note": "teamos project config init/show/set/validate",
         }
     )
     controls.append(
         {
             "name": "Project repo AGENTS.md injection (idempotent)",
-            "status": _status(_exists(repo, "scripts/pipelines/project_agents_inject.py") and _exists(repo, "templates/project_agents_manual_block.md")),
+            "status": _status(_exists(repo, "scripts/pipelines/project_agents_inject.py") and _exists(repo, "templates/content/project_agents_manual_block.md")),
             "note": "marker replace; preserve original content",
         }
     )

@@ -240,8 +240,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # Validate schema for last raw + assessment when possible.
     try:
-        validate_or_die(raw_last, repo / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
-        validate_or_die(assess1, repo / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
+        validate_or_die(raw_last, repo / "specs" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
+        validate_or_die(assess1, repo / "specs" / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
         checks.append({"name": "REQv3 schema validation (raw/assessment)", "status": "PASS", "note": "jsonschema", "evidence": ""})
     except Exception as e:
         checks.append({"name": "REQv3 schema validation (raw/assessment)", "status": "FAIL", "note": "jsonschema", "evidence": str(e)[:200]})

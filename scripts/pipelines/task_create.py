@@ -77,7 +77,7 @@ def _task_paths(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> tu
 
 
 def _render_log_from_tpl(repo: Path, *, name: str, task_id: str, title: str) -> str:
-    tpl = repo / "templates" / f"task_log_{name}"
+    tpl = repo / "templates" / "tasks" / f"task_log_{name}"
     if not tpl.exists():
         raise PipelineError(f"missing template: {tpl}")
     date = utc_now_iso().split("T", 1)[0]
@@ -168,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     # Schema validation (best-effort; task ledger lives in YAML but schema validates the loaded dict).
-    validate_or_die(ledger, repo / "schemas" / "task_ledger.schema.json", label="task_ledger")
+    validate_or_die(ledger, repo / "specs" / "schemas" / "task_ledger.schema.json", label="task_ledger")
 
     if not args.dry_run:
         ensure_dir(logs_dir, dry_run=False)

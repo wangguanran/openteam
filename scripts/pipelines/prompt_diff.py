@@ -11,7 +11,7 @@ from prompt_compile import _operating_rules, _parse_scope, _prompt_base_dir, _re
 
 def _render_master_prompt(*, repo: Path, ws: Path, scope: str, project_id: str) -> str:
     req_dir = _requirements_dir(repo=repo, ws_root=ws, scope=scope, project_id=project_id)
-    tpl_path = repo / "templates" / "prompt_master.md.j2"
+    tpl_path = repo / "templates" / "content" / "prompt_master.md.j2"
     if not tpl_path.exists():
         raise PipelineError(f"missing template: {tpl_path}")
     tpl = read_text(tpl_path)
@@ -27,7 +27,7 @@ def _render_master_prompt(*, repo: Path, ws: Path, scope: str, project_id: str) 
     tpl_sha = sha256_file(tpl_path)
     build_id = sha256_text("\n".join([baseline_sha, req_sha, tpl_sha]))
 
-    manifest_ref = "prompt_manifest.json" if scope != "teamos" else "prompt-library/teamos/prompt_manifest.json"
+    manifest_ref = "prompt_manifest.json" if scope != "teamos" else "specs/prompts/teamos/prompt_manifest.json"
 
     body = (
         render_template(
@@ -78,4 +78,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

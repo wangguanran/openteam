@@ -2,7 +2,7 @@
 
 ## Scope
 - Remove repository dependency on `.team-os/` paths.
-- Migrate static assets to root-level directories: `scripts/`, `templates/`, `policies/`, `schemas/`, `migrations/`.
+- Consolidate static assets into domain directories: `specs/`, `templates/`, `scaffolds/`, `scripts/`, `migrations/`.
 - Enforce runtime-only dynamic outputs under `../team-os-runtime/`.
 - Keep orchestration on CrewAI + deterministic Python pipelines only.
 
@@ -13,7 +13,7 @@
 - Leader-only writes for truth-source updates.
 - Distributed lock default: PostgreSQL advisory lock; Redis for queue/event/cache.
 - High-risk actions must pass approval engine and be persisted in PostgreSQL.
-- Brain election must enforce `policies/central_model_allowlist.yaml`.
+- Brain election must enforce `specs/policies/central_model_allowlist.yaml`.
 
 ## Runtime Root Contract
 - `REPO_ROOT = git rev-parse --show-toplevel`

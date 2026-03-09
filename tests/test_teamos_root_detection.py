@@ -12,7 +12,7 @@ def _repo_root() -> Path:
 
 
 def _add_template_app_to_syspath() -> None:
-    app_dir = _repo_root() / "templates" / "runtime" / "orchestrator"
+    app_dir = _repo_root() / "scaffolds" / "runtime" / "orchestrator"
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
 

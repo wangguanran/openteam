@@ -21,8 +21,8 @@ class MigrationDryRunEvals(unittest.TestCase):
             (fake_repo / "docs" / "requirements" / "demo" / "requirements.yaml").write_text(
                 "schema_version: 1\nproject_id: demo\nnext_req_seq: 1\nrequirements: []\n", encoding="utf-8"
             )
-            (fake_repo / "docs" / "plan" / "demo").mkdir(parents=True, exist_ok=True)
-            (fake_repo / "docs" / "plan" / "demo" / "plan.yaml").write_text("schema_version: 1\nmilestones: []\n", encoding="utf-8")
+            (fake_repo / "docs" / "plans" / "demo").mkdir(parents=True, exist_ok=True)
+            (fake_repo / "docs" / "plans" / "demo" / "plan.yaml").write_text("schema_version: 1\nmilestones: []\n", encoding="utf-8")
             (fake_repo / ".team-os" / "ledger" / "conversations" / "demo").mkdir(parents=True, exist_ok=True)
             (fake_repo / ".team-os" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").write_text("{\"msg\":\"hi\"}\n", encoding="utf-8")
             (fake_repo / ".team-os" / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
@@ -36,7 +36,7 @@ class MigrationDryRunEvals(unittest.TestCase):
 
             before = {
                 "req": (fake_repo / "docs" / "requirements" / "demo" / "requirements.yaml").read_text(encoding="utf-8"),
-                "plan": (fake_repo / "docs" / "plan" / "demo" / "plan.yaml").read_text(encoding="utf-8"),
+                "plan": (fake_repo / "docs" / "plans" / "demo" / "plan.yaml").read_text(encoding="utf-8"),
                 "conv": (fake_repo / ".team-os" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").read_text(encoding="utf-8"),
                 "task": (fake_repo / ".team-os" / "ledger" / "tasks" / "DEMO-0001.yaml").read_text(encoding="utf-8"),
                 "log": (fake_repo / ".team-os" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").read_text(encoding="utf-8"),
@@ -67,7 +67,7 @@ class MigrationDryRunEvals(unittest.TestCase):
             # Dry-run must not move or mutate any source files.
             after = {
                 "req": (fake_repo / "docs" / "requirements" / "demo" / "requirements.yaml").read_text(encoding="utf-8"),
-                "plan": (fake_repo / "docs" / "plan" / "demo" / "plan.yaml").read_text(encoding="utf-8"),
+                "plan": (fake_repo / "docs" / "plans" / "demo" / "plan.yaml").read_text(encoding="utf-8"),
                 "conv": (fake_repo / ".team-os" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").read_text(encoding="utf-8"),
                 "task": (fake_repo / ".team-os" / "ledger" / "tasks" / "DEMO-0001.yaml").read_text(encoding="utf-8"),
                 "log": (fake_repo / ".team-os" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").read_text(encoding="utf-8"),
@@ -78,4 +78,3 @@ class MigrationDryRunEvals(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

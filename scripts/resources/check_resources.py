@@ -138,7 +138,7 @@ def check(*, workdir: Path, policy_path: Path) -> dict[str, Any]:
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Resource guard for Team OS agent concurrency (soft limits)")
     ap.add_argument("--workdir", default=str(_repo_root()), help="Path to check disk free against")
-    ap.add_argument("--policy", default=str(_repo_root() / "policies" / "agent_concurrency.yaml"))
+    ap.add_argument("--policy", default=str(_repo_root() / "specs" / "policies" / "agent_concurrency.yaml"))
     ap.add_argument("--json", action="store_true", help="Print JSON only")
     args = ap.parse_args(argv)
 

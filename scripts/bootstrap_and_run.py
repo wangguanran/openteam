@@ -513,7 +513,7 @@ def _start_control_plane(
         except Exception:
             _stop_pid(pidp, grace_sec=3)
 
-    orch_dir = (repo / "templates" / "runtime" / "orchestrator").resolve()
+    orch_dir = (repo / "scaffolds" / "runtime" / "orchestrator").resolve()
     if not orch_dir.exists():
         raise BootstrapError(f"missing orchestrator dir: {orch_dir}")
 

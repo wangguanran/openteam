@@ -50,7 +50,7 @@ def _parse_jsonl(path: Path, *, strict: bool) -> tuple[list[dict[str, Any]], lis
             obj = json.loads(line)
             if not isinstance(obj, dict):
                 raise ValueError("not an object")
-            # Minimal required fields check (schema lives in schemas/).
+            # Minimal required fields check (schema lives in specs/schemas/).
             if not obj.get("ts") or not obj.get("event_type") or not obj.get("actor"):
                 raise ValueError("missing required fields: ts/event_type/actor")
             events.append(obj)

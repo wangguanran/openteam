@@ -79,8 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     except PipelineError as e:
         return _stage_fail(stage="prepare", stderr=str(e))
 
-    central_allowlist_src = repo / "policies" / "central_model_allowlist.yaml"
-    approvals_policy_src = repo / "policies" / "approvals.yaml"
+    central_allowlist_src = repo / "specs" / "policies" / "central_model_allowlist.yaml"
+    approvals_policy_src = repo / "specs" / "policies" / "approvals.yaml"
     try:
         central_allowlist_text = _read_required_text(central_allowlist_src)
         approvals_policy_text = _read_required_text(approvals_policy_src)

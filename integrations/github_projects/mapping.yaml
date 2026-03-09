@@ -2,7 +2,7 @@ schema_version: 1
 
 # GitHub Projects v2 mapping (view layer only).
 # Truth source:
-# - scope=teamos: team-os repo (.team-os/ledger, docs/teamos/requirements)
+# - scope=teamos: team-os repo (.team-os/ledger, docs/product/teamos/requirements)
 # - scope=project:<id>: Workspace (<WORKSPACE>/projects/<id>/state/{ledger,logs,requirements,plan,prompts})
 # - control-plane runtime state DB (sqlite/postgres)
 #

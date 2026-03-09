@@ -30,7 +30,7 @@ from _common import (
 
 def _prompt_base_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> Path:
     if scope == "teamos":
-        return repo / "prompt-library" / "teamos"
+        return repo / "specs" / "prompts" / "teamos"
     # project scope prompts must live in Workspace
     from _common import is_within
 
@@ -41,7 +41,7 @@ def _prompt_base_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str) 
 
 def _requirements_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> Path:
     if scope == "teamos":
-        return repo / "docs" / "teamos" / "requirements"
+        return repo / "docs" / "product" / "teamos" / "requirements"
     from _common import is_within
 
     if is_within(ws_root, repo):
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     (prompt_dir / "history").mkdir(parents=True, exist_ok=True)
 
-    tpl_path = repo / "templates" / "prompt_master.md.j2"
+    tpl_path = repo / "templates" / "content" / "prompt_master.md.j2"
     if not tpl_path.exists():
         raise PipelineError(f"missing template: {tpl_path}")
     tpl = read_text(tpl_path)
@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     # Keep prompt content deterministic across runs and machines:
     # - no timestamps
     # - no absolute paths
-    manifest_ref = "prompt_manifest.json" if scope != "teamos" else "prompt-library/teamos/prompt_manifest.json"
+    manifest_ref = "prompt_manifest.json" if scope != "teamos" else "specs/prompts/teamos/prompt_manifest.json"
 
     body = render_template(
         tpl,
@@ -236,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "content_sha256": new_sha,
     }
-    validate_or_die(manifest, repo / "schemas" / "prompt_manifest.schema.json", label="prompt_manifest")
+    validate_or_die(manifest, repo / "specs" / "schemas" / "prompt_manifest.schema.json", label="prompt_manifest")
     if not args.dry_run:
         write_json(manifest_path, manifest, dry_run=False)
 

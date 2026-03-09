@@ -14,7 +14,7 @@ from _common import PipelineError, add_default_args, resolve_repo_root, utc_now_
 
 
 def _add_runtime_template_to_syspath(repo: Path) -> None:
-    app_dir = repo / "templates" / "runtime" / "orchestrator"
+    app_dir = repo / "scaffolds" / "runtime" / "orchestrator"
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
 
@@ -120,17 +120,17 @@ def cmd_add(repo: Path, *, scope: str, workspace_root: str, text: str, workstrea
     raw_last = _load_last_raw_input(req_dir)
     # For system update paths, raw_inputs.jsonl may remain empty (user-only); skip raw validation in that case.
     if raw_last:
-        validate_or_die(raw_last, repo / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
+        validate_or_die(raw_last, repo / "specs" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
         raw_id = str(raw_last.get("raw_id") or "").strip()
         if raw_id:
             assess_last = _load_last_raw_assessment(req_dir, raw_id=raw_id)
-            validate_or_die(assess_last, repo / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
+            validate_or_die(assess_last, repo / "specs" / "schemas" / "requirement_raw_assessment.schema.json", label="requirement_raw_assessment")
     y = req_dir / "requirements.yaml"
     if y.exists():
         import yaml
 
         data = yaml.safe_load(y.read_text(encoding="utf-8")) or {}
-        validate_or_die(data, repo / "schemas" / "requirements.schema.json", label="requirements")
+        validate_or_die(data, repo / "specs" / "schemas" / "requirements.schema.json", label="requirements")
 
     # Normalize output for JSON.
     try:
@@ -228,7 +228,7 @@ def cmd_migrate_v3(repo: Path, *, scope: str, workspace_root: str, dry_run: bool
         # Deterministic serialization.
         new_lines: list[str] = []
         for it in migrated_items:
-            validate_or_die(it, repo / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
+            validate_or_die(it, repo / "specs" / "schemas" / "requirement_raw_input.schema.json", label="requirement_raw_input")
             new_lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         new_content = ("\n".join(new_lines) + ("\n" if new_lines else ""))
 

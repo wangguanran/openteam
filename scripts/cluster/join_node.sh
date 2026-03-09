@@ -21,7 +21,7 @@ Usage:
 
 Notes:
   - This script registers the node to the Brain control-plane via /v1/nodes/register and starts heartbeats.
-  - Cluster GitHub Issues bus and full runtime deployment are handled separately (see docs/NODE_BOOTSTRAP.md).
+  - Cluster GitHub Issues bus and full runtime deployment are handled separately (see docs/runbooks/NODE_BOOTSTRAP.md).
 EOF
 }
 
@@ -153,4 +153,3 @@ fi
 echo "done."
 echo "next:"
 echo "  - verify on brain: teamos cluster status"
-

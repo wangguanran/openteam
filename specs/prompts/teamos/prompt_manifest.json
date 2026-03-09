@@ -1,0 +1,20 @@
+{
+  "build_id": "2d6c380bd249d9382728198b733d97d6b9372f955cb46735f485a2b2261ad75a",
+  "content_sha256": "bc8094d2953cb7d33d51b0ab55b04f4de0232988d9699d07098d73fa62b2a522",
+  "generated_at": "20260309T163200Z",
+  "inputs": {
+    "baseline_v1_path": "docs/product/teamos/requirements/baseline/original_description_v1.md",
+    "baseline_v1_sha256": "db7654bd3adabca91f2751af77f10154d9ece89756f7f5eea84d5961e93a421d",
+    "requirements_yaml_path": "docs/product/teamos/requirements/requirements.yaml",
+    "requirements_yaml_sha256": "64a27757b25d19036c17bd5d7d254bc71d6d7a75e1fe8a8dc2dc4f637d065f46",
+    "template_path": "templates/content/prompt_master.md.j2",
+    "template_sha256": "00fc80285b85add16c4cf0642bc387f157481fee7641f4e6db89c346b8e7cce4"
+  },
+  "outputs": {
+    "changelog_path": "specs/prompts/teamos/PROMPT_CHANGELOG.md",
+    "history_path": "specs/prompts/teamos/history/20260309T163200Z.md",
+    "master_prompt_path": "specs/prompts/teamos/MASTER_PROMPT.md"
+  },
+  "project_id": "teamos",
+  "schema_version": 1
+}

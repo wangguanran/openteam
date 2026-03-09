@@ -45,19 +45,16 @@ def _is_dir(p: Path) -> bool:
 # This is a governance reference list for reviewers; checker only denies known-dynamic roots.
 _ROOT_STATIC_ALLOWLIST = {
     ".git",
-    "cluster",
+    ".github",
     "docs",
     "evals",
     "integrations",
-    "migrations",
-    "policies",
-    "prompt-library",
-    "roles",
-    "schemas",
+    "scaffolds",
     "scripts",
+    "specs",
     "templates",
     "tests",
-    "workflows",
+    "tooling",
 }
 
 # Root-level runtime/dynamic directories forbidden in repo.
@@ -118,15 +115,20 @@ def check_repo_purity(repo_root: Path) -> dict[str, Any]:
     if _is_dir(repo_root / "projects"):
         add("IN_REPO_PROJECTS_DIR", repo_root / "projects", "Workspace projects must not be inside team-os repo")
 
-    if _is_dir(repo_root / "prompt-library" / "projects"):
-        add("IN_REPO_PROJECT_PROMPTS", repo_root / "prompt-library" / "projects", "Project prompts must live in workspace")
+    legacy_project_prompts = repo_root / "prompt-library" / "projects"
+    if _is_dir(legacy_project_prompts):
+        add("IN_REPO_PROJECT_PROMPTS", legacy_project_prompts, "Project prompts must live in workspace")
 
-    # 2) docs/requirements must not exist in repo (projects moved; teamos self lives under docs/teamos/)
+    scoped_project_prompts = repo_root / "specs" / "prompts" / "projects"
+    if _is_dir(scoped_project_prompts):
+        add("IN_REPO_PROJECT_PROMPTS", scoped_project_prompts, "Project prompts must live in workspace")
+
+    # 2) docs/requirements must not exist in repo (projects moved; teamos self lives under docs/product/teamos/)
     if _is_dir(repo_root / "docs" / "requirements"):
-        add("IN_REPO_REQUIREMENTS_DIR", repo_root / "docs" / "requirements", "Project requirements must live in workspace; teamos lives under docs/teamos/")
+        add("IN_REPO_REQUIREMENTS_DIR", repo_root / "docs" / "requirements", "Project requirements must live in workspace; teamos lives under docs/product/teamos/")
 
-    # 3) docs/plan may only contain teamos (project plans must live in workspace)
-    plan = repo_root / "docs" / "plan"
+    # 3) docs/plans may only contain teamos (project plans must live in workspace)
+    plan = repo_root / "docs" / "plans"
     if _is_dir(plan):
         for d in sorted(plan.iterdir()):
             if not d.is_dir():

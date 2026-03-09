@@ -93,7 +93,7 @@ def _leader_status(*, base_url: str) -> dict[str, Any]:
 
 
 def _render_block(repo: Path, *, project_id: str, manual_version: str) -> str:
-    tpl_path = repo / "templates" / "project_agents_manual_block.md"
+    tpl_path = repo / "templates" / "content" / "project_agents_manual_block.md"
     if not tpl_path.exists():
         raise PipelineError(f"missing template: {tpl_path}")
     tpl = read_text(tpl_path)
@@ -214,4 +214,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

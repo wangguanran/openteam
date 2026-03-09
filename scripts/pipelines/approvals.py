@@ -27,7 +27,7 @@ from db_migrate import apply_migrations as _apply_migrations
 
 
 def _policy_path(repo_root: Path) -> Path:
-    return repo_root / "policies" / "approvals.yaml"
+    return repo_root / "specs" / "policies" / "approvals.yaml"
 
 
 def _load_policy(repo_root: Path) -> dict[str, Any]:
@@ -126,7 +126,7 @@ def _db_available(dsn: str) -> bool:
 
 
 def _ensure_db_schema(conn, *, repo_root: Path) -> None:
-    mig_dir = repo_root / "migrations"
+    mig_dir = repo_root / "tooling" / "migrations"
     migrations: list[tuple[str, Path]] = []
     for p in sorted(mig_dir.glob("*.sql")):
         name = p.name

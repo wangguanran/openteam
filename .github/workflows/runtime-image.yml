@@ -9,10 +9,10 @@ on:
     paths:
       - ".github/workflows/runtime-image.yml"
       - ".dockerignore"
-      - "docker/runtime-control-plane.Dockerfile"
-      - "templates/runtime/**"
-      - "roles/**"
-      - "workflows/**"
+      - "tooling/**"
+      - "scaffolds/runtime/**"
+      - "specs/**"
+      - "templates/**"
       - "scripts/**"
       - "teamos"
       - "AGENTS.md"
@@ -21,10 +21,10 @@ on:
     paths:
       - ".github/workflows/runtime-image.yml"
       - ".dockerignore"
-      - "docker/runtime-control-plane.Dockerfile"
-      - "templates/runtime/**"
-      - "roles/**"
-      - "workflows/**"
+      - "tooling/**"
+      - "scaffolds/runtime/**"
+      - "specs/**"
+      - "templates/**"
       - "scripts/**"
       - "teamos"
       - "AGENTS.md"
@@ -55,7 +55,7 @@ jobs:
       - name: Install runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r templates/runtime/orchestrator/requirements.txt
+          python -m pip install -r scaffolds/runtime/orchestrator/requirements.txt
 
       - name: Run runtime unit tests
         env:
@@ -108,7 +108,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/runtime-control-plane.Dockerfile
+          file: tooling/docker/runtime-control-plane.Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}

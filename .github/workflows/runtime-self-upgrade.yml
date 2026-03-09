@@ -25,7 +25,7 @@ jobs:
       - name: Install runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r templates/runtime/orchestrator/requirements.txt
+          python -m pip install -r scaffolds/runtime/orchestrator/requirements.txt
 
       - name: Run self-upgrade runtime tests
         env:

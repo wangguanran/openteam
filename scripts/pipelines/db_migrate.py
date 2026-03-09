@@ -6,7 +6,7 @@ Usage:
   TEAMOS_DB_URL=postgresql://... ./teamos db migrate
 
 Design:
-- Apply migrations/*.sql in lexicographic order.
+- Apply tooling/migrations/*.sql in lexicographic order.
 - Track applied versions in schema_migrations(version).
 - Idempotent by design; migrations should use IF NOT EXISTS / safe ALTERs.
 """
@@ -220,13 +220,13 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Apply Team OS Postgres migrations (deterministic)")
     add_default_args(ap)
     ap.add_argument("--db-url", default="", help="override TEAMOS_DB_URL")
-    ap.add_argument("--migrations-dir", default="", help="override migrations dir (default: <repo>/migrations)")
+    ap.add_argument("--migrations-dir", default="", help="override migrations dir (default: <repo>/tooling/migrations)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="plan only; do not execute statements")
     args = ap.parse_args(argv)
 
     repo = resolve_repo_root(args)
-    mig_dir = Path(str(args.migrations_dir or "")).expanduser().resolve() if str(args.migrations_dir or "").strip() else (repo / "migrations")
+    mig_dir = Path(str(args.migrations_dir or "")).expanduser().resolve() if str(args.migrations_dir or "").strip() else (repo / "tooling" / "migrations")
     migrations = _list_migrations(mig_dir)
     if not migrations:
         raise PipelineError(f"no migrations found: {mig_dir}")

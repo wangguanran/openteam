@@ -100,7 +100,7 @@ def load_template(repo_root: Path, rel: str) -> str:
 
 
 def render_compose(*, repo_root: Path, pg_bind_ip: str, pg_port: int, redis_bind_ip: str, redis_port: int) -> str:
-    tpl = load_template(repo_root, "templates/hub/docker-compose.yml.j2")
+    tpl = load_template(repo_root, "scaffolds/hub/docker-compose.yml.j2")
     return render_template(
         tpl,
         {
@@ -113,7 +113,7 @@ def render_compose(*, repo_root: Path, pg_bind_ip: str, pg_port: int, redis_bind
 
 
 def render_pg_hba(*, repo_root: Path, allow_cidrs: list[str]) -> str:
-    tpl = load_template(repo_root, "templates/hub/pg_hba.conf.j2")
+    tpl = load_template(repo_root, "scaffolds/hub/pg_hba.conf.j2")
     rules: list[str] = []
     for cidr in allow_cidrs:
         c = str(cidr or "").strip()
@@ -124,7 +124,7 @@ def render_pg_hba(*, repo_root: Path, allow_cidrs: list[str]) -> str:
 
 
 def render_hub_readme(*, repo_root: Path, hub: Path, pg_bind_ip: str, pg_port: int, redis_bind_ip: str, redis_port: int) -> str:
-    tpl = load_template(repo_root, "templates/hub/README.md.j2")
+    tpl = load_template(repo_root, "scaffolds/hub/README.md.j2")
     return render_template(
         tpl,
         {

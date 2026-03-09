@@ -10,7 +10,7 @@ from unittest import mock
 
 def _add_template_app_to_syspath() -> None:
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    app_dir = os.path.join(repo_root, "templates", "runtime", "orchestrator")
+    app_dir = os.path.join(repo_root, "scaffolds", "runtime", "orchestrator")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
 
@@ -42,14 +42,14 @@ class OpenClawReporterTests(unittest.TestCase):
                         "enabled": True,
                         "channel": "telegram",
                         "target": "@team_os",
-                        "path_patterns": ["templates/runtime/orchestrator/app/**"],
+                        "path_patterns": ["scaffolds/runtime/orchestrator/app/**"],
                         "event_types": ["SELF_UPGRADE_*"],
                     }
                 )
                 loaded = openclaw_reporter.load_config()
         self.assertTrue(cfg["enabled"])
         self.assertEqual(loaded["target"], "@team_os")
-        self.assertEqual(loaded["path_patterns"], ["templates/runtime/orchestrator/app/**"])
+        self.assertEqual(loaded["path_patterns"], ["scaffolds/runtime/orchestrator/app/**"])
 
     def test_detect_openclaw_infers_remote_gateway_in_container(self):
         with tempfile.TemporaryDirectory() as td:
@@ -154,7 +154,7 @@ class OpenClawReporterTests(unittest.TestCase):
                         "enabled": True,
                         "channel": "telegram",
                         "target": "@team_os",
-                        "path_patterns": ["templates/runtime/orchestrator/app/**"],
+                        "path_patterns": ["scaffolds/runtime/orchestrator/app/**"],
                         "event_types": ["SELF_UPGRADE_*"],
                     }
                 )
@@ -175,7 +175,7 @@ class OpenClawReporterTests(unittest.TestCase):
                         "event_type": "SELF_UPGRADE_TASK_DELIVERY_FINISHED",
                         "project_id": "teamos",
                         "workstream_id": "general",
-                        "payload": {"changed_files": ["templates/runtime/orchestrator/app/main.py"]},
+                        "payload": {"changed_files": ["scaffolds/runtime/orchestrator/app/main.py"]},
                     }
                 )
         self.assertFalse(skipped["sent"])
@@ -193,7 +193,7 @@ class OpenClawReporterTests(unittest.TestCase):
             }
             rows = [
                 EventRow(id=1, ts="2026-03-07T00:00:00Z", event_type="OPENCLAW_CONFIG_UPDATED", actor="api", project_id="teamos", workstream_id="general", payload={}),
-                EventRow(id=2, ts="2026-03-07T00:00:01Z", event_type="SELF_UPGRADE_TASK_DELIVERY_BLOCKED", actor="api", project_id="teamos", workstream_id="general", payload={"changed_files": ["templates/runtime/orchestrator/app/main.py"]}),
+                EventRow(id=2, ts="2026-03-07T00:00:01Z", event_type="SELF_UPGRADE_TASK_DELIVERY_BLOCKED", actor="api", project_id="teamos", workstream_id="general", payload={"changed_files": ["scaffolds/runtime/orchestrator/app/main.py"]}),
             ]
             with mock.patch.dict(os.environ, env, clear=False), mock.patch(
                 "app.openclaw_reporter._which_openclaw",
