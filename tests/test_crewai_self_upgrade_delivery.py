@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 import tempfile
@@ -89,6 +90,13 @@ def _base_task_doc(*, repo_root: Path, task_id: str = "TEAMOS-1001", status: str
 
 
 class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
+    @staticmethod
+    def _fake_run(cmd: list[str], *, cwd: Path, timeout_sec: int = 300) -> dict:
+        text = " ".join(str(x) for x in cmd)
+        if "unittest" in text or "pytest" in text or text.startswith("go test") or text.startswith("cargo test"):
+            return {"returncode": 0, "stdout": "OK\n", "stderr": ""}
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
     def setUp(self) -> None:
         self._env_patch = mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_FILE_MIRROR": "1"}, clear=False)
         self._env_patch.start()
@@ -97,8 +105,11 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             return_value={"ok": False, "reason": "disabled_for_test"},
         )
         self._sync_issue_patch.start()
+        self._run_patch = mock.patch("app.crewai_self_upgrade_delivery._run", side_effect=self._fake_run)
+        self._run_patch.start()
 
     def tearDown(self) -> None:
+        self._run_patch.stop()
         self._sync_issue_patch.stop()
         self._env_patch.stop()
 
@@ -491,6 +502,110 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             policy = updated.get("documentation_policy") or {}
             self.assertEqual(policy.get("status"), "done")
             self.assertEqual(policy.get("changed_files"), ["README.md"])
+
+    def test_execute_task_delivery_persists_validation_evidence_for_docs_review_and_qa(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["documentation_policy"]["required"] = True
+            task_doc["documentation_policy"]["status"] = "pending"
+            docs_seen: list[dict] = []
+            review_seen: list[dict] = []
+
+            def _docs_side_effect(*, task_doc, worktree_root, verbose):
+                docs_seen.append(copy.deepcopy((task_doc.get("self_upgrade_execution") or {}).get("validation_evidence") or {}))
+                return crewai_self_upgrade_delivery.DeliveryDocumentationResult(
+                    approved=True,
+                    updated=True,
+                    summary="README 已同步。",
+                    changed_files=["README.md"],
+                )
+
+            def _review_side_effect(*, task_doc, worktree_root, verbose):
+                review_seen.append(copy.deepcopy((task_doc.get("self_upgrade_execution") or {}).get("validation_evidence") or {}))
+                return crewai_self_upgrade_delivery.DeliveryReviewResult(
+                    approved=True,
+                    code_approved=True,
+                    docs_approved=True,
+                    summary="review ok",
+                )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=True,
+                        summary="审计通过，需同步文档。",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryImplementationResult(
+                        summary="implemented",
+                        changed_files=["src/demo.py"],
+                        tests_to_run=["python -m unittest tests.test_demo"],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_documentation_stage",
+                    side_effect=_docs_side_effect,
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_review_stage",
+                    side_effect=_review_side_effect,
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_qa_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryQAResult(
+                        approved=True,
+                        summary="qa ok",
+                        commands=["python -m unittest tests.test_demo"],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._changed_files",
+                    return_value=["src/demo.py", "README.md"],
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+            self.assertTrue(out["ok"])
+            self.assertTrue(docs_seen)
+            self.assertTrue(review_seen)
+            self.assertIn("coding", docs_seen[0])
+            self.assertEqual(docs_seen[0]["coding"][0]["command"], "python -m unittest tests.test_demo")
+            self.assertTrue(docs_seen[0]["coding"][0]["ok"])
+            self.assertIn("coding", review_seen[0])
+            evidence = ((updated.get("self_upgrade_execution") or {}).get("validation_evidence") or {})
+            self.assertIn("coding", evidence)
+            self.assertIn("qa", evidence)
+            self.assertEqual(evidence["qa"][0]["command"], "python -m unittest tests.test_demo")
+            self.assertEqual(evidence["qa"][0]["stdout_tail"], "OK\n")
 
     def test_execute_task_delivery_retries_docs_without_rerunning_coding_when_review_rejects_docs(self):
         db = _FakeDB()

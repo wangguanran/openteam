@@ -1,0 +1,6 @@
+stage_id: proposal-confirmation
+display_name_zh: 提案确认阶段
+members:
+  - role_id: Issue-Discussion-Agent
+    state: RUNNING
+    current_action: replying to proposal discussion

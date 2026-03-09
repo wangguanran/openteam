@@ -1,0 +1,18 @@
+workflow_id: process-improvement
+display_name_zh: 流程改进流程
+lane: process
+description: Discover runtime and delivery process improvements, then deliver them with governance and cooldown controls.
+task_source: proposal
+requires_user_confirmation: false
+materialize_requires_approval: false
+materialize_blocked_statuses:
+  - REJECTED
+  - HOLD
+  - MATERIALIZED
+default_version_bump: none
+cooldown_env_var: TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS
+default_cooldown_hours: 24
+baseline_action_default: process_improvement
+stages:
+  - planning
+  - delivery

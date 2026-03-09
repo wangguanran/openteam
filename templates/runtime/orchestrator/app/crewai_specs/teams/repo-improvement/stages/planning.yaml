@@ -1,0 +1,27 @@
+stage_id: planning
+display_name_zh: 规划阶段
+members:
+  - role_id: Product-Manager
+    state: RUNNING
+    current_action: discovering feature opportunities
+  - role_id: Test-Manager
+    state: RUNNING
+    current_action: scanning bugs and test gaps
+  - role_id: Issue-Drafter
+    state: RUNNING
+    current_action: splitting work into executable items
+  - role_id: Plan-Review-Agent
+    state: RUNNING
+    current_action: checking scope and review gates
+  - role_id: Plan-QA-Agent
+    state: RUNNING
+    current_action: reviewing QA and acceptance gates
+  - role_id: Process-Optimization-Analyst
+    state: RUNNING
+    current_action: analyzing process telemetry
+  - role_id: Code-Quality-Analyst
+    state: RUNNING
+    current_action: reviewing code quality and cleanup opportunities
+  - role_id: Milestone-Manager-Agent
+    state: RUNNING
+    current_action: planning release lines and milestones

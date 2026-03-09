@@ -1,0 +1,17 @@
+task_name: review_self_upgrade_task
+expected_output: A structured JSON review decision.
+output_model: DeliveryReviewResult
+description_template: |
+  Review the current repository diff for this self-upgrade task.
+  Return a structured review decision with separate code_approved and docs_approved fields.
+  Rules:
+  - Review both code changes and documentation changes under allowed_paths.
+  - Put code-specific blockers in code_feedback.
+  - Put documentation-specific blockers in docs_feedback.
+  - If documentation_policy.required is false, set docs_approved=true.
+  - Set approved=true only when both code_approved and docs_approved are true.
+  - Use validation_evidence from the task context. Reject if the evidence is missing, stale, or failing.
+  - Reject if changed files leave allowed_paths, the task is inconsistent with the issue, or validation/test coverage is weak.
+
+  Task context:
+  {payload}

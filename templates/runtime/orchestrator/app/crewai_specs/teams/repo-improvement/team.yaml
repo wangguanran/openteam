@@ -1,0 +1,33 @@
+team_id: repo-improvement
+display_name_zh: 仓库改进团队
+mission: Inspect target GitHub repositories, identify improvement opportunities, and deliver approved upgrades safely.
+role_pool:
+  - Product-Manager
+  - Test-Manager
+  - Issue-Drafter
+  - Plan-Review-Agent
+  - Plan-QA-Agent
+  - Process-Optimization-Analyst
+  - Code-Quality-Analyst
+  - Issue-Discussion-Agent
+  - Issue-Audit-Agent
+  - Feature-Coding-Agent
+  - Bugfix-Coding-Agent
+  - Process-Optimization-Agent
+  - Code-Quality-Agent
+  - Review-Agent
+  - QA-Agent
+  - Documentation-Agent
+  - Scheduler-Agent
+  - Release-Agent
+  - Process-Metrics-Agent
+  - Milestone-Manager-Agent
+workflow_ids:
+  - feature-improvement
+  - bug-fix
+  - quality-improvement
+  - process-improvement
+stage_ids:
+  - planning
+  - proposal-confirmation
+  - delivery

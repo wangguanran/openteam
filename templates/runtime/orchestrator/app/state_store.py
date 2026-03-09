@@ -16,7 +16,7 @@ def team_os_root() -> Path:
 
     In container runtime this is injected via TEAM_OS_REPO_PATH (default mount: /team-os).
     For local execution (unit tests / scripts) we fall back to discovering the repo root by
-    walking up from this file until we find `AGENTS.md` + `scripts/pipelines/`.
+    walking up from this file until we find Team-OS repo markers.
     """
     env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
     if env:
@@ -24,7 +24,11 @@ def team_os_root() -> Path:
 
     p = Path(__file__).resolve()
     for parent in [p.parent] + list(p.parents):
-        if (parent / "AGENTS.md").exists() and (parent / "scripts" / "pipelines").exists():
+        if (parent / "scripts" / "pipelines").exists() and (
+            (parent / "TEAMOS.md").exists()
+            or (parent / "templates" / "runtime" / "orchestrator").exists()
+            or (parent / "schemas").exists()
+        ):
             return parent.resolve()
 
     return Path("/team-os").resolve()

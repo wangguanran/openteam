@@ -12,13 +12,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from . import cluster_manager
+from . import crewai_agent_factory
+from . import crewai_role_registry
 from . import crewai_runtime
+from . import crewai_task_registry
 from . import improvement_store
 from . import crewai_self_upgrade as planning
 from . import workspace_store
+from .crewai_task_models import (
+    DeliveryAuditResult,
+    DeliveryDocumentationResult,
+    DeliveryImplementationResult,
+    DeliveryQAResult,
+    DeliveryReviewResult,
+)
 from .github_issues_bus import GitHubAuthError, GitHubIssuesBusError, get_issue, update_issue
 from .state_store import ensure_instance_id
 
@@ -29,49 +39,6 @@ class DeliveryError(RuntimeError):
 
 class DeliveryMergeConflictError(DeliveryError):
     pass
-
-
-class DeliveryImplementationResult(BaseModel):
-    summary: str = ""
-    changed_files: list[str] = Field(default_factory=list)
-    tests_to_run: list[str] = Field(default_factory=list)
-    unresolved: list[str] = Field(default_factory=list)
-
-
-class DeliveryReviewResult(BaseModel):
-    approved: bool = False
-    code_approved: Optional[bool] = None
-    docs_approved: Optional[bool] = None
-    summary: str = ""
-    feedback: list[str] = Field(default_factory=list)
-    code_feedback: list[str] = Field(default_factory=list)
-    docs_feedback: list[str] = Field(default_factory=list)
-
-
-class DeliveryQAResult(BaseModel):
-    approved: bool = False
-    summary: str = ""
-    commands: list[str] = Field(default_factory=list)
-    failures: list[str] = Field(default_factory=list)
-
-
-class DeliveryAuditResult(BaseModel):
-    approved: bool = False
-    classification: str = "bug"
-    closure: str = "pending"
-    worth_doing: bool = True
-    docs_required: bool = False
-    module: str = ""
-    summary: str = ""
-    feedback: list[str] = Field(default_factory=list)
-
-
-class DeliveryDocumentationResult(BaseModel):
-    approved: bool = False
-    updated: bool = False
-    summary: str = ""
-    changed_files: list[str] = Field(default_factory=list)
-    followups: list[str] = Field(default_factory=list)
 
 
 _SAFE_TEST_PREFIXES = (
@@ -457,6 +424,148 @@ def _acceptance_items(doc: dict[str, Any]) -> list[str]:
         work_item = {}
     raw = work_item.get("acceptance") or su.get("acceptance") or []
     return [str(x).strip() for x in raw if str(x).strip()]
+
+
+def _candidate_validation_commands(*groups: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw in group:
+            cmd = str(raw or "").strip()
+            if not cmd or cmd in seen:
+                continue
+            seen.add(cmd)
+            out.append(cmd)
+    return out
+
+
+def _validation_evidence(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    execution = _execution_state(doc)
+    raw = execution.get("validation_evidence") or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for key, items in raw.items():
+        stage = str(key or "").strip()
+        if not stage or not isinstance(items, list):
+            continue
+        clean: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            command = str(item.get("command") or "").strip()
+            if not command:
+                continue
+            clean.append(
+                {
+                    "command": command,
+                    "ok": bool(item.get("ok")),
+                    "returncode": int(item.get("returncode", 0) or 0),
+                    "stdout_tail": str(item.get("stdout_tail") or "")[-2000:],
+                    "stderr_tail": str(item.get("stderr_tail") or "")[-2000:],
+                    "captured_at": str(item.get("captured_at") or ""),
+                    "source_stage": str(item.get("source_stage") or stage),
+                }
+            )
+        if clean:
+            out[stage] = clean
+    return out
+
+
+def _validation_evidence_payload(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    evidence = _validation_evidence(doc)
+    return {stage: items for stage, items in evidence.items() if items}
+
+
+def _clear_validation_evidence(doc: dict[str, Any]) -> dict[str, Any]:
+    execution = _execution_state(doc)
+    execution["validation_evidence"] = {}
+    execution["last_validation_at"] = ""
+    execution["last_validation_stage"] = ""
+    doc["self_upgrade_execution"] = execution
+    return doc
+
+
+def _persist_validation_evidence(ledger_path: Path, doc: dict[str, Any], *, stage: str, evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    execution = _execution_state(doc)
+    all_evidence = _validation_evidence(doc)
+    all_evidence[str(stage or "").strip() or "unknown"] = list(evidence)
+    execution["validation_evidence"] = all_evidence
+    execution["last_validation_stage"] = str(stage or "").strip()
+    execution["last_validation_at"] = _utc_now_iso() if evidence else str(execution.get("last_validation_at") or "")
+    doc["self_upgrade_execution"] = execution
+    _write_yaml(ledger_path, doc)
+    return doc
+
+
+def _run_validation_evidence(*, repo_root: Path, commands: list[str], allowlist: list[str], source_stage: str) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for command in _candidate_validation_commands(commands):
+        item: dict[str, Any] = {
+            "command": command,
+            "ok": False,
+            "returncode": 1,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "captured_at": _utc_now_iso(),
+            "source_stage": str(source_stage or "").strip() or "unknown",
+        }
+        if not _safe_test_command(command, allowlist=allowlist):
+            item["stderr_tail"] = "command_not_allowed"
+            evidence.append(item)
+            continue
+        try:
+            parts = shlex.split(command)
+        except Exception as e:
+            item["stderr_tail"] = f"command_parse_failed: {e}"
+            evidence.append(item)
+            continue
+        out = _run(parts, cwd=repo_root, timeout_sec=600)
+        item["returncode"] = int(out.get("returncode", 1))
+        item["ok"] = item["returncode"] == 0
+        item["stdout_tail"] = str(out.get("stdout") or "")[-2000:]
+        item["stderr_tail"] = str(out.get("stderr") or "")[-2000:]
+        evidence.append(item)
+    return evidence
+
+
+def _validation_evidence_lines(evidence: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for item in evidence:
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        lines.append(
+            f"validation: command={command} ok={bool(item.get('ok'))} returncode={int(item.get('returncode', 1) or 1)}"
+        )
+        stdout_tail = str(item.get("stdout_tail") or "").strip()
+        stderr_tail = str(item.get("stderr_tail") or "").strip()
+        if stdout_tail:
+            lines.append(f"stdout_tail: {stdout_tail}")
+        if stderr_tail:
+            lines.append(f"stderr_tail: {stderr_tail}")
+    return lines
+
+
+def _merge_qa_with_validation_evidence(*, result: DeliveryQAResult, evidence: list[dict[str, Any]]) -> DeliveryQAResult:
+    commands = _candidate_validation_commands(result.commands, [str(item.get("command") or "") for item in evidence])
+    failures = [str(x).strip() for x in (result.failures or []) if str(x).strip()]
+    failed_items = [item for item in evidence if not bool(item.get("ok"))]
+    for item in failed_items:
+        detail = str(item.get("stderr_tail") or item.get("stdout_tail") or "validation command failed").strip()
+        text = f"{str(item.get('command') or '').strip()} failed (exit {int(item.get('returncode', 1) or 1)}): {detail}".strip()
+        if text not in failures:
+            failures.append(text)
+    approved = bool(result.approved) and not failed_items
+    summary = str(result.summary or "").strip()
+    if failed_items and not summary:
+        summary = "QA validation evidence failed."
+    return DeliveryQAResult(
+        approved=approved,
+        summary=summary,
+        commands=commands,
+        failures=failures,
+    )
 
 
 def _issue_url(doc: dict[str, Any]) -> str:
@@ -1020,7 +1129,6 @@ def _kickoff_task_output(*, agent: Any, name: str, description: str, expected_ou
 
 def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback: list[str], verbose: bool) -> DeliveryImplementationResult:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent
 
     task_id = str(task_doc.get("id") or "").strip()
     allowed_paths = _allowed_paths(task_doc)
@@ -1049,30 +1157,19 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
         indent=2,
     )
     lane = planning._task_lane(task_doc) if hasattr(planning, "_task_lane") else str((((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("lane")) or "bug")
-    agent = Agent(
-        role=str(task_doc.get("owner_role") or planning._coding_owner_role(lane)),
-        goal="Implement the approved self-upgrade task directly in the repository while staying inside the declared issue scope.",
-        backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
+    owner_role = str(task_doc.get("owner_role") or planning._coding_owner_role(lane))
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=owner_role,
+        template_role_id=planning._coding_owner_role(lane),
         llm=llm,
-        tools=tools["write"],
-        allow_delegation=False,
         verbose=verbose,
+        tools_by_profile=tools,
     )
-    out = _kickoff_task_output(
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
         agent=agent,
-        name="implement_self_upgrade_task",
-        description=(
-            "Implement the task directly in the repository using the provided tools.\n"
-            "Rules:\n"
-            "- Modify only files under allowed_paths.\n"
-            "- If allowed_paths is empty, report the blocker instead of editing random files.\n"
-            "- Keep commits/task history issue-scoped.\n"
-            "- Run relevant validation commands before you finish.\n"
-            "- If a blocker remains, report it in unresolved.\n\n"
-            f"Task context:\n{blob}"
-        ),
-        expected_output="A structured JSON summary of the implementation attempt.",
-        model_cls=DeliveryImplementationResult,
+        spec=crewai_task_registry.DELIVERY_CODING_TASK_SPEC,
+        payload=blob,
         verbose=verbose,
     )
     return DeliveryImplementationResult.model_validate(out.model_dump())
@@ -1080,7 +1177,6 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
 
 def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryReviewResult:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent
 
     allowed_paths = _review_allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
@@ -1097,36 +1193,24 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
             "documentation_policy": documentation_policy,
             "acceptance": _acceptance_items(task_doc),
             "git_status": _git_status_text(worktree_root),
+            "validation_evidence": _validation_evidence_payload(task_doc),
         },
         ensure_ascii=False,
         indent=2,
     )
-    agent = Agent(
-        role=str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT),
-        goal="Review the current task diff and reject anything outside scope, under-tested, or inconsistent with the task contract.",
-        backstory="You are a strict code reviewer. You care about scope discipline, testability, and acceptance coverage.",
+    review_role = str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=review_role,
+        template_role_id=planning.ROLE_REVIEW_AGENT,
         llm=llm,
-        tools=tools["read"],
-        allow_delegation=False,
         verbose=verbose,
+        tools_by_profile=tools,
     )
-    out = _kickoff_task_output(
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
         agent=agent,
-        name="review_self_upgrade_task",
-        description=(
-            "Review the current repository diff for this self-upgrade task.\n"
-            "Return a structured review decision with separate code_approved and docs_approved fields.\n"
-            "Rules:\n"
-            "- Review both code changes and documentation changes under allowed_paths.\n"
-            "- Put code-specific blockers in code_feedback.\n"
-            "- Put documentation-specific blockers in docs_feedback.\n"
-            "- If documentation_policy.required is false, set docs_approved=true.\n"
-            "- Set approved=true only when both code_approved and docs_approved are true.\n"
-            "- Reject if changed files leave allowed_paths, the task is inconsistent with the issue, or validation/test coverage is weak.\n\n"
-            f"Task context:\n{blob}"
-        ),
-        expected_output="A structured JSON review decision.",
-        model_cls=DeliveryReviewResult,
+        spec=crewai_task_registry.DELIVERY_REVIEW_TASK_SPEC,
+        payload=blob,
         verbose=verbose,
     )
     return _normalize_review_result(task_doc=task_doc, result=DeliveryReviewResult.model_validate(out.model_dump()))
@@ -1134,7 +1218,6 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
 
 def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryQAResult:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent
 
     allowed_paths = _allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
@@ -1147,30 +1230,24 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
             "tests": tests_allowlist,
             "acceptance": _acceptance_items(task_doc),
             "git_status": _git_status_text(worktree_root),
+            "validation_evidence": _validation_evidence_payload(task_doc),
         },
         ensure_ascii=False,
         indent=2,
     )
-    agent = Agent(
-        role=str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT),
-        goal="Run the declared validation commands and confirm the task meets its acceptance criteria before release.",
-        backstory="You are the QA gate. If tests fail or acceptance is weak, you block release and send the task back.",
+    qa_role = str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=qa_role,
+        template_role_id=planning.ROLE_QA_AGENT,
         llm=llm,
-        tools=tools["qa"],
-        allow_delegation=False,
         verbose=verbose,
+        tools_by_profile=tools,
     )
-    out = _kickoff_task_output(
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
         agent=agent,
-        name="qa_self_upgrade_task",
-        description=(
-            "Act as the QA gate for this task.\n"
-            "Use the validation tool to run the declared tests when needed.\n"
-            "Approve only if the commands pass and the acceptance criteria are covered.\n\n"
-            f"Task context:\n{blob}"
-        ),
-        expected_output="A structured JSON QA decision.",
-        model_cls=DeliveryQAResult,
+        spec=crewai_task_registry.DELIVERY_QA_TASK_SPEC,
+        payload=blob,
         verbose=verbose,
     )
     return DeliveryQAResult.model_validate(out.model_dump())
@@ -1243,7 +1320,6 @@ def _normalize_review_result(*, task_doc: dict[str, Any], result: DeliveryReview
 
 def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryAuditResult:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent
 
     allowed_paths = _allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
@@ -1269,31 +1345,17 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
         ensure_ascii=False,
         indent=2,
     )
-    agent = Agent(
-        role=planning.ROLE_ISSUE_AUDIT_AGENT,
-        goal="Audit the issue before scheduling any coding work, confirm the classification, and reject work that is not closed-loop enough to execute.",
-        backstory="You are the delivery audit gate. You stop vague, duplicate, misclassified, or low-value issues before the scheduler dispatches engineering work.",
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=planning.ROLE_ISSUE_AUDIT_AGENT,
         llm=llm,
-        tools=tools["read"],
-        allow_delegation=False,
         verbose=verbose,
+        tools_by_profile=tools,
     )
-    out = _kickoff_task_output(
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
         agent=agent,
-        name="audit_self_upgrade_issue",
-        description=(
-            "Audit this self-upgrade execution issue before scheduling.\n"
-            "Rules:\n"
-            "- Confirm whether the issue is really a bug, feature, quality, or process item.\n"
-            "- Confirm whether the issue description is closed-loop enough to execute now.\n"
-            "- If the issue is vague, duplicated, misclassified, or not worth doing, reject it.\n"
-            "- Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.\n"
-            "- docs_required should be true when README/runbook/changelog/operator docs need to be updated.\n"
-            "- Keep summary and feedback in 简体中文.\n\n"
-            f"Task context:\n{blob}"
-        ),
-        expected_output="A structured JSON audit decision.",
-        model_cls=DeliveryAuditResult,
+        spec=crewai_task_registry.DELIVERY_AUDIT_TASK_SPEC,
+        payload=blob,
         verbose=verbose,
     )
     return _normalize_audit_result(task_doc=task_doc, result=DeliveryAuditResult.model_validate(out.model_dump()))
@@ -1301,7 +1363,6 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
 
 def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryDocumentationResult:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent
 
     policy = _documentation_policy(task_doc)
     docs_paths = [str(x).strip() for x in (policy.get("allowed_paths") or []) if str(x).strip()]
@@ -1316,33 +1377,24 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
             "issue_url": _issue_url(task_doc),
             "documentation_policy": policy,
             "git_status": _git_status_text(worktree_root),
+            "validation_evidence": _validation_evidence_payload(task_doc),
         },
         ensure_ascii=False,
         indent=2,
     )
-    agent = Agent(
-        role=str(policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT),
-        goal="Update the repository documentation, operator runbooks, and release notes required by the validated issue before release.",
-        backstory="You are the documentation gate. You only edit approved documentation paths, keep language precise, and ensure the written docs match the actual delivered behavior.",
+    documentation_role = str(policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT)
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=documentation_role,
+        template_role_id=planning.ROLE_DOCUMENTATION_AGENT,
         llm=llm,
-        tools=tools["write"],
-        allow_delegation=False,
         verbose=verbose,
+        tools_by_profile=tools,
     )
-    out = _kickoff_task_output(
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
         agent=agent,
-        name="document_self_upgrade_task",
-        description=(
-            "Update documentation for this self-upgrade task.\n"
-            "Rules:\n"
-            "- Edit only documentation paths listed in documentation_policy.allowed_paths.\n"
-            "- Keep user-facing natural language in 简体中文.\n"
-            "- If no documentation change is required, set approved=true and updated=false with a clear summary.\n"
-            "- If documentation is required but you cannot complete it, set approved=false and explain why.\n\n"
-            f"Task context:\n{blob}"
-        ),
-        expected_output="A structured JSON documentation decision.",
-        model_cls=DeliveryDocumentationResult,
+        spec=crewai_task_registry.DELIVERY_DOCUMENTATION_TASK_SPEC,
+        payload=blob,
         verbose=verbose,
     )
     return DeliveryDocumentationResult.model_validate(out.model_dump())
@@ -1429,16 +1481,18 @@ def _register_delivery_agents(*, db: Any, task_doc: dict[str, Any]) -> dict[str,
     review_role = str(execution_policy.get("review_role") or planning.ROLE_REVIEW_AGENT).strip() or planning.ROLE_REVIEW_AGENT
     qa_role = str(execution_policy.get("qa_role") or planning.ROLE_QA_AGENT).strip() or planning.ROLE_QA_AGENT
     documentation_role = str(execution_policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT).strip() or planning.ROLE_DOCUMENTATION_AGENT
-    return {
-        "Scheduler-Agent": db.register_agent(role_id="Scheduler-Agent", project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="RUNNING", current_action="dispatching self-upgrade task"),
-        planning.ROLE_ISSUE_AUDIT_AGENT: db.register_agent(role_id=planning.ROLE_ISSUE_AUDIT_AGENT, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for issue audit"),
-        owner_role: db.register_agent(role_id=owner_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for coding"),
-        review_role: db.register_agent(role_id=review_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for review"),
-        qa_role: db.register_agent(role_id=qa_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for QA"),
-        documentation_role: db.register_agent(role_id=documentation_role, project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for docs sync"),
-        "Release-Agent": db.register_agent(role_id="Release-Agent", project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="IDLE", current_action="waiting for release"),
-        "Process-Metrics-Agent": db.register_agent(role_id="Process-Metrics-Agent", project_id=project_id, workstream_id=workstream_id, task_id=task_id, state="RUNNING", current_action="collecting delivery telemetry"),
-    }
+    return crewai_role_registry.register_team_blueprint(
+        db=db,
+        blueprint=crewai_role_registry.delivery_team_blueprint(
+            owner_role=owner_role,
+            review_role=review_role,
+            qa_role=qa_role,
+            documentation_role=documentation_role,
+        ),
+        project_id=project_id,
+        workstream_id=workstream_id,
+        task_id=task_id,
+    )
 
 
 def _set_agent_state(db: Any, agent_ids: dict[str, str], role_id: str, *, state: str, action: str) -> None:
@@ -1672,6 +1726,7 @@ def execute_task_delivery(
             doc = _load_yaml(ledger_path)
             if needs_coding:
                 attempt += 1
+                doc = _clear_validation_evidence(doc)
                 doc = _reset_documentation_policy(doc, pending=True, feedback=feedback)
                 doc = _update_task_state(
                     ledger_path,
@@ -1689,8 +1744,28 @@ def execute_task_delivery(
                 changed_files = _changed_files(worktree_root)
                 if changed_files and not impl.changed_files:
                     impl.changed_files = changed_files[:50]
+                coding_evidence = _run_validation_evidence(
+                    repo_root=worktree_root,
+                    commands=_candidate_validation_commands(impl.tests_to_run, _tests_allowlist(doc)),
+                    allowlist=_tests_allowlist(doc),
+                    source_stage="coding",
+                )
+                doc = _load_yaml(ledger_path)
+                doc = _persist_validation_evidence(ledger_path, doc, stage="coding", evidence=coding_evidence)
                 _append_markdown(logs_dir, "03_work.md", f"Coding Attempt {attempt}", [impl.summary or "(no summary)", *[f"changed_file: {p}" for p in impl.changed_files], *[f"unresolved: {u}" for u in impl.unresolved]])
                 _append_metric(logs_dir, event_type="SELF_UPGRADE_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
+                if coding_evidence:
+                    _append_markdown(logs_dir, "04_test.md", f"Coding Validation Evidence {attempt}", _validation_evidence_lines(coding_evidence))
+                    _append_metric(
+                        logs_dir,
+                        event_type="SELF_UPGRADE_CODING_VALIDATION_EVIDENCE",
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        message=f"coding validation evidence {attempt}",
+                        payload={"evidence": coding_evidence},
+                    )
                 _set_agent_state(db, agent_ids, owner_role, state="DONE", action=f"coding attempt {attempt} finished")
                 needs_coding = False
 
@@ -1803,7 +1878,26 @@ def execute_task_delivery(
                 last_qa = _run_qa_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
                 if lease_guard:
                     lease_guard.assert_held(task_id=task_id)
-                _append_markdown(logs_dir, "04_test.md", f"QA Attempt {attempt}", [last_qa.summary or "(no summary)", *[f"command: {x}" for x in last_qa.commands], *[f"failure: {x}" for x in last_qa.failures]])
+                qa_evidence = _run_validation_evidence(
+                    repo_root=worktree_root,
+                    commands=_candidate_validation_commands(last_qa.commands, _tests_allowlist(doc)),
+                    allowlist=_tests_allowlist(doc),
+                    source_stage="qa",
+                )
+                last_qa = _merge_qa_with_validation_evidence(result=last_qa, evidence=qa_evidence)
+                doc = _load_yaml(ledger_path)
+                doc = _persist_validation_evidence(ledger_path, doc, stage="qa", evidence=qa_evidence)
+                _append_markdown(
+                    logs_dir,
+                    "04_test.md",
+                    f"QA Attempt {attempt}",
+                    [
+                        last_qa.summary or "(no summary)",
+                        *[f"command: {x}" for x in last_qa.commands],
+                        *[f"failure: {x}" for x in last_qa.failures],
+                        *_validation_evidence_lines(qa_evidence),
+                    ],
+                )
                 _append_metric(logs_dir, event_type="SELF_UPGRADE_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
                 _set_agent_state(db, agent_ids, qa_role, state="DONE" if last_qa.approved else "FAILED", action=f"qa attempt {attempt} {'approved' if last_qa.approved else 'rejected'}")
                 if not last_qa.approved:

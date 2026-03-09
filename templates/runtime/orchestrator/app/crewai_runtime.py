@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -12,8 +14,60 @@ class CrewAIRuntimeError(RuntimeError):
     pass
 
 
+def _env_truthy(name: str, default: str = "0") -> bool:
+    raw = str(os.getenv(name, default) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _normalize_path(raw: str) -> Path:
     return Path(raw).expanduser().resolve()
+
+
+def _crewai_storage_dir_name() -> str:
+    explicit = str(os.getenv("CREWAI_STORAGE_DIR") or "").strip()
+    if explicit:
+        return explicit
+    teamos_explicit = str(os.getenv("TEAMOS_CREWAI_STORAGE_DIR") or "").strip()
+    if teamos_explicit:
+        os.environ.setdefault("CREWAI_STORAGE_DIR", teamos_explicit)
+        return teamos_explicit
+    return Path.cwd().name
+
+
+def _crewai_user_data_file() -> Path:
+    app_name = _crewai_storage_dir_name()
+    try:
+        import appdirs  # type: ignore
+
+        base = Path(appdirs.user_data_dir(app_name, "CrewAI"))
+    except Exception:
+        base = Path.home() / ".local" / "share" / app_name
+    base.mkdir(parents=True, exist_ok=True)
+    return base / ".crewai_user.json"
+
+
+def _prime_crewai_tracing_user_data() -> bool:
+    if not _env_truthy("TEAMOS_SUPPRESS_CREWAI_TRACING_PROMPTS", "1"):
+        return False
+    path = _crewai_user_data_file()
+    try:
+        payload: dict[str, Any] = {}
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                payload = {}
+        payload.update(
+            {
+                "first_execution_done": True,
+                "first_execution_at": payload.get("first_execution_at") or time.time(),
+                "trace_consent": False,
+            }
+        )
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def _candidate_paths() -> list[Path]:
@@ -106,6 +160,8 @@ def configure_crewai_src_path() -> dict[str, Any]:
 
 
 def _probe_crewai_uncached() -> dict[str, Any]:
+    os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
+    primed_prompt = _prime_crewai_tracing_user_data()
     cfg = configure_crewai_src_path()
     out: dict[str, Any] = {
         "configured": bool(cfg.get("configured")),
@@ -116,6 +172,7 @@ def _probe_crewai_uncached() -> dict[str, Any]:
         "module_path": "",
         "error": "",
         "candidates": list(cfg.get("candidates") or []),
+        "tracing_prompt_primed": primed_prompt,
     }
     selected_path = str(cfg.get("selected_path") or "").strip()
     selected = Path(selected_path) if selected_path else None
@@ -130,7 +187,27 @@ def _probe_crewai_uncached() -> dict[str, Any]:
     out["importable"] = True
     out["version"] = str(getattr(mod, "__version__", "") or "")
     out["module_path"] = str(getattr(mod, "__file__", "") or "")
+    out["tracing_prompt_suppressed"] = suppress_crewai_first_time_tracing_prompt()
     return out
+
+
+def suppress_crewai_first_time_tracing_prompt() -> bool:
+    if not _env_truthy("TEAMOS_SUPPRESS_CREWAI_TRACING_PROMPTS", "1"):
+        return False
+    try:
+        tracing_utils = __import__(
+            "crewai.events.listeners.tracing.utils",
+            fromlist=["set_suppress_tracing_messages", "mark_first_execution_done"],
+        )
+        set_suppress = getattr(tracing_utils, "set_suppress_tracing_messages", None)
+        mark_done = getattr(tracing_utils, "mark_first_execution_done", None)
+        if callable(set_suppress):
+            set_suppress(True)
+        if callable(mark_done):
+            mark_done(user_consented=False)
+        return True
+    except Exception:
+        return False
 
 
 @lru_cache(maxsize=1)

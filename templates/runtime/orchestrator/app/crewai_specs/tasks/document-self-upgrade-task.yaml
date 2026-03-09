@@ -1,0 +1,14 @@
+task_name: document_self_upgrade_task
+expected_output: A structured JSON documentation decision.
+output_model: DeliveryDocumentationResult
+description_template: |
+  Update documentation for this self-upgrade task.
+  Rules:
+  - Edit only documentation paths listed in documentation_policy.allowed_paths.
+  - Keep user-facing natural language in 简体中文.
+  - Use validation_evidence from the task context when documenting verification; never invent test results.
+  - If no documentation change is required, set approved=true and updated=false with a clear summary.
+  - If documentation is required but you cannot complete it, set approved=false and explain why.
+
+  Task context:
+  {payload}

@@ -1,8 +1,10 @@
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from types import SimpleNamespace
 from unittest import mock
 
@@ -100,6 +102,58 @@ class CrewAIRuntimeTests(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("crewai import failed", msg)
         self.assertIn("candidates=", msg)
+
+    def test_suppress_crewai_first_time_tracing_prompt_marks_declined_preference(self):
+        root = ModuleType("crewai")
+        root.__path__ = []
+        events = ModuleType("crewai.events")
+        events.__path__ = []
+        listeners = ModuleType("crewai.events.listeners")
+        listeners.__path__ = []
+        tracing = ModuleType("crewai.events.listeners.tracing")
+        tracing.__path__ = []
+        calls: list[tuple[str, object]] = []
+        utils = ModuleType("crewai.events.listeners.tracing.utils")
+
+        def _set_suppress(value: bool):
+            calls.append(("suppress", value))
+            return object()
+
+        def _mark_done(*, user_consented: bool = False):
+            calls.append(("mark", user_consented))
+
+        utils.set_suppress_tracing_messages = _set_suppress
+        utils.mark_first_execution_done = _mark_done
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "crewai": root,
+                "crewai.events": events,
+                "crewai.events.listeners": listeners,
+                "crewai.events.listeners.tracing": tracing,
+                "crewai.events.listeners.tracing.utils": utils,
+            },
+            clear=False,
+        ):
+            self.assertTrue(crewai_runtime.suppress_crewai_first_time_tracing_prompt())
+
+        self.assertEqual(calls, [("suppress", True), ("mark", False)])
+
+    def test_prime_crewai_tracing_user_data_marks_first_execution_done(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            home.mkdir(parents=True, exist_ok=True)
+            os.environ["HOME"] = str(home)
+            os.environ["CREWAI_STORAGE_DIR"] = "teamos-test-crewai"
+
+            self.assertTrue(crewai_runtime._prime_crewai_tracing_user_data())
+
+            user_file = crewai_runtime._crewai_user_data_file()
+            self.assertTrue(user_file.exists())
+            payload = json.loads(user_file.read_text(encoding="utf-8"))
+            self.assertTrue(payload["first_execution_done"])
+            self.assertFalse(payload["trace_consent"])
 
 
 if __name__ == "__main__":

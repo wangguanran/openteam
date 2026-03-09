@@ -21,8 +21,11 @@ from . import improvement_store
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import upsert_runtime_milestone
+from . import crewai_agent_factory
+from . import crewai_role_registry
 from .state_store import ledger_tasks_dir, runtime_state_root, team_os_root
 from . import workspace_store
+from . import crewai_workflow_registry
 
 
 class SelfUpgradeError(RuntimeError):
@@ -87,43 +90,23 @@ class _IssueRecord(BaseModel):
     error: str = ""
 
 
-ROLE_PRODUCT_MANAGER = "Product-Manager"
-ROLE_TEST_MANAGER = "Test-Manager"
-ROLE_ISSUE_DRAFTER = "Issue-Drafter"
-ROLE_PLAN_REVIEW_AGENT = "Plan-Review-Agent"
-ROLE_PLAN_QA_AGENT = "Plan-QA-Agent"
-ROLE_REVIEW_AGENT = "Review-Agent"
-ROLE_QA_AGENT = "QA-Agent"
-ROLE_PROCESS_OPTIMIZATION_ANALYST = "Process-Optimization-Analyst"
-ROLE_ISSUE_DISCUSSION_AGENT = "Issue-Discussion-Agent"
-ROLE_ISSUE_AUDIT_AGENT = "Issue-Audit-Agent"
-ROLE_DOCUMENTATION_AGENT = "Documentation-Agent"
-ROLE_MILESTONE_MANAGER = "Milestone-Manager-Agent"
-ROLE_CODE_QUALITY_ANALYST = "Code-Quality-Analyst"
-ROLE_FEATURE_CODING_AGENT = "Feature-Coding-Agent"
-ROLE_BUGFIX_CODING_AGENT = "Bugfix-Coding-Agent"
-ROLE_PROCESS_OPTIMIZATION_AGENT = "Process-Optimization-Agent"
-ROLE_CODE_QUALITY_AGENT = "Code-Quality-Agent"
-
-ROLE_DISPLAY_ZH = {
-    ROLE_PRODUCT_MANAGER: "产品经理",
-    ROLE_TEST_MANAGER: "测试经理",
-    ROLE_ISSUE_DRAFTER: "提单 Agent",
-    ROLE_PLAN_REVIEW_AGENT: "规划评审 Agent",
-    ROLE_PLAN_QA_AGENT: "规划 QA Agent",
-    ROLE_REVIEW_AGENT: "评审 Agent",
-    ROLE_QA_AGENT: "QA Agent",
-    ROLE_PROCESS_OPTIMIZATION_ANALYST: "流程优化分析 Agent",
-    ROLE_ISSUE_DISCUSSION_AGENT: "需求答复 Agent",
-    ROLE_ISSUE_AUDIT_AGENT: "问题审计 Agent",
-    ROLE_DOCUMENTATION_AGENT: "文档同步 Agent",
-    ROLE_MILESTONE_MANAGER: "里程碑经理 Agent",
-    ROLE_CODE_QUALITY_ANALYST: "代码质量分析 Agent",
-    ROLE_FEATURE_CODING_AGENT: "功能编码 Agent",
-    ROLE_BUGFIX_CODING_AGENT: "缺陷修复 Agent",
-    ROLE_PROCESS_OPTIMIZATION_AGENT: "流程优化编码 Agent",
-    ROLE_CODE_QUALITY_AGENT: "代码质量治理 Agent",
-}
+ROLE_PRODUCT_MANAGER = crewai_role_registry.ROLE_PRODUCT_MANAGER
+ROLE_TEST_MANAGER = crewai_role_registry.ROLE_TEST_MANAGER
+ROLE_ISSUE_DRAFTER = crewai_role_registry.ROLE_ISSUE_DRAFTER
+ROLE_PLAN_REVIEW_AGENT = crewai_role_registry.ROLE_PLAN_REVIEW_AGENT
+ROLE_PLAN_QA_AGENT = crewai_role_registry.ROLE_PLAN_QA_AGENT
+ROLE_REVIEW_AGENT = crewai_role_registry.ROLE_REVIEW_AGENT
+ROLE_QA_AGENT = crewai_role_registry.ROLE_QA_AGENT
+ROLE_PROCESS_OPTIMIZATION_ANALYST = crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST
+ROLE_ISSUE_DISCUSSION_AGENT = crewai_role_registry.ROLE_ISSUE_DISCUSSION_AGENT
+ROLE_ISSUE_AUDIT_AGENT = crewai_role_registry.ROLE_ISSUE_AUDIT_AGENT
+ROLE_DOCUMENTATION_AGENT = crewai_role_registry.ROLE_DOCUMENTATION_AGENT
+ROLE_MILESTONE_MANAGER = crewai_role_registry.ROLE_MILESTONE_MANAGER
+ROLE_CODE_QUALITY_ANALYST = crewai_role_registry.ROLE_CODE_QUALITY_ANALYST
+ROLE_FEATURE_CODING_AGENT = crewai_role_registry.ROLE_FEATURE_CODING_AGENT
+ROLE_BUGFIX_CODING_AGENT = crewai_role_registry.ROLE_BUGFIX_CODING_AGENT
+ROLE_PROCESS_OPTIMIZATION_AGENT = crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_AGENT
+ROLE_CODE_QUALITY_AGENT = crewai_role_registry.ROLE_CODE_QUALITY_AGENT
 
 MODULE_ALIASES = {
     "runtime": "Runtime",
@@ -215,11 +198,7 @@ def _slug(text: str, *, default: str = "item") -> str:
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{3,}")
-
-
-def role_display_zh(role_id: str) -> str:
-    rid = str(role_id or "").strip()
-    return ROLE_DISPLAY_ZH.get(rid, rid or "未命名角色")
+role_display_zh = crewai_role_registry.role_display_zh
 
 
 def _module_slug(module: str) -> str:
@@ -319,7 +298,7 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
 
 
 def _lane_requires_user_confirmation(lane: str) -> bool:
-    return str(lane or "").strip().lower() in ("feature", "quality")
+    return crewai_workflow_registry.workflow_for_lane(lane).requires_user_confirmation
 
 
 def _issue_type_token(lane: str) -> str:
@@ -1089,37 +1068,16 @@ def _bump_version(version: str, bump: str) -> str:
 
 
 def _lane_default_version_bump(lane: str) -> str:
-    ln = str(lane or "bug").strip().lower()
-    if ln == "feature":
-        return "minor"
-    if ln == "bug":
-        return "patch"
-    if ln == "quality":
-        return "none"
-    return "none"
+    return crewai_workflow_registry.workflow_for_lane(lane).default_version_bump
 
 
 def _lane_default_cooldown_hours(lane: str, *, requires_user_confirmation: bool) -> int:
-    ln = str(lane or "bug").strip().lower()
-    if ln == "feature":
-        return int(os.getenv("TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS", "1") or "1")
-    if ln == "quality":
-        return int(os.getenv("TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS", "1") or "1")
-    if ln == "process":
-        return int(os.getenv("TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS", "24") or "24")
-    return 0
+    _ = requires_user_confirmation
+    return crewai_workflow_registry.workflow_for_lane(lane).cooldown_hours()
 
 
 def _lane_default_baseline_action(lane: str, version_bump: str) -> str:
-    ln = str(lane or "bug").strip().lower()
-    vb = str(version_bump or "").strip().lower()
-    if ln == "feature":
-        return "new_baseline" if vb in ("major", "minor") else "feature_followup"
-    if ln == "bug":
-        return "patch_release"
-    if ln == "quality":
-        return "quality_improvement"
-    return "process_improvement"
+    return crewai_workflow_registry.workflow_for_lane(lane).default_baseline_action(version_bump)
 
 
 def _coding_owner_role(lane: str) -> str:
@@ -1345,66 +1303,17 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
 
 def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, verbose: bool = False) -> tuple[UpgradePlan, dict[str, Any]]:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent, Crew, Process, Task
+    from crewai import Crew, Process, Task
 
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
     llm = _crewai_llm()
-    product_manager = Agent(
-        role=ROLE_PRODUCT_MANAGER,
-        goal="Identify worthwhile feature improvements and product-level optimizations for the target repository.",
-        backstory="You think like a product manager. You prioritize user-visible value, versioning impact, and whether a change belongs in a new baseline.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
-    test_manager = Agent(
-        role=ROLE_TEST_MANAGER,
-        goal="Identify bugs, regressions, and missing black-box or white-box tests from the repository context.",
-        backstory="You reason like a QA/test lead and focus on reproducible defects, weak test coverage, and operational risk.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
-    issue_drafter = Agent(
-        role=ROLE_ISSUE_DRAFTER,
-        goal="Break features and bug fixes into small, execution-scoped engineering work items suitable for GitHub Projects and downstream coding agents.",
-        backstory="You think like a delivery lead. You keep issues small, explicit, and scoped to one piece of work, with clear owner roles and worktree hints.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
-    review_agent = Agent(
-        role=ROLE_PLAN_REVIEW_AGENT,
-        goal="Enforce code review constraints so coding agents only touch issue-scoped files and commit history remains task-linked.",
-        backstory="You act like an engineering reviewer protecting scope discipline, commit hygiene, and release boundaries.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
-    qa_agent = Agent(
-        role=ROLE_PLAN_QA_AGENT,
-        goal="Ensure each work item has explicit verification, QA handoff, and close criteria before it can be considered done.",
-        backstory="You are the final delivery gate. No item closes without review and QA evidence.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
-    process_analyst = Agent(
-        role=ROLE_PROCESS_OPTIMIZATION_ANALYST,
-        goal="Use recent execution telemetry to identify improvements in the self-upgrade process itself.",
-        backstory="You optimize the team workflow by looking at timings, failures, repeated blockers, and wasted motion.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
-    code_quality_analyst = Agent(
-        role=ROLE_CODE_QUALITY_ANALYST,
-        goal="Identify code quality improvements grounded in repository structure, duplicated logic, large files, stale files, and weak reuse boundaries.",
-        backstory="You think like a staff engineer doing code health stewardship. You look for dead code, cleanup opportunities, safer deletions, and refactors that increase reuse without changing product scope.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
+    product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
+    test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
+    issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, llm=llm, verbose=verbose)
+    review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, llm=llm, verbose=verbose)
+    qa_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, llm=llm, verbose=verbose)
+    process_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, llm=llm, verbose=verbose)
+    code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, llm=llm, verbose=verbose)
 
     feature_task = Task(
         name="product_feature_scan",
@@ -2375,7 +2284,7 @@ def _discussion_fallback_reply(*, proposal: dict[str, Any], comments_text: str, 
 
 def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any], verbose: bool = False) -> ProposalDiscussionResponse:
     crewai_runtime.require_crewai_importable()
-    from crewai import Agent, Crew, Process, Task
+    from crewai import Crew, Process, Task
 
     llm = _crewai_llm()
     payload = {
@@ -2390,14 +2299,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             for c in comments
         ],
     }
-    agent = Agent(
-        role=ROLE_ISSUE_DISCUSSION_AGENT,
-        goal="Respond to improvement proposal questions, clarify scope, and update the proposal without starting development until the user confirms.",
-        backstory="You act like the PM-side proposal discussion owner. You answer questions, tighten the proposal, and only approve development when the user is explicit.",
-        llm=llm,
-        allow_delegation=False,
-        verbose=verbose,
-    )
+    agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DISCUSSION_AGENT, llm=llm, verbose=verbose)
     task = Task(
         name="reply_to_improvement_proposal_discussion",
         description=(
@@ -2541,6 +2443,7 @@ def _upsert_proposal(
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     finding = _localize_finding_to_zh(finding)
+    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
     if finding.work_items:
         finding = finding.model_copy(
             update={
@@ -2580,6 +2483,7 @@ def _upsert_proposal(
         ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     doc = {
         "proposal_id": proposal_id,
+        "workflow_id": str(existing.get("workflow_id") or workflow.workflow_id),
         "target_id": str(target_id or "").strip(),
         "lane": finding.lane,
         "kind": finding.kind,
@@ -3282,72 +3186,13 @@ def _sync_panel(*, db, project_id: str) -> dict[str, Any]:
 
 
 def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str) -> dict[str, str]:
-    return {
-        ROLE_PRODUCT_MANAGER: db.register_agent(
-            role_id=ROLE_PRODUCT_MANAGER,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="discovering feature opportunities",
-        ),
-        ROLE_TEST_MANAGER: db.register_agent(
-            role_id=ROLE_TEST_MANAGER,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="scanning bugs and test gaps",
-        ),
-        ROLE_ISSUE_DRAFTER: db.register_agent(
-            role_id=ROLE_ISSUE_DRAFTER,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="splitting work into executable items",
-        ),
-        ROLE_PLAN_REVIEW_AGENT: db.register_agent(
-            role_id=ROLE_PLAN_REVIEW_AGENT,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="checking scope and review gates",
-        ),
-        ROLE_PLAN_QA_AGENT: db.register_agent(
-            role_id=ROLE_PLAN_QA_AGENT,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="reviewing QA and acceptance gates",
-        ),
-        ROLE_PROCESS_OPTIMIZATION_ANALYST: db.register_agent(
-            role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="analyzing process telemetry",
-        ),
-        ROLE_CODE_QUALITY_ANALYST: db.register_agent(
-            role_id=ROLE_CODE_QUALITY_ANALYST,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="reviewing code quality and cleanup opportunities",
-        ),
-        ROLE_MILESTONE_MANAGER: db.register_agent(
-            role_id=ROLE_MILESTONE_MANAGER,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            task_id=task_id,
-            state="RUNNING",
-            current_action="planning release lines and milestones",
-        ),
-    }
+    return crewai_role_registry.register_team_blueprint(
+        db=db,
+        blueprint=crewai_role_registry.planning_team_blueprint(),
+        project_id=project_id,
+        workstream_id=workstream_id,
+        task_id=task_id,
+    )
 
 
 def _finish_agents(*, db, agent_ids: dict[str, str], state: str, current_action: str) -> None:
@@ -3369,8 +3214,10 @@ def _record_from_materialized_item(
     proposal_id: str,
     dry_run: bool,
 ) -> dict[str, Any]:
+    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
     if dry_run:
         return {
+            "workflow_id": workflow.workflow_id,
             "lane": finding.lane,
             "kind": finding.kind,
             "title": work_item.title,
@@ -3402,6 +3249,7 @@ def _record_from_materialized_item(
         proposal_id=proposal_id,
     )
     return {
+        "workflow_id": workflow.workflow_id,
         "lane": finding.lane,
         "kind": finding.kind,
         "title": work_item.title,
@@ -3540,9 +3388,10 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     pending_proposals: list[dict[str, Any]] = []
     current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     for finding in plan.findings:
-        requires_confirmation = _lane_requires_user_confirmation(finding.lane) or bool(finding.requires_user_confirmation)
+        workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
+        requires_confirmation = workflow.requires_user_confirmation or bool(finding.requires_user_confirmation)
         work_items = list(finding.work_items or []) or _default_work_items(repo_root=repo_root, finding=finding)
-        if finding.lane == "bug":
+        if not workflow.uses_proposal:
             for work_item in work_items:
                 record = _record_from_materialized_item(
                     target_id=target_id,
@@ -3577,11 +3426,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         proposal_id = str(proposal.get("proposal_id") or "")
         status = str(proposal.get("status") or "").strip().upper()
         due = _proposal_due(proposal)
-        should_materialize = False
-        if requires_confirmation:
-            should_materialize = status == "APPROVED" and due
-        else:
-            should_materialize = status not in ("REJECTED", "HOLD", "MATERIALIZED") and due
+        should_materialize = workflow.should_materialize(status=status, due=due)
 
         if should_materialize:
             for work_item in work_items:
@@ -3616,6 +3461,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
 
         pending_doc = {
             "proposal_id": proposal_id,
+            "workflow_id": str(proposal.get("workflow_id") or workflow.workflow_id),
             "lane": finding.lane,
             "title": proposal.get("title") or finding.title,
             "status": status,

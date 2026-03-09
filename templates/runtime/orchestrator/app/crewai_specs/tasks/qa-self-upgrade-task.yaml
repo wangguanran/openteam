@@ -1,0 +1,10 @@
+task_name: qa_self_upgrade_task
+expected_output: A structured JSON QA decision.
+output_model: DeliveryQAResult
+description_template: |
+  Act as the QA gate for this task.
+  Review the prior validation_evidence and use the validation tool to rerun the declared tests when needed.
+  Approve only if the commands pass and the acceptance criteria are covered.
+
+  Task context:
+  {payload}

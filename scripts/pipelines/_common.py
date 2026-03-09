@@ -44,7 +44,12 @@ def ts_compact_utc() -> str:
 
 
 def _looks_like_teamos_repo(root: Path) -> bool:
-    return (root / "AGENTS.md").exists() and (root / "scripts" / "pipelines").exists()
+    markers = (
+        (root / "TEAMOS.md").exists(),
+        (root / "templates" / "runtime" / "orchestrator").exists(),
+        (root / "schemas").exists(),
+    )
+    return (root / "scripts" / "pipelines").exists() and any(markers)
 
 
 def repo_root() -> Path:
@@ -355,7 +360,7 @@ def resolve_repo_root(args: argparse.Namespace) -> Path:
     if str(getattr(args, "repo_root", "") or "").strip():
         p = Path(str(getattr(args, "repo_root"))).expanduser().resolve()
         if not _looks_like_teamos_repo(p):
-            raise PipelineError(f"invalid --repo-root (missing AGENTS.md or scripts/pipelines): {p}")
+            raise PipelineError(f"invalid --repo-root (missing Team-OS repo markers): {p}")
         return p
     return repo_root()
 

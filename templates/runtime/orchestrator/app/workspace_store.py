@@ -25,7 +25,11 @@ def team_os_root() -> Path:
 
     p = Path(__file__).resolve()
     for parent in [p.parent] + list(p.parents):
-        if (parent / "AGENTS.md").exists() and (parent / "scripts" / "pipelines").exists():
+        if (parent / "scripts" / "pipelines").exists() and (
+            (parent / "TEAMOS.md").exists()
+            or (parent / "templates" / "runtime" / "orchestrator").exists()
+            or (parent / "schemas").exists()
+        ):
             return parent.resolve()
     return Path("/team-os").resolve()
 

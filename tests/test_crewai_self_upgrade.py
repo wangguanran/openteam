@@ -150,6 +150,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
 
                 self.assertTrue(out["ok"])
                 self.assertTrue(out["dry_run"])
+                self.assertEqual(out["records"][0]["workflow_id"], "bug-fix")
                 self.assertEqual(out["records"][0]["task_id"], "")
                 self.assertEqual(out["records"][0]["issue_url"], "")
                 state = crewai_self_upgrade._read_state(out["target_id"])
@@ -292,10 +293,12 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 self.assertTrue(out["ok"])
                 self.assertEqual(out["records"], [])
                 self.assertEqual(len(out["pending_proposals"]), 1)
+                self.assertEqual(out["pending_proposals"][0]["workflow_id"], "feature-improvement")
                 self.assertEqual(out["pending_proposals"][0]["status"], "PENDING_CONFIRMATION")
                 self.assertEqual(out["pending_proposals"][0]["discussion_issue_url"], "https://example.com/issues/12")
                 proposals = improvement_store.list_proposals(target_id=out["target_id"])
                 self.assertEqual(len(proposals), 1)
+                self.assertEqual(proposals[0].get("workflow_id"), "feature-improvement")
 
     def test_run_self_upgrade_approved_feature_materializes_after_cooldown(self):
         db = _FakeDB()

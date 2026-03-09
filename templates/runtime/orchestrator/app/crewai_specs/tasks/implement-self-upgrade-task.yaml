@@ -1,0 +1,15 @@
+task_name: implement_self_upgrade_task
+expected_output: A structured JSON summary of the implementation attempt.
+output_model: DeliveryImplementationResult
+description_template: |
+  Implement the task directly in the repository using the provided tools.
+  Rules:
+  - Modify only files under allowed_paths.
+  - If allowed_paths is empty, report the blocker instead of editing random files.
+  - Keep commits/task history issue-scoped.
+  - Run relevant validation commands before you finish.
+  - Put the exact verification commands in tests_to_run so the runtime can capture durable evidence.
+  - If a blocker remains, report it in unresolved.
+
+  Task context:
+  {payload}

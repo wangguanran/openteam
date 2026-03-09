@@ -1,0 +1,15 @@
+task_name: audit_self_upgrade_issue
+expected_output: A structured JSON audit decision.
+output_model: DeliveryAuditResult
+description_template: |
+  Audit this self-upgrade execution issue before scheduling.
+  Rules:
+  - Confirm whether the issue is really a bug, feature, quality, or process item.
+  - Confirm whether the issue description is closed-loop enough to execute now.
+  - If the issue is vague, duplicated, misclassified, or not worth doing, reject it.
+  - Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.
+  - docs_required should be true when README/runbook/changelog/operator docs need to be updated.
+  - Keep summary and feedback in 简体中文.
+
+  Task context:
+  {payload}

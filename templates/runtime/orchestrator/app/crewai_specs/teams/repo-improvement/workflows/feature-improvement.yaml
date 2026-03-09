@@ -1,0 +1,18 @@
+workflow_id: feature-improvement
+display_name_zh: 功能改进流程
+lane: feature
+description: Discover feature opportunities, wait for proposal approval, then deliver approved work items.
+task_source: proposal
+requires_user_confirmation: true
+materialize_requires_approval: true
+default_version_bump: minor
+cooldown_env_var: TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS
+default_cooldown_hours: 1
+baseline_action_default: feature_followup
+baseline_action_by_bump:
+  major: new_baseline
+  minor: new_baseline
+stages:
+  - planning
+  - proposal-confirmation
+  - delivery
