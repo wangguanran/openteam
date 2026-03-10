@@ -279,8 +279,80 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 )
 
         self.assertFalse(result.approved)
-        self.assertEqual(result.closure, "needs_clarification")
-        self.assertIn("未能证明 bug 当前可复现", " ".join(result.feedback))
+        self.assertEqual(result.closure, "rejected")
+        self.assertIn("确认当前无法复现 bug", " ".join(result.feedback))
+
+    def test_execute_task_delivery_closes_when_issue_audit_confirms_bug_not_reproducible(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=False,
+                        classification="bug",
+                        closure="rejected",
+                        worth_doing=False,
+                        docs_required=False,
+                        summary="确认当前无法复现，直接关闭。",
+                        feedback=["Issue Audit Agent 已执行复现测试，确认当前无法复现 bug；问题可能已被其他提交或流程更新消除，将直接关闭。"],
+                        reproduction_steps=["运行回归测试。"],
+                        test_case_files=["tests/test_demo.py"],
+                        reproduction_commands=["python -m unittest tests.test_demo"],
+                        verification_steps=["无需修复，记录关闭原因。"],
+                        reproduced_in_audit=False,
+                        reproduction_evidence=[
+                            {
+                                "command": "python -m unittest tests.test_demo",
+                                "ok": True,
+                                "returncode": 0,
+                                "stdout_tail": "OK\n",
+                                "stderr_tail": "",
+                                "captured_at": "2026-03-10T00:00:00Z",
+                                "source_stage": "audit",
+                            }
+                        ],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    side_effect=AssertionError("coding should not start when bug is not reproducible"),
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "closed")
+        self.assertEqual(out["reason"], "bug_not_reproducible")
+        self.assertEqual(updated["status"], "closed")
+        execution = updated.get("self_upgrade_execution") or {}
+        self.assertEqual(execution.get("close_reason"), "bug_not_reproducible")
 
     def test_execute_task_delivery_dry_run_closes_task(self):
         db = _FakeDB()

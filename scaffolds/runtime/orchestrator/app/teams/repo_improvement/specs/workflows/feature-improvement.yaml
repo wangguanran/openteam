@@ -7,6 +7,8 @@ task_source: proposal
 requires_user_confirmation: true
 materialize_requires_approval: true
 default_version_bump: minor
+max_candidates_env_var: TEAMOS_SELF_UPGRADE_FEATURE_MAX_CANDIDATES
+default_max_candidates: 5
 cooldown_env_var: TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS
 default_cooldown_hours: 1
 baseline_action_default: feature_followup

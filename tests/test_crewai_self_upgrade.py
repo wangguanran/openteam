@@ -300,6 +300,75 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 self.assertEqual(len(proposals), 1)
                 self.assertEqual(proposals[0].get("workflow_id"), "feature-improvement")
 
+    def test_coerce_plan_limits_feature_findings_to_workflow_cap(self):
+        feature_findings = [
+            crewai_self_upgrade.UpgradeFinding(
+                kind="FEATURE",
+                lane="feature",
+                title=f"Feature {idx}",
+                summary=f"Summary {idx}",
+                workstream_id="general",
+                version_bump="minor",
+                target_version="0.2.0",
+                requires_user_confirmation=True,
+                work_items=[
+                    crewai_self_upgrade.UpgradeWorkItem(
+                        title=f"Feature work item {idx}",
+                        summary="Implement feature candidate",
+                        owner_role="Feature-Coding-Agent",
+                        review_role="Review-Agent",
+                        qa_role="QA-Agent",
+                        workstream_id="general",
+                        allowed_paths=[f"src/feature_{idx}.py"],
+                        tests=[f"python -m unittest tests.test_feature_{idx}"],
+                        acceptance=[f"Feature {idx} is available"],
+                        worktree_hint=f"/tmp/worktrees/feature-{idx}",
+                    )
+                ],
+            )
+            for idx in range(6)
+        ]
+        bug_finding = crewai_self_upgrade.UpgradeFinding(
+            kind="BUG",
+            lane="bug",
+            title="Bug 1",
+            summary="Fix bug",
+            workstream_id="general",
+            version_bump="patch",
+            target_version="0.1.1",
+            work_items=[
+                crewai_self_upgrade.UpgradeWorkItem(
+                    title="Bug work item",
+                    summary="Fix bug",
+                    owner_role="Bugfix-Coding-Agent",
+                    review_role="Review-Agent",
+                    qa_role="QA-Agent",
+                    workstream_id="general",
+                    allowed_paths=["src/bug.py"],
+                    tests=["python -m unittest tests.test_bug"],
+                    acceptance=["Bug fixed"],
+                    worktree_hint="/tmp/worktrees/bug-1",
+                )
+            ],
+        )
+        plan = crewai_self_upgrade.UpgradePlan(summary="capped", findings=[*feature_findings, bug_finding])
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            normalized = crewai_self_upgrade._coerce_plan(
+                SimpleNamespace(to_dict=lambda: plan.model_dump()),
+                max_findings=10,
+                repo_root=repo_root,
+                current_version="0.1.0",
+                project_id="teamos",
+            )
+
+        feature_titles = [item.title for item in normalized.findings if item.lane == "feature"]
+        bug_titles = [item.title for item in normalized.findings if item.lane == "bug"]
+        self.assertEqual(len(feature_titles), 5)
+        self.assertEqual(bug_titles, ["Bug 1"])
+
     def test_run_self_upgrade_approved_feature_materializes_after_cooldown(self):
         db = _FakeDB()
         finding = crewai_self_upgrade.UpgradeFinding(

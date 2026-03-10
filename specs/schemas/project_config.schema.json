@@ -66,6 +66,10 @@
               },
               "disabled_reason": {
                 "type": "string"
+              },
+              "max_candidates": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }

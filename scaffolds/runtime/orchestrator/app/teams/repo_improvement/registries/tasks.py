@@ -101,6 +101,7 @@ FALLBACK_TASK_SPECS["audit_self_upgrade_issue"] = CrewTaskSpec(
         "- If current_lane == bug, do not approve unless the issue/task contains explicit reproduction_steps, repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps.\n"
         "- For bug items, reproduction_commands must be real test commands/scripts that reproduce the current bug before coding. Do not invent missing files, commands, or steps.\n"
         "- For bug items, verification_commands should describe the commands QA should rerun after the fix when they are known.\n"
+        "- For bug items, if you actually run the reproduction_commands and the bug is no longer reproducible, set closure=rejected and explain that the issue should be closed instead of asking for clarification.\n"
         "- Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.\n"
         "- docs_required should be true when README/runbook/changelog/operator docs need to be updated.\n"
         "- Keep summary and feedback in 简体中文.\n\n"

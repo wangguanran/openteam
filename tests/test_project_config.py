@@ -103,6 +103,27 @@ class TestProjectConfig(unittest.TestCase):
             out4 = json.loads(p4.stdout)
             self.assertTrue(out4.get("changed"))
 
+            p5 = self._run(
+                [
+                    "python3",
+                    str(script),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(ws),
+                    "--project",
+                    "demo",
+                    "set",
+                    "--key",
+                    "repo_improvement.workflow_settings.feature-improvement.max_candidates",
+                    "--value",
+                    "2",
+                ]
+            )
+            self.assertEqual(p5.returncode, 0, msg=p5.stderr)
+            out5 = json.loads(p5.stdout)
+            self.assertTrue(out5.get("changed"))
+
             pv = self._run(
                 [
                     "python3",

@@ -484,6 +484,14 @@ def _audit_reproduced(evidence: list[dict[str, Any]]) -> bool:
     )
 
 
+def _audit_confirmed_not_reproducible(evidence: list[dict[str, Any]]) -> bool:
+    if not evidence:
+        return False
+    if any(_audit_infra_error(str(item.get("stderr_tail") or "")) for item in evidence):
+        return False
+    return all(bool(item.get("ok")) for item in evidence)
+
+
 def _audit_evidence_feedback(evidence: list[dict[str, Any]]) -> list[str]:
     feedback: list[str] = []
     for item in evidence:
@@ -1358,6 +1366,7 @@ def _normalize_audit_result(
     )
     normalized_audit_evidence = list(audit_evidence or result.reproduction_evidence or [])
     reproduced_in_audit = _audit_reproduced(normalized_audit_evidence)
+    confirmed_not_reproducible = _audit_confirmed_not_reproducible(normalized_audit_evidence)
     if classification != lane and closure == "ready":
         closure = "misclassified"
         approved = False
@@ -1378,12 +1387,19 @@ def _normalize_audit_result(
                 bug_feedback.append("测试 case 脚本不存在或越界：" + ", ".join(missing_test_case_files[:10]))
         if not reproduction_commands:
             bug_feedback.append("缺少可执行的 bug 复现测试命令。")
-        if not verification_steps:
+        if not verification_steps and not confirmed_not_reproducible:
             bug_feedback.append("缺少修复后的验证步骤。")
         bug_feedback.extend(_audit_evidence_feedback(normalized_audit_evidence))
         if reproduction_commands:
             if not normalized_audit_evidence:
                 bug_feedback.append("Issue Audit Agent 未留下实际的 pre-fix 复现测试证据。")
+            elif confirmed_not_reproducible:
+                closure = "rejected"
+                approved = False
+                worth_doing = False
+                resolved = "Issue Audit Agent 已执行复现测试，确认当前无法复现 bug；问题可能已被其他提交或流程更新消除，将直接关闭。"
+                if resolved not in feedback:
+                    feedback.append(resolved)
             elif not reproduced_in_audit:
                 bug_feedback.append("Issue Audit Agent 已执行复现测试，但未能证明 bug 当前可复现。")
         for item in bug_feedback:
@@ -1808,6 +1824,52 @@ def execute_task_delivery(
                 _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
                 _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
             else:
+                if audit_result.closure == "rejected" and audit_result.classification == "bug" and bool(audit_result.reproduction_evidence) and not bool(audit_result.reproduced_in_audit):
+                    doc = _update_task_state(
+                        ledger_path,
+                        doc,
+                        status="closed",
+                        stage="closed",
+                        owner_role=owner_role,
+                        extra_execution={
+                            "active_role": planning.ROLE_ISSUE_AUDIT_AGENT,
+                            "last_error": "",
+                            "last_feedback": audit_result.feedback,
+                            "closed_at": _utc_now_iso(),
+                            "close_reason": "bug_not_reproducible",
+                        },
+                    )
+                    _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="DONE", action="issue audit closed non-reproducible bug")
+                    _finish_delivery_agents(db, agent_ids, state="DONE", action="delivery closed because bug is not reproducible")
+                    _append_markdown(
+                        logs_dir,
+                        "02_plan.md",
+                        "Issue Audit Closed",
+                        [
+                            audit_result.summary or "Issue 审计确认当前 bug 无法复现，任务关闭。",
+                            f"reproduced_in_audit: {bool(audit_result.reproduced_in_audit)}",
+                            *[f"feedback: {x}" for x in audit_result.feedback],
+                            *_validation_evidence_lines(list(audit_result.reproduction_evidence or [])),
+                        ],
+                    )
+                    _append_metric(
+                        logs_dir,
+                        event_type="SELF_UPGRADE_ISSUE_AUDIT_CLOSED",
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        message="issue audit closed non-reproducible bug",
+                        payload=audit_result.model_dump(),
+                    )
+                    _emit_event(
+                        db,
+                        event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_CLOSED",
+                        actor=actor,
+                        task_doc=doc,
+                        payload={"task_id": task_id, "reason": "bug_not_reproducible", **audit_result.model_dump()},
+                    )
+                    return {"ok": True, "task_id": task_id, "status": "closed", "reason": "bug_not_reproducible", "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
                 blocked_status = "needs_clarification" if audit_result.closure in ("needs_clarification", "split_required", "duplicate", "misclassified", "pending") else "blocked"
                 doc = _update_task_state(
                     ledger_path,

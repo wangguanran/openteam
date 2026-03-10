@@ -24,6 +24,8 @@ class WorkflowSpec:
     materialize_requires_approval: bool = False
     materialize_blocked_statuses: tuple[str, ...] = ("REJECTED", "HOLD", "MATERIALIZED")
     default_version_bump: str = "none"
+    max_candidates_env_var: str = ""
+    default_max_candidates: int = 0
     cooldown_env_var: str = ""
     default_cooldown_hours: int = 0
     baseline_action_default: str = ""
@@ -41,6 +43,15 @@ class WorkflowSpec:
             except Exception:
                 return max(0, int(self.default_cooldown_hours))
         return max(0, int(self.default_cooldown_hours))
+
+    def max_candidates(self) -> int:
+        if self.max_candidates_env_var:
+            raw = str(os.getenv(self.max_candidates_env_var, str(self.default_max_candidates)) or "").strip()
+            try:
+                return max(0, int(raw))
+            except Exception:
+                return max(0, int(self.default_max_candidates))
+        return max(0, int(self.default_max_candidates))
 
     def default_baseline_action(self, version_bump: str) -> str:
         bump = str(version_bump or "").strip().lower()
@@ -76,6 +87,8 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         requires_user_confirmation=True,
         materialize_requires_approval=True,
         default_version_bump="minor",
+        max_candidates_env_var="TEAMOS_SELF_UPGRADE_FEATURE_MAX_CANDIDATES",
+        default_max_candidates=5,
         cooldown_env_var="TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS",
         default_cooldown_hours=1,
         baseline_action_default="feature_followup",
@@ -95,6 +108,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         requires_user_confirmation=False,
         materialize_requires_approval=False,
         default_version_bump="patch",
+        default_max_candidates=0,
         default_cooldown_hours=0,
         baseline_action_default="patch_release",
     ),
@@ -113,6 +127,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         requires_user_confirmation=True,
         materialize_requires_approval=True,
         default_version_bump="none",
+        default_max_candidates=0,
         cooldown_env_var="TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS",
         default_cooldown_hours=1,
         baseline_action_default="quality_improvement",
@@ -132,6 +147,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         materialize_requires_approval=False,
         materialize_blocked_statuses=("REJECTED", "HOLD", "MATERIALIZED"),
         default_version_bump="none",
+        default_max_candidates=0,
         cooldown_env_var="TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS",
         default_cooldown_hours=24,
         baseline_action_default="process_improvement",
@@ -158,6 +174,8 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
         materialize_requires_approval=bool(doc.get("materialize_requires_approval")),
         materialize_blocked_statuses=tuple(str(item).strip() for item in list(doc.get("materialize_blocked_statuses") or []) if str(item).strip()) or ("REJECTED", "HOLD", "MATERIALIZED"),
         default_version_bump=str(doc.get("default_version_bump") or "none").strip(),
+        max_candidates_env_var=str(doc.get("max_candidates_env_var") or "").strip(),
+        default_max_candidates=max(0, int(doc.get("default_max_candidates") or 0)),
         cooldown_env_var=str(doc.get("cooldown_env_var") or "").strip(),
         default_cooldown_hours=max(0, int(doc.get("default_cooldown_hours") or 0)),
         baseline_action_default=str(doc.get("baseline_action_default") or "").strip(),
@@ -203,6 +221,12 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
             disabled_reason = str(override.get("disabled_reason") or "").strip() or "workflow_disabled_by_team_config"
         if enabled:
             disabled_reason = ""
+    max_candidates = int(spec.default_max_candidates or 0)
+    if "max_candidates" in override:
+        try:
+            max_candidates = max(0, int(override.get("max_candidates") or 0))
+        except Exception:
+            max_candidates = int(spec.default_max_candidates or 0)
     elif not enabled and not disabled_reason:
         disabled_reason = "workflow_disabled"
 
@@ -213,8 +237,13 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
             disabled_reason = str(override.get("disabled_reason") or "").strip() or "workflow_disabled_by_project_config"
         else:
             disabled_reason = ""
+    if "max_candidates" in override:
+        try:
+            max_candidates = max(0, int(override.get("max_candidates") or 0))
+        except Exception:
+            pass
 
-    return replace(spec, enabled=enabled, disabled_reason=disabled_reason)
+    return replace(spec, enabled=enabled, disabled_reason=disabled_reason, default_max_candidates=max_candidates)
 
 
 def workflow_spec(workflow_id: str, *, project_id: str = "teamos") -> WorkflowSpec:

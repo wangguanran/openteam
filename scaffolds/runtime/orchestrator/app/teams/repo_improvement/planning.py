@@ -304,6 +304,10 @@ def _lane_requires_user_confirmation(lane: str) -> bool:
     return crewai_workflow_registry.workflow_for_lane(lane).requires_user_confirmation
 
 
+def _lane_max_candidates(lane: str, *, project_id: str = "teamos") -> int:
+    return crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id).max_candidates()
+
+
 def _issue_type_token(lane: str) -> str:
     return {"feature": "Feature", "bug": "Bug", "process": "Process", "quality": "Quality"}.get(str(lane or "").strip().lower(), "Task")
 
@@ -1184,7 +1188,7 @@ def _crewai_llm():
     return LLM(**kwargs)
 
 
-def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str) -> UpgradePlan:
+def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str, project_id: str = "teamos") -> UpgradePlan:
     obj: Any = None
     if hasattr(raw_output, "to_dict"):
         try:
@@ -1203,7 +1207,10 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         plan = UpgradePlan.model_validate(json.loads(match.group(0)))
 
     findings: list[UpgradeFinding] = []
-    for finding in plan.findings[: max(1, int(max_findings))]:
+    lane_counts: dict[str, int] = {}
+    for finding in plan.findings:
+        if len(findings) >= max(1, int(max_findings)):
+            break
         raw_kind = str(finding.kind or "").strip().upper()
         if raw_kind in ("FEATURE", "OPTIMIZATION"):
             kind = "FEATURE"
@@ -1221,6 +1228,9 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
                 "PROCESS": "process",
                 "CODE_QUALITY": "quality",
             }.get(kind, "bug")
+        lane_limit = _lane_max_candidates(lane, project_id=project_id)
+        if lane_limit > 0 and int(lane_counts.get(lane, 0)) >= lane_limit:
+            continue
         impact = str(finding.impact or "MED").strip().upper()
         if impact not in ("LOW", "MED", "HIGH"):
             impact = "MED"
@@ -1300,6 +1310,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         if not finding_obj.work_items and finding_obj.lane in ("feature", "bug", "quality"):
             finding_obj.work_items = _default_work_items(repo_root=repo_root, finding=finding_obj)
         findings.append(finding_obj)
+        lane_counts[lane] = int(lane_counts.get(lane, 0)) + 1
     return UpgradePlan(
         summary=str(plan.summary or "").strip() or "CrewAI self-upgrade analysis completed.",
         findings=findings,
@@ -1310,12 +1321,13 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
     )
 
 
-def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, verbose: bool = False) -> tuple[UpgradePlan, dict[str, Any]]:
+def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "teamos", max_findings: int, verbose: bool = False) -> tuple[UpgradePlan, dict[str, Any]]:
     crewai_runtime.require_crewai_importable()
     from crewai import Crew, Process, Task
 
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
     llm = _crewai_llm()
+    feature_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("feature", project_id=project_id) or int(max_findings)))
     product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
     test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
     issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, llm=llm, verbose=verbose)
@@ -1328,7 +1340,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
         name="product_feature_scan",
         description=(
             "Analyze the repository context as a product manager.\n"
-            f"Return at most {int(max_findings)} feature ideas or product optimizations.\n"
+            f"Return at most {int(feature_scan_limit)} feature ideas or product optimizations.\n"
             "Mark changes that should be treated as FEATURE and note whether they imply a major or minor version bump.\n"
             "Use only the supplied context.\n\n"
             f"Repository context:\n{repo_blob}"
@@ -1438,7 +1450,13 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
     )
     out = crew.kickoff()
     current_version = str(repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
-    plan = _coerce_plan(out, max_findings=max_findings, repo_root=Path(str(repo_context.get("repo_root") or ".")), current_version=current_version)
+    plan = _coerce_plan(
+        out,
+        max_findings=max_findings,
+        repo_root=Path(str(repo_context.get("repo_root") or ".")),
+        current_version=current_version,
+        project_id=project_id,
+    )
     plan = plan.model_copy(update={"findings": [_localize_finding_to_zh(f) for f in (plan.findings or [])]})
     return plan, {
         "raw": str(out),
@@ -3393,7 +3411,12 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     )
 
     try:
-        plan, crew_debug = kickoff_upgrade_plan(repo_context=repo_context, max_findings=max_findings, verbose=_env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0"))
+        plan, crew_debug = kickoff_upgrade_plan(
+            repo_context=repo_context,
+            project_id=project_id,
+            max_findings=max_findings,
+            verbose=_env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0"),
+        )
     except Exception as e:
         _finish_agents(db=db, agent_ids=agent_ids, state="FAILED", current_action="self-upgrade failed")
         backoff_until = ""

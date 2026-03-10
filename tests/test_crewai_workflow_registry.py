@@ -23,6 +23,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertTrue(spec.uses_proposal)
         self.assertTrue(spec.requires_user_confirmation)
         self.assertTrue(spec.materialize_requires_approval)
+        self.assertEqual(spec.max_candidates(), 5)
         self.assertEqual(spec.default_version_bump, "minor")
         self.assertEqual(spec.default_baseline_action("minor"), "new_baseline")
         self.assertEqual(spec.default_baseline_action("patch"), "feature_followup")
@@ -70,6 +71,23 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertFalse(spec.enabled)
         self.assertEqual(spec.disabled_reason, "disabled_for_repo")
         self.assertFalse(spec.should_materialize(status="APPROVED", due=True))
+
+    def test_project_workflow_override_can_limit_feature_candidates(self):
+        with mock.patch(
+            "app.crewai_workflow_registry.project_config_store.load_project_config",
+            return_value={
+                "repo_improvement": {
+                    "workflow_settings": {
+                        "feature-improvement": {
+                            "max_candidates": 2,
+                        }
+                    }
+                }
+            },
+        ):
+            spec = crewai_workflow_registry.workflow_for_lane("feature", project_id="demo")
+
+        self.assertEqual(spec.max_candidates(), 2)
 
 
 if __name__ == "__main__":
