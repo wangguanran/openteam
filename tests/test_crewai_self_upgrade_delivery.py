@@ -277,6 +277,25 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             self.assertEqual((updated.get("self_upgrade_execution") or {}).get("stage"), "blocked")
             self.assertGreaterEqual(review_mock.call_count, 2)
 
+    def test_release_task_blocks_when_scope_has_out_of_scope_changes(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            ledger_path = Path(td) / "TEAMOS-1001.yaml"
+            with mock.patch(
+                "app.crewai_self_upgrade_delivery._changed_files",
+                return_value=["src/demo.py", "scripts/rogue.py"],
+            ):
+                with self.assertRaises(crewai_self_upgrade_delivery.DeliveryError) as ctx:
+                    crewai_self_upgrade_delivery._release_task(
+                        task_doc=task_doc,
+                        ledger_path=ledger_path,
+                        worktree_root=repo_root,
+                    )
+
+            self.assertIn("out-of-scope changes present", str(ctx.exception))
+
     def test_execute_task_delivery_retries_after_release_merge_conflict(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:

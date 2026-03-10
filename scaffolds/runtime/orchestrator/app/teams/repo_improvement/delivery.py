@@ -768,6 +768,12 @@ def _changed_files(repo_root: Path) -> list[str]:
     return [x for x in rows if x]
 
 
+def _out_of_scope_changed_files(repo_root: Path, *, allowed_paths: list[str]) -> list[str]:
+    if not allowed_paths:
+        return sorted(set(_changed_files(repo_root)))
+    return sorted({path for path in _changed_files(repo_root) if not _is_allowed_path(path, allowed_paths)})
+
+
 def _git_diff_text(repo_root: Path, *, allowed_paths: list[str], max_chars: int = 12000) -> str:
     cmd = ["git", "-C", str(repo_root), "diff", "--"]
     cmd.extend(allowed_paths or ["."])
@@ -1403,6 +1409,11 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
 def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root: Path) -> dict[str, Any]:
     task_id = str(task_doc.get("id") or ledger_path.stem).strip()
     allowed_paths = _release_allowed_paths(task_doc)
+    out_of_scope = _out_of_scope_changed_files(worktree_root, allowed_paths=allowed_paths)
+    if out_of_scope:
+        raise DeliveryError(
+            "release blocked: out-of-scope changes present: " + ", ".join(out_of_scope[:10])
+        )
     execution_policy = task_doc.get("execution_policy") or {}
     if not isinstance(execution_policy, dict):
         execution_policy = {}
@@ -1913,6 +1924,35 @@ def execute_task_delivery(
                 _set_agent_state(db, agent_ids, "Release-Agent", state="RUNNING", action="shipping validated task")
                 if lease_guard:
                     lease_guard.assert_held(task_id=task_id)
+                release_scope_violations = _out_of_scope_changed_files(worktree_root, allowed_paths=_release_allowed_paths(doc))
+                if release_scope_violations:
+                    feedback = [f"release blocked: out-of-scope changes present: {', '.join(release_scope_violations[:10])}"]
+                    _set_agent_state(db, agent_ids, "Release-Agent", state="FAILED", action="scope violation detected before release")
+                    _append_markdown(logs_dir, "05_release.md", f"Release Scope Violation Attempt {attempt}", feedback)
+                    _append_metric(
+                        logs_dir,
+                        event_type="SELF_UPGRADE_RELEASE_SCOPE_VIOLATION",
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        message=f"out-of-scope changes detected before release attempt {attempt}",
+                        payload={"out_of_scope_files": release_scope_violations, "allowed_paths": _release_allowed_paths(doc)},
+                        severity="ERROR",
+                    )
+                    _emit_event(
+                        db,
+                        event_type="SELF_UPGRADE_TASK_DELIVERY_RELEASE_SCOPE_VIOLATION",
+                        actor=actor,
+                        task_doc=doc,
+                        payload={
+                            "task_id": task_id,
+                            "out_of_scope_files": release_scope_violations,
+                            "allowed_paths": _release_allowed_paths(doc),
+                            "attempt": attempt,
+                        },
+                    )
+                    break
                 if dry_run or not ship_enabled:
                     release_result = {"branch": _execution_state(doc).get("branch_name") or "", "base_branch": _execution_state(doc).get("base_branch") or "main", "commit_sha": "", "pull_request_url": "", "issue_url": _issue_url(doc), "staged_files": _changed_files(worktree_root)}
                 else:
