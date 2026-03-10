@@ -2336,7 +2336,7 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
     stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0}
     for proposal in proposals:
         lane = str(proposal.get("lane") or "").strip().lower() or "feature"
-        workflow = crewai_workflow_registry.workflow_for_lane(lane)
+        workflow = crewai_workflow_registry.workflow_for_lane(lane, project_id=str(proposal.get("project_id") or "teamos"))
         if not workflow.enabled:
             stats["skipped_disabled"] += 1
             continue
@@ -2448,7 +2448,7 @@ def _upsert_proposal(
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     finding = _localize_finding_to_zh(finding)
-    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
+    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
     if finding.work_items:
         finding = finding.model_copy(
             update={
@@ -3219,7 +3219,7 @@ def _record_from_materialized_item(
     proposal_id: str,
     dry_run: bool,
 ) -> dict[str, Any]:
-    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
+    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
     if dry_run:
         return {
             "workflow_id": workflow.workflow_id,
@@ -3393,7 +3393,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     pending_proposals: list[dict[str, Any]] = []
     current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     for finding in plan.findings:
-        workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
+        workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
         if not workflow.enabled:
             db.add_event(
                 event_type="SELF_UPGRADE_FINDING_SKIPPED",

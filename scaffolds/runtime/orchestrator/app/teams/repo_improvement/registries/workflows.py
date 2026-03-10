@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Any
 
 from app import crewai_role_registry
+from app import project_config_store
 from app import crewai_spec_loader
 
 
@@ -173,7 +174,19 @@ def _team_workflow_override(team_id: str, workflow_id: str) -> dict[str, Any]:
     return override if isinstance(override, dict) else {}
 
 
-def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str) -> WorkflowSpec:
+def _project_workflow_override(project_id: str, workflow_id: str) -> dict[str, Any]:
+    config = project_config_store.load_project_config(str(project_id or "").strip() or "teamos")
+    repo_improvement = config.get("repo_improvement") or {}
+    if not isinstance(repo_improvement, dict):
+        return {}
+    raw = repo_improvement.get("workflow_settings") or {}
+    if not isinstance(raw, dict):
+        return {}
+    override = raw.get(str(workflow_id or "").strip()) or {}
+    return override if isinstance(override, dict) else {}
+
+
+def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_id: str = "teamos") -> WorkflowSpec:
     team = crewai_spec_loader.team_doc(team_id)
     workflow_ids = {str(item).strip() for item in list(team.get("workflow_ids") or []) if str(item).strip()}
     enabled = bool(spec.enabled)
@@ -193,30 +206,50 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str) -> Workf
     elif not enabled and not disabled_reason:
         disabled_reason = "workflow_disabled"
 
+    override = _project_workflow_override(project_id, spec.workflow_id)
+    if "enabled" in override:
+        enabled = bool(override.get("enabled"))
+        if not enabled:
+            disabled_reason = str(override.get("disabled_reason") or "").strip() or "workflow_disabled_by_project_config"
+        else:
+            disabled_reason = ""
+
     return replace(spec, enabled=enabled, disabled_reason=disabled_reason)
 
 
-def workflow_spec(workflow_id: str) -> WorkflowSpec:
+def workflow_spec(workflow_id: str, *, project_id: str = "teamos") -> WorkflowSpec:
     wid = str(workflow_id or "").strip()
     if not wid:
         raise KeyError("workflow_id is required")
     loaded = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, wid)
     if loaded:
-        return _apply_team_workflow_overrides(_workflow_spec_from_doc(loaded), team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT)
+        return _apply_team_workflow_overrides(
+            _workflow_spec_from_doc(loaded),
+            team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT,
+            project_id=project_id,
+        )
     if wid in FALLBACK_WORKFLOW_SPECS:
-        return _apply_team_workflow_overrides(FALLBACK_WORKFLOW_SPECS[wid], team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT)
+        return _apply_team_workflow_overrides(
+            FALLBACK_WORKFLOW_SPECS[wid],
+            team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT,
+            project_id=project_id,
+        )
     raise KeyError(f"unknown workflow spec: {wid}")
 
 
-def workflow_for_lane(lane: str) -> WorkflowSpec:
+def workflow_for_lane(lane: str, *, project_id: str = "teamos") -> WorkflowSpec:
     normalized_lane = str(lane or "bug").strip().lower() or "bug"
     for doc in crewai_spec_loader.list_team_workflow_docs(crewai_role_registry.TEAM_REPO_IMPROVEMENT):
         if str(doc.get("lane") or "").strip().lower() == normalized_lane:
-            return _apply_team_workflow_overrides(_workflow_spec_from_doc(doc), team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT)
+            return _apply_team_workflow_overrides(
+                _workflow_spec_from_doc(doc),
+                team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT,
+                project_id=project_id,
+            )
     fallback_map = {
         "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
         "bug": crewai_role_registry.WORKFLOW_BUG_FIX,
         "quality": crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
         "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
     }
-    return workflow_spec(fallback_map.get(normalized_lane, crewai_role_registry.WORKFLOW_BUG_FIX))
+    return workflow_spec(fallback_map.get(normalized_lane, crewai_role_registry.WORKFLOW_BUG_FIX), project_id=project_id)

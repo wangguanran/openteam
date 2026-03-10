@@ -82,6 +82,27 @@ class TestProjectConfig(unittest.TestCase):
             out3 = json.loads(p3.stdout)
             self.assertTrue(out3.get("changed"))
 
+            p4 = self._run(
+                [
+                    "python3",
+                    str(script),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(ws),
+                    "--project",
+                    "demo",
+                    "set",
+                    "--key",
+                    "repo_improvement.workflow_settings.feature-improvement.enabled",
+                    "--value",
+                    "false",
+                ]
+            )
+            self.assertEqual(p4.returncode, 0, msg=p4.stderr)
+            out4 = json.loads(p4.stdout)
+            self.assertTrue(out4.get("changed"))
+
             pv = self._run(
                 [
                     "python3",
@@ -144,4 +165,3 @@ class TestProjectConfig(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

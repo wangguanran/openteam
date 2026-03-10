@@ -51,9 +51,29 @@
         }
       }
     },
+    "repo_improvement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workflow_settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "disabled_reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "notes": {
       "type": "string"
     }
   }
 }
-

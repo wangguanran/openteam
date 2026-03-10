@@ -434,11 +434,16 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                     "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
                     return_value={"ok": True, "dry_run": False, "stats": {"updated": 0}},
                 ), mock.patch(
-                    "app.crewai_self_upgrade.crewai_workflow_registry.crewai_spec_loader.team_doc",
+                    "app.crewai_self_upgrade.crewai_workflow_registry.project_config_store.load_project_config",
                     return_value={
-                        "team_id": "repo-improvement",
-                        "workflow_ids": ["feature-improvement", "bug-fix", "quality-improvement", "process-improvement"],
-                        "workflow_settings": {"feature-improvement": {"enabled": False, "disabled_reason": "disabled_for_repo"}},
+                        "repo_improvement": {
+                            "workflow_settings": {
+                                "feature-improvement": {
+                                    "enabled": False,
+                                    "disabled_reason": "disabled_for_repo",
+                                }
+                            }
+                        }
                     },
                 ), mock.patch(
                     "app.crewai_self_upgrade._ensure_proposal_discussion_issue",

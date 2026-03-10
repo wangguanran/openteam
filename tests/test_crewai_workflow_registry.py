@@ -51,21 +51,21 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             spec = crewai_workflow_registry.workflow_for_lane("quality")
             self.assertEqual(spec.cooldown_hours(), 6)
 
-    def test_team_workflow_override_can_disable_feature_lane(self):
+    def test_project_workflow_override_can_disable_feature_lane(self):
         with mock.patch(
-            "app.crewai_workflow_registry.crewai_spec_loader.team_doc",
+            "app.crewai_workflow_registry.project_config_store.load_project_config",
             return_value={
-                "team_id": "repo-improvement",
-                "workflow_ids": ["feature-improvement", "bug-fix", "quality-improvement", "process-improvement"],
-                "workflow_settings": {
-                    "feature-improvement": {
-                        "enabled": False,
-                        "disabled_reason": "disabled_for_repo",
+                "repo_improvement": {
+                    "workflow_settings": {
+                        "feature-improvement": {
+                            "enabled": False,
+                            "disabled_reason": "disabled_for_repo",
+                        }
                     }
-                },
+                }
             },
         ):
-            spec = crewai_workflow_registry.workflow_for_lane("feature")
+            spec = crewai_workflow_registry.workflow_for_lane("feature", project_id="demo")
 
         self.assertFalse(spec.enabled)
         self.assertEqual(spec.disabled_reason, "disabled_for_repo")
