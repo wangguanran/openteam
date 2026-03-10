@@ -1,16 +1,18 @@
 services:
   postgres:
+    profiles: ["localdb"]
     image: postgres:${POSTGRESQL_VERSION:-16}
     restart: unless-stopped
     environment:
+      POSTGRES_DB: ${POSTGRES_DB:-team_os}
       POSTGRES_USER: ${POSTGRES_USER:-teamos}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teamos-local-dev}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-teamos} -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-teamos} -d ${POSTGRES_DB:-team_os}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -36,7 +38,7 @@ services:
     image: ${TEAMOS_CONTROL_PLANE_IMAGE:-ghcr.io/wangguanran/teamos-control-plane:main}
     build:
       context: ${TEAM_OS_REPO_PATH:-../team-os}
-      dockerfile: tooling/docker/runtime-control-plane.Dockerfile
+      dockerfile: tooling/docker/Dockerfile
       args:
         TEAMOS_PYTHON_BASE_IMAGE: ${TEAMOS_PYTHON_BASE_IMAGE:-python:3.11-slim-bookworm}
         HTTP_PROXY: ${TEAMOS_BUILD_HTTP_PROXY:-}
@@ -61,6 +63,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       openhands-agent-server:
         condition: service_healthy
     environment:
@@ -73,8 +76,8 @@ services:
       # GitHub auth: recommended to set from `gh auth token` (OAuth); do not commit real values.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD}@postgres:5432/team_os
-      TEAMOS_DB_URL: postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD}@postgres:5432/team_os
+      DATABASE_URL: ${TEAMOS_DB_URL:-postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD:-teamos-local-dev}@postgres:5432/${POSTGRES_DB:-team_os}}
+      TEAMOS_DB_URL: ${TEAMOS_DB_URL:-postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD:-teamos-local-dev}@postgres:5432/${POSTGRES_DB:-team_os}}
       TEAMOS_DEMO_SEED: ${TEAMOS_DEMO_SEED:-0}
       TEAMOS_CODEX_MODEL: ${TEAMOS_CODEX_MODEL:-}
       TEAMOS_SELF_UPGRADE_AUTO: ${TEAMOS_SELF_UPGRADE_AUTO:-1}

@@ -114,7 +114,8 @@ cd team-os
 ```bash
 cd team-os-runtime
 cp .env.example .env
-# 编辑 .env，至少填写 POSTGRES_PASSWORD（或使用 `cd team-os && ./scripts/teamos.sh runtime-secrets` 自动生成）
+# 外部数据库：填写 TEAMOS_DB_URL
+# 本地数据库：保持 TEAMOS_DB_URL 为空；按需填写 POSTGRES_PASSWORD
 make up
 make ps
 make logs

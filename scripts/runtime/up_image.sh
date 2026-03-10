@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/../_common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/runtime_up_image.sh --db-url <postgres-dsn> [--path <dir>] [--image <ref>] [--port <port>] [--force] [--skip-pull]
+  ./scripts/runtime_up_image.sh [--db-url <postgres-dsn>] [--path <dir>] [--image <ref>] [--port <port>] [--force] [--skip-pull]
 
 Purpose:
   Initialize an image-based team-os-runtime deployment, write the required .env values,
@@ -17,6 +17,7 @@ Defaults:
   --path  ../team-os-runtime-image
   --image ghcr.io/wangguanran/teamos-control-plane:main
   --port  8787
+  --db-url unset (auto-start local postgres container)
 EOF
 }
 
@@ -66,12 +67,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$db_url" ]]; then
-  echo "--db-url is required" >&2
-  usage >&2
-  exit 2
-fi
-
 ensure_dir "$target"
 
 init_args=(--path "$target")
@@ -105,15 +100,21 @@ upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
 (
   cd "$target"
   if [[ "$skip_pull" -ne 1 ]]; then
-    docker compose pull
+    bash ./scripts/compose.sh pull
   fi
-  docker compose up -d --no-build
+  bash ./scripts/compose.sh up -d --no-build
 )
 
 echo
 echo "runtime_path=$target"
 echo "image=$image"
+if [[ -n "$db_url" ]]; then
+  echo "database_mode=external"
+  echo "database_url=$db_url"
+else
+  echo "database_mode=localdb"
+fi
 echo "base_url=http://127.0.0.1:${port}"
 echo "next:"
-echo "  cd \"$target\" && docker compose ps"
+echo "  cd \"$target\" && bash ./scripts/compose.sh ps"
 echo "  curl -fsS http://127.0.0.1:${port}/healthz"

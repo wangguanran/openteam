@@ -43,7 +43,9 @@ cd ../team-os
 ```bash
 cd team-os-runtime
 cp .env.example .env
-# 编辑 .env，至少填写 POSTGRES_PASSWORD，按需填写 OPENAI_API_KEY
+# 外部数据库：填写 TEAMOS_DB_URL
+# 本地数据库：保持 TEAMOS_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
+# 按需填写 OPENAI_API_KEY
 make up-build
 make ps
 ```
@@ -59,24 +61,31 @@ make down
 
 - `make up-build`：使用本地 `team-os` 源码通过统一 Dockerfile 构建并启动
 - `make up`：直接使用本地已有或预先 `pull` 下来的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动
+- 当 `TEAMOS_DB_URL` 为空时，运行脚本会自动启用本地 `postgres` 容器
+- 当 `TEAMOS_DB_URL` 非空时，运行脚本会直连外部数据库，不启动本地 `postgres`
 
 ## 镜像化启动（推荐给新机器）
 
-如果只想指定数据库并直接拉镜像启动，不需要本地构建：
+如果只想直接拉镜像启动，不需要本地构建：
 
 ```bash
 cd ../team-os
-./scripts/runtime_up_image.sh \
-  --db-url 'postgresql://user:password@host:5432/team_os'
+./scripts/runtime_up_image.sh
+# 或者指定外部数据库：
+./scripts/runtime_up_image.sh --db-url 'postgresql://user:password@host:5432/team_os'
 ```
 
 默认会：
 
 - 初始化 `../team-os-runtime-image`
 - 生成/更新 `.env`
-- 写入 `TEAMOS_DB_URL`
 - 拉取 `ghcr.io/wangguanran/teamos-control-plane:main`
 - 启动统一的 `docker-compose.yml`
+
+数据库模式：
+
+- 传入 `--db-url`：写入 `TEAMOS_DB_URL`，直连外部数据库
+- 不传 `--db-url`：保持 `TEAMOS_DB_URL` 为空，并自动创建本地 `postgres` 容器
 
 构建期和运行期网络是分离的：
 
