@@ -11,6 +11,8 @@ role_pool:
   - Code-Quality-Analyst
   - Issue-Discussion-Agent
   - Issue-Audit-Agent
+  - Bug-Repro-Agent
+  - Bug-TestCase-Agent
   - Feature-Coding-Agent
   - Bugfix-Coding-Agent
   - Process-Optimization-Agent

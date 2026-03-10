@@ -41,6 +41,10 @@ class _FakeDB:
 
 
 def _base_task_doc(*, repo_root: Path, task_id: str = "TEAMOS-1001", status: str = "todo") -> dict:
+    (repo_root / "src").mkdir(parents=True, exist_ok=True)
+    (repo_root / "src" / "demo.py").write_text("print('demo')\n", encoding="utf-8")
+    (repo_root / "tests").mkdir(parents=True, exist_ok=True)
+    (repo_root / "tests" / "test_demo.py").write_text("import unittest\n", encoding="utf-8")
     return {
         "id": task_id,
         "title": "Demo self-upgrade task",
@@ -71,6 +75,9 @@ def _base_task_doc(*, repo_root: Path, task_id: str = "TEAMOS-1001", status: str
             "work_item": {
                 "tests": ["python -m unittest tests.test_demo"],
                 "acceptance": ["Demo path is updated"],
+                "reproduction_steps": ["运行 python -m unittest tests.test_demo，观察当前失败或异常。"],
+                "test_case_files": ["tests/test_demo.py"],
+                "verification_steps": ["修复后重新运行 python -m unittest tests.test_demo。"],
             },
         },
         "self_upgrade_audit": {
@@ -107,8 +114,30 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
         self._sync_issue_patch.start()
         self._run_patch = mock.patch("app.crewai_self_upgrade_delivery._run", side_effect=self._fake_run)
         self._run_patch.start()
+        self._bug_repro_patch = mock.patch(
+            "app.crewai_self_upgrade_delivery._run_bug_repro_stage",
+            return_value=crewai_self_upgrade_delivery.DeliveryBugReproResult(
+                approved=True,
+                reproduced=True,
+                summary="bug repro ok",
+                reproduction_commands=["python -m unittest tests.test_demo"],
+                reproduction_evidence=[
+                    {
+                        "command": "python -m unittest tests.test_demo",
+                        "ok": False,
+                        "returncode": 1,
+                        "stdout_tail": "FAIL\n",
+                        "stderr_tail": "",
+                        "captured_at": "2026-03-10T00:00:00Z",
+                        "source_stage": "bug_repro",
+                    }
+                ],
+            ),
+        )
+        self._bug_repro_patch.start()
 
     def tearDown(self) -> None:
+        self._bug_repro_patch.stop()
         self._run_patch.stop()
         self._sync_issue_patch.stop()
         self._env_patch.stop()
@@ -141,11 +170,14 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
 
             self.assertEqual([task["task_id"] for task in tasks], ["TEAMOS-1001"])
 
-    def test_normalize_audit_result_blocks_bug_without_reproduction_contract(self):
+    def test_normalize_audit_result_routes_bug_without_reproduction_contract_into_validation(self):
         with tempfile.TemporaryDirectory() as td:
             repo_root = Path(td) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
             task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["self_upgrade"]["work_item"]["reproduction_steps"] = []
+            task_doc["self_upgrade"]["work_item"]["test_case_files"] = []
+            task_doc["self_upgrade"]["work_item"]["verification_steps"] = []
 
             result = crewai_self_upgrade_delivery._normalize_audit_result(
                 task_doc=task_doc,
@@ -161,12 +193,11 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 audit_evidence=[],
             )
 
-        self.assertFalse(result.approved)
-        self.assertEqual(result.closure, "needs_clarification")
+        self.assertTrue(result.approved)
+        self.assertEqual(result.closure, "ready")
         self.assertIn("缺少明确的 bug 复现路径/步骤。", result.feedback)
         self.assertIn("缺少 repo 内可定位的测试 case 脚本。", result.feedback)
-        self.assertIn("缺少可执行的 bug 复现测试命令。", result.feedback)
-        self.assertIn("缺少修复后的验证步骤。", result.feedback)
+        self.assertIn("Issue Audit Agent 未留下实际的 pre-fix 复现测试证据。", result.feedback)
 
     def test_run_issue_audit_stage_executes_bug_reproduction_command(self):
         def _audit_run(cmd: list[str], *, cwd: Path, timeout_sec: int = 300) -> dict:
@@ -353,6 +384,252 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
         self.assertEqual(updated["status"], "closed")
         execution = updated.get("self_upgrade_execution") or {}
         self.assertEqual(execution.get("close_reason"), "bug_not_reproducible")
+
+    def test_execute_task_delivery_bootstraps_bug_testcase_before_coding(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["self_upgrade"]["work_item"]["reproduction_steps"] = []
+            task_doc["self_upgrade"]["work_item"]["test_case_files"] = []
+            task_doc["self_upgrade"]["work_item"]["verification_steps"] = []
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=False,
+                        summary="审计通过",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_bug_testcase_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryBugTestCaseResult(
+                        approved=True,
+                        summary="已补 failing test。",
+                        changed_files=["tests/test_demo.py"],
+                        reproduction_steps=["运行 python -m unittest tests.test_demo。"],
+                        test_case_files=["tests/test_demo.py"],
+                        reproduction_commands=["python -m unittest tests.test_demo"],
+                        verification_steps=["修复后重新运行 python -m unittest tests.test_demo。"],
+                        verification_commands=["python -m unittest tests.test_demo"],
+                    ),
+                ) as testcase_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_bug_repro_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryBugReproResult(
+                        approved=True,
+                        reproduced=True,
+                        summary="bug 复现成功",
+                        reproduction_commands=["python -m unittest tests.test_demo"],
+                        reproduction_evidence=[
+                            {
+                                "command": "python -m unittest tests.test_demo",
+                                "ok": False,
+                                "returncode": 1,
+                                "stdout_tail": "FAIL\n",
+                                "stderr_tail": "",
+                                "captured_at": "2026-03-10T00:00:00Z",
+                                "source_stage": "bug_repro",
+                            }
+                        ],
+                    ),
+                ) as repro_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryImplementationResult(
+                        summary="implemented",
+                        changed_files=["src/demo.py"],
+                        tests_to_run=["python -m unittest tests.test_demo"],
+                    ),
+                ) as coding_mock, mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_review_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryReviewResult(approved=True, summary="review ok"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_qa_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryQAResult(
+                        approved=True,
+                        summary="qa ok",
+                        commands=["python -m unittest tests.test_demo"],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._changed_files",
+                    return_value=["src/demo.py", "tests/test_demo.py"],
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "closed")
+        self.assertEqual(testcase_mock.call_count, 1)
+        self.assertEqual(repro_mock.call_count, 1)
+        self.assertEqual(coding_mock.call_count, 1)
+        work_item = ((updated.get("self_upgrade") or {}).get("work_item") or {})
+        self.assertEqual(work_item.get("test_case_files"), ["tests/test_demo.py"])
+        self.assertEqual(work_item.get("verification_steps"), ["修复后重新运行 python -m unittest tests.test_demo。"])
+
+    def test_execute_task_delivery_closes_when_bug_testcase_bootstrap_fails(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["self_upgrade"]["work_item"]["reproduction_steps"] = []
+            task_doc["self_upgrade"]["work_item"]["test_case_files"] = []
+            task_doc["self_upgrade"]["work_item"]["verification_steps"] = []
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=False,
+                        summary="审计通过",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_bug_testcase_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryBugTestCaseResult(
+                        approved=False,
+                        summary="无法补出稳定 failing test。",
+                        feedback=["缺少足够上下文，无法构造可执行测试。"],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    side_effect=AssertionError("coding should not start when testcase bootstrap fails"),
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "closed")
+        self.assertEqual(out["reason"], "bug_not_verifiable")
+        self.assertEqual(updated["status"], "closed")
+        self.assertEqual((updated.get("self_upgrade_execution") or {}).get("close_reason"), "bug_not_verifiable")
+
+    def test_execute_task_delivery_closes_when_bug_repro_fails(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=False,
+                        summary="审计通过",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_bug_repro_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryBugReproResult(
+                        approved=False,
+                        reproduced=False,
+                        summary="当前无法复现。",
+                        feedback=["Bug-Repro-Agent 未能证明 bug 当前可复现，问题将直接关闭。"],
+                        reproduction_commands=["python -m unittest tests.test_demo"],
+                        reproduction_evidence=[
+                            {
+                                "command": "python -m unittest tests.test_demo",
+                                "ok": True,
+                                "returncode": 0,
+                                "stdout_tail": "OK\n",
+                                "stderr_tail": "",
+                                "captured_at": "2026-03-10T00:00:00Z",
+                                "source_stage": "bug_repro",
+                            }
+                        ],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    side_effect=AssertionError("coding should not start when bug repro fails"),
+                ):
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=task_doc,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "closed")
+        self.assertEqual(out["reason"], "bug_not_reproducible")
+        self.assertEqual(updated["status"], "closed")
+        self.assertEqual((updated.get("self_upgrade_execution") or {}).get("close_reason"), "bug_not_reproducible")
 
     def test_execute_task_delivery_dry_run_closes_task(self):
         db = _FakeDB()
@@ -605,7 +882,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 [str(e.get("event_type") or "") for e in db.events],
             )
 
-    def test_execute_task_delivery_stops_when_issue_audit_needs_clarification(self):
+    def test_execute_task_delivery_stops_when_feature_issue_audit_needs_clarification(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"
@@ -613,6 +890,10 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             repo_root = Path(td) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
             task_doc = _base_task_doc(repo_root=repo_root)
+            task_doc["self_upgrade"]["lane"] = "feature"
+            task_doc["self_upgrade"]["kind"] = "FEATURE"
+            task_doc["owner_role"] = "Feature-Coding-Agent"
+            task_doc["owners"] = ["Feature-Coding-Agent"]
             with mock.patch.dict(
                 os.environ,
                 {

@@ -7,6 +7,12 @@ members:
   - role_id: Issue-Audit-Agent
     state: IDLE
     current_action: waiting for issue audit
+  - role_id: Bug-TestCase-Agent
+    state: IDLE
+    current_action: waiting for failing test bootstrap
+  - role_id: Bug-Repro-Agent
+    state: IDLE
+    current_action: waiting for bug reproduction
   - role_id: "{owner_role}"
     state: IDLE
     current_action: waiting for coding

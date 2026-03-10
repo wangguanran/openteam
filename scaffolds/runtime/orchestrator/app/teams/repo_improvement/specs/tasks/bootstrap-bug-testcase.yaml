@@ -1,0 +1,15 @@
+task_name: bootstrap_bug_testcase
+expected_output: A structured JSON bug test-case bootstrap decision.
+output_model: DeliveryBugTestCaseResult
+description_template: |
+  Bootstrap the smallest failing automated test for this bug in the current task worktree.
+  Rules:
+  - Edit only approved bug test paths.
+  - Do not fix the bug implementation itself.
+  - Create or update only the minimum test assets needed to prove the bug currently exists.
+  - Return repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps/verification_commands.
+  - Approve only when the bug can be turned into a stable failing automated test.
+  - Keep summary and feedback in 简体中文.
+
+  Task context:
+  {payload}

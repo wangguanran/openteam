@@ -103,6 +103,8 @@ ROLE_QA_AGENT = crewai_role_registry.ROLE_QA_AGENT
 ROLE_PROCESS_OPTIMIZATION_ANALYST = crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST
 ROLE_ISSUE_DISCUSSION_AGENT = crewai_role_registry.ROLE_ISSUE_DISCUSSION_AGENT
 ROLE_ISSUE_AUDIT_AGENT = crewai_role_registry.ROLE_ISSUE_AUDIT_AGENT
+ROLE_BUG_REPRO_AGENT = crewai_role_registry.ROLE_BUG_REPRO_AGENT
+ROLE_BUG_TESTCASE_AGENT = crewai_role_registry.ROLE_BUG_TESTCASE_AGENT
 ROLE_DOCUMENTATION_AGENT = crewai_role_registry.ROLE_DOCUMENTATION_AGENT
 ROLE_MILESTONE_MANAGER = crewai_role_registry.ROLE_MILESTONE_MANAGER
 ROLE_CODE_QUALITY_ANALYST = crewai_role_registry.ROLE_CODE_QUALITY_ANALYST
@@ -1650,7 +1652,7 @@ def _task_issue_stage_label(doc: dict[str, Any]) -> str:
     status = str(doc.get("status") or "").strip().lower()
     if status in ("needs_clarification",):
         return "stage:needs-clarification"
-    if stage in ("audit", "coding", "review", "qa", "docs", "release", "blocked", "closed", "merge_conflict", "needs_clarification"):
+    if stage in ("audit", "bug_testcase", "bug_repro", "coding", "review", "qa", "docs", "release", "blocked", "closed", "merge_conflict", "needs_clarification"):
         return {"closed": "stage:done", "merge_conflict": "stage:merge-conflict"}.get(stage, f"stage:{stage}")
     if status in ("doing",):
         return "stage:coding"

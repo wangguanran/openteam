@@ -13,7 +13,7 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 
 from app import crewai_task_registry  # noqa: E402
-from app.crewai_task_models import DeliveryReviewResult  # noqa: E402
+from app.crewai_task_models import DeliveryBugReproResult, DeliveryBugTestCaseResult, DeliveryReviewResult  # noqa: E402
 
 
 class CrewAITaskRegistryTests(unittest.TestCase):
@@ -40,6 +40,15 @@ class CrewAITaskRegistryTests(unittest.TestCase):
 
         self.assertEqual(spec.output_model.__name__, "DeliveryDocumentationResult")
         self.assertIn("documentation_policy.allowed_paths", spec.render_description(payload="{}"))
+
+    def test_bug_validation_task_specs_load(self):
+        repro = crewai_task_registry.get_task_spec("reproduce_bug_before_fix")
+        testcase = crewai_task_registry.get_task_spec("bootstrap_bug_testcase")
+
+        self.assertEqual(repro.output_model, DeliveryBugReproResult)
+        self.assertEqual(testcase.output_model, DeliveryBugTestCaseResult)
+        self.assertIn("reproduction_commands", repro.render_description(payload="{}"))
+        self.assertIn("test_case_files", testcase.render_description(payload="{}"))
 
 
 if __name__ == "__main__":

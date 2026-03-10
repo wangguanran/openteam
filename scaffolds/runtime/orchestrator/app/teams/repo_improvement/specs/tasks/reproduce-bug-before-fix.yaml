@@ -1,0 +1,14 @@
+task_name: reproduce_bug_before_fix
+expected_output: A structured JSON bug reproduction decision.
+output_model: DeliveryBugReproResult
+description_template: |
+  Act as the dedicated bug reproduction gate before any bugfix coding starts.
+  Rules:
+  - Use the current bug contract and validation tools to decide whether the bug is still reproducible now.
+  - Keep summary and feedback in 简体中文.
+  - Return reproduction_commands that the runtime should rerun as durable proof.
+  - Set reproduced=true only when the current commands should fail before the fix.
+  - If the bug is not reproducible anymore, reject it so the runtime can close the issue.
+
+  Task context:
+  {payload}

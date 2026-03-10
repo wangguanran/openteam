@@ -52,6 +52,8 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
         )
 
         self.assertIn("Bugfix-Coding-Agent", crewai_role_registry.role_ids_for_team(blueprint))
+        self.assertIn(crewai_role_registry.ROLE_BUG_REPRO_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
+        self.assertIn(crewai_role_registry.ROLE_BUG_TESTCASE_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertIn(crewai_role_registry.ROLE_SCHEDULER_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertIn(crewai_role_registry.ROLE_RELEASE_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertEqual(blueprint.team_id, crewai_role_registry.STAGE_DELIVERY)
@@ -74,7 +76,16 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
         spec = crewai_role_registry.get_role_spec(crewai_role_registry.ROLE_ISSUE_AUDIT_AGENT)
 
         self.assertEqual(spec.tool_profile, "qa")
-        self.assertIn("reproduce bug reports", spec.goal)
+        self.assertIn("reject work", spec.goal)
+
+    def test_bug_validation_roles_load_from_yaml(self):
+        repro = crewai_role_registry.get_role_spec(crewai_role_registry.ROLE_BUG_REPRO_AGENT)
+        testcase = crewai_role_registry.get_role_spec(crewai_role_registry.ROLE_BUG_TESTCASE_AGENT)
+
+        self.assertEqual(repro.tool_profile, "qa")
+        self.assertEqual(testcase.tool_profile, "write")
+        self.assertIn("reproducible", repro.goal)
+        self.assertIn("failing automated test", testcase.goal)
 
     def test_repo_improvement_team_doc_loads_from_nested_path(self):
         doc = crewai_spec_loader.team_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT)

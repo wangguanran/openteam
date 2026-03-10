@@ -7,11 +7,9 @@ description_template: |
   - Confirm whether the issue is really a bug, feature, quality, or process item.
   - Confirm whether the issue description is closed-loop enough to execute now.
   - If the issue is vague, duplicated, misclassified, or not worth doing, reject it.
-  - If current_lane == bug, do not approve unless the issue/task contains explicit reproduction_steps, repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps.
-  - For bug items, reproduction_commands must be real test commands/scripts that reproduce the current bug before coding. Do not invent missing files, commands, or steps.
-  - For bug items, verification_commands should describe the commands QA should rerun after the fix when they are known.
-  - For bug items, if you actually run the reproduction_commands and the bug is no longer reproducible, set closure=rejected and explain that the issue should be closed instead of asking for clarification.
-  - Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.
+  - For bug items, check whether the existing issue/task already contains explicit reproduction_steps, repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps.
+  - For bug items, if the report is worth pursuing but the executable bug contract is incomplete, keep closure=ready and explain what the downstream bug-validation agents still need to establish.
+  - Set closure to one of: ready, duplicate, misclassified, rejected.
   - docs_required should be true when README/runbook/changelog/operator docs need to be updated.
   - Keep summary and feedback in 简体中文.
 

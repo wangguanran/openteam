@@ -24,6 +24,8 @@ from app import improvement_store
 from app import workspace_store
 from app.crewai_task_models import (
     DeliveryAuditResult,
+    DeliveryBugReproResult,
+    DeliveryBugTestCaseResult,
     DeliveryDocumentationResult,
     DeliveryImplementationResult,
     DeliveryQAResult,
@@ -426,6 +428,92 @@ def _acceptance_items(doc: dict[str, Any]) -> list[str]:
     return [str(x).strip() for x in raw if str(x).strip()]
 
 
+def _bug_contract(doc: dict[str, Any], *, extra: Optional[dict[str, Any]] = None) -> dict[str, list[str]]:
+    su = doc.get("self_upgrade") or {}
+    if not isinstance(su, dict):
+        su = {}
+    work_item = su.get("work_item") or {}
+    if not isinstance(work_item, dict):
+        work_item = {}
+    audit = doc.get("self_upgrade_audit") or {}
+    if not isinstance(audit, dict):
+        audit = {}
+    extra_doc = dict(extra or {})
+    return {
+        "reproduction_steps": _clean_text_list(
+            (work_item.get("reproduction_steps") or [])
+            + (audit.get("reproduction_steps") or [])
+            + (extra_doc.get("reproduction_steps") or [])
+        ),
+        "test_case_files": _normalize_repo_relative_paths(
+            (work_item.get("test_case_files") or [])
+            + (audit.get("test_case_files") or [])
+            + (extra_doc.get("test_case_files") or [])
+        ),
+        "reproduction_commands": _candidate_validation_commands(
+            _clean_text_list(work_item.get("tests") or []),
+            _clean_text_list(su.get("tests") or []),
+            _clean_text_list(audit.get("reproduction_commands") or []),
+            _clean_text_list(extra_doc.get("reproduction_commands") or []),
+        ),
+        "verification_steps": _clean_text_list(
+            (work_item.get("verification_steps") or [])
+            + (work_item.get("acceptance") or [])
+            + (su.get("acceptance") or [])
+            + (audit.get("verification_steps") or [])
+            + (extra_doc.get("verification_steps") or [])
+        ),
+        "verification_commands": _candidate_validation_commands(
+            _clean_text_list(audit.get("verification_commands") or []),
+            _clean_text_list(extra_doc.get("verification_commands") or []),
+            _clean_text_list(work_item.get("tests") or []),
+            _clean_text_list(su.get("tests") or []),
+        ),
+    }
+
+
+def _bug_contract_feedback(doc: dict[str, Any], *, worktree_root: Optional[Path] = None, extra: Optional[dict[str, Any]] = None) -> list[str]:
+    contract = _bug_contract(doc, extra=extra)
+    feedback: list[str] = []
+    if not contract["reproduction_steps"]:
+        feedback.append("缺少明确的 bug 复现路径/步骤。")
+    if not contract["test_case_files"]:
+        feedback.append("缺少 repo 内可定位的测试 case 脚本。")
+    elif worktree_root is not None:
+        missing_test_case_files = _missing_repo_files(worktree_root, contract["test_case_files"])
+        if missing_test_case_files:
+            feedback.append("测试 case 脚本不存在或越界：" + ", ".join(missing_test_case_files[:10]))
+    if not contract["reproduction_commands"]:
+        feedback.append("缺少可执行的 bug 复现测试命令。")
+    if not contract["verification_steps"]:
+        feedback.append("缺少修复后的验证步骤。")
+    return feedback
+
+
+def _bug_contract_complete(doc: dict[str, Any], *, worktree_root: Optional[Path] = None, extra: Optional[dict[str, Any]] = None) -> bool:
+    return not _bug_contract_feedback(doc, worktree_root=worktree_root, extra=extra)
+
+
+def _default_bug_test_paths(worktree_root: Path) -> list[str]:
+    candidates = []
+    for rel in ("tests", "test", "__tests__", "spec", "specs"):
+        if (worktree_root / rel).exists():
+            candidates.append(rel)
+    return candidates or ["tests"]
+
+
+def _bug_testcase_allowed_paths(doc: dict[str, Any], *, worktree_root: Path) -> list[str]:
+    contract = _bug_contract(doc)
+    candidates: list[str] = []
+    for rel in contract["test_case_files"]:
+        candidates.append(rel)
+        parent = _normalize_repo_relative_path(str(Path(rel).parent))
+        if parent and parent != ".":
+            candidates.append(parent)
+    candidates.extend(_default_bug_test_paths(worktree_root))
+    return _merge_allowed_paths(candidates)
+
+
 def _candidate_validation_commands(*groups: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -707,6 +795,59 @@ def _reset_documentation_policy(doc: dict[str, Any], *, pending: bool, feedback:
     else:
         policy.update({"status": "not_required", "updated_at": _utc_now_iso()})
     doc["documentation_policy"] = policy
+    return doc
+
+
+def _merge_bug_contract_into_doc(
+    doc: dict[str, Any],
+    *,
+    reproduction_steps: list[str],
+    test_case_files: list[str],
+    reproduction_commands: list[str],
+    verification_steps: list[str],
+    verification_commands: list[str],
+) -> dict[str, Any]:
+    su = doc.get("self_upgrade") or {}
+    if not isinstance(su, dict):
+        su = {}
+    work_item = su.get("work_item") or {}
+    if not isinstance(work_item, dict):
+        work_item = {}
+    work_item["reproduction_steps"] = _clean_text_list(reproduction_steps)
+    work_item["test_case_files"] = _normalize_repo_relative_paths(test_case_files)
+    work_item["verification_steps"] = _clean_text_list(verification_steps)
+    merged_test_commands = _candidate_validation_commands(verification_commands, reproduction_commands)
+    if merged_test_commands:
+        work_item["tests"] = merged_test_commands
+        su["tests"] = merged_test_commands
+    if work_item.get("verification_steps"):
+        work_item["acceptance"] = _clean_text_list((work_item.get("acceptance") or []) + work_item["verification_steps"])
+    su["work_item"] = work_item
+    doc["self_upgrade"] = su
+
+    audit = doc.get("self_upgrade_audit") or {}
+    if not isinstance(audit, dict):
+        audit = {}
+    audit.update(
+        {
+            "reproduction_steps": work_item["reproduction_steps"],
+            "test_case_files": work_item["test_case_files"],
+            "reproduction_commands": _candidate_validation_commands(reproduction_commands),
+            "verification_steps": work_item["verification_steps"],
+            "verification_commands": _candidate_validation_commands(verification_commands),
+            "updated_at": _utc_now_iso(),
+        }
+    )
+    doc["self_upgrade_audit"] = audit
+
+    execution_policy = doc.get("execution_policy") or {}
+    if not isinstance(execution_policy, dict):
+        execution_policy = {}
+    execution_policy["allowed_paths"] = _merge_allowed_paths(
+        [str(x).strip() for x in (execution_policy.get("allowed_paths") or []) if str(x).strip()],
+        work_item["test_case_files"],
+    )
+    doc["execution_policy"] = execution_policy
     return doc
 
 
@@ -1356,12 +1497,22 @@ def _normalize_audit_result(
     approved = bool(result.approved)
     worth_doing = bool(result.worth_doing)
     feedback = _clean_text_list(result.feedback)
-    reproduction_steps = _clean_text_list(result.reproduction_steps)
-    test_case_files = _normalize_repo_relative_paths(result.test_case_files)
-    reproduction_commands = _candidate_validation_commands(_clean_text_list(result.reproduction_commands))
-    verification_steps = _clean_text_list(result.verification_steps)
+    bug_contract = _bug_contract(
+        task_doc,
+        extra={
+            "reproduction_steps": result.reproduction_steps,
+            "test_case_files": result.test_case_files,
+            "reproduction_commands": result.reproduction_commands,
+            "verification_steps": result.verification_steps,
+            "verification_commands": result.verification_commands,
+        },
+    )
+    reproduction_steps = bug_contract["reproduction_steps"]
+    test_case_files = bug_contract["test_case_files"]
+    reproduction_commands = bug_contract["reproduction_commands"]
+    verification_steps = bug_contract["verification_steps"]
     verification_commands = _candidate_validation_commands(
-        _clean_text_list(result.verification_commands),
+        bug_contract["verification_commands"],
         _tests_allowlist(task_doc),
     )
     normalized_audit_evidence = list(audit_evidence or result.reproduction_evidence or [])
@@ -1375,20 +1526,8 @@ def _normalize_audit_result(
         closure = "rejected"
         approved = False
         feedback.append("审计认为该问题当前不值得进入开发。")
-    if lane == "bug" and classification == "bug" and worth_doing and closure in ("ready", "needs_clarification", "pending", "split_required"):
-        bug_feedback: list[str] = []
-        if not reproduction_steps:
-            bug_feedback.append("缺少明确的 bug 复现路径/步骤。")
-        if not test_case_files:
-            bug_feedback.append("缺少 repo 内可定位的测试 case 脚本。")
-        else:
-            missing_test_case_files = _missing_repo_files(worktree_root, test_case_files)
-            if missing_test_case_files:
-                bug_feedback.append("测试 case 脚本不存在或越界：" + ", ".join(missing_test_case_files[:10]))
-        if not reproduction_commands:
-            bug_feedback.append("缺少可执行的 bug 复现测试命令。")
-        if not verification_steps and not confirmed_not_reproducible:
-            bug_feedback.append("缺少修复后的验证步骤。")
+    if lane == "bug" and classification == "bug" and worth_doing and closure in ("ready", "needs_clarification", "pending", "split_required", "rejected"):
+        bug_feedback = _bug_contract_feedback(task_doc, worktree_root=worktree_root, extra=bug_contract)
         bug_feedback.extend(_audit_evidence_feedback(normalized_audit_evidence))
         if reproduction_commands:
             if not normalized_audit_evidence:
@@ -1405,9 +1544,9 @@ def _normalize_audit_result(
         for item in bug_feedback:
             if item not in feedback:
                 feedback.append(item)
-        if bug_feedback and closure == "ready":
-            closure = "needs_clarification"
-            approved = False
+        if closure in ("needs_clarification", "pending", "split_required") or (closure == "rejected" and not confirmed_not_reproducible):
+            closure = "ready"
+        approved = closure == "ready" and worth_doing
     if closure != "ready":
         approved = False
     if not feedback and not approved:
@@ -1428,6 +1567,83 @@ def _normalize_audit_result(
         verification_commands=verification_commands,
         reproduced_in_audit=reproduced_in_audit,
         reproduction_evidence=normalized_audit_evidence,
+    )
+
+
+def _normalize_bug_repro_result(
+    *,
+    task_doc: dict[str, Any],
+    result: DeliveryBugReproResult,
+    reproduction_evidence: Optional[list[dict[str, Any]]] = None,
+) -> DeliveryBugReproResult:
+    contract = _bug_contract(
+        task_doc,
+        extra={
+            "reproduction_commands": result.reproduction_commands,
+        },
+    )
+    evidence = list(reproduction_evidence or result.reproduction_evidence or [])
+    reproduced = _audit_reproduced(evidence)
+    feedback = _clean_text_list(result.feedback)
+    if contract["reproduction_commands"] and not evidence:
+        feedback.append("Bug-Repro-Agent 未留下实际的 pre-fix 复现测试证据。")
+    feedback.extend(_audit_evidence_feedback(evidence))
+    if not reproduced:
+        detail = "Bug-Repro-Agent 未能证明 bug 当前可复现，问题将直接关闭。"
+        if detail not in feedback:
+            feedback.append(detail)
+    return DeliveryBugReproResult(
+        approved=reproduced,
+        reproduced=reproduced,
+        summary=str(result.summary or "").strip(),
+        feedback=feedback,
+        reproduction_commands=contract["reproduction_commands"],
+        reproduction_evidence=evidence,
+    )
+
+
+def _normalize_bug_testcase_result(
+    *,
+    task_doc: dict[str, Any],
+    worktree_root: Path,
+    result: DeliveryBugTestCaseResult,
+) -> DeliveryBugTestCaseResult:
+    testcase_allowed_paths = _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root)
+    contract = _bug_contract(
+        task_doc,
+        extra={
+            "reproduction_steps": result.reproduction_steps,
+            "test_case_files": result.test_case_files,
+            "reproduction_commands": result.reproduction_commands,
+            "verification_steps": result.verification_steps,
+            "verification_commands": result.verification_commands,
+        },
+    )
+    feedback = _clean_text_list(result.feedback)
+    contract_feedback = _bug_contract_feedback(task_doc, worktree_root=worktree_root, extra=contract)
+    for item in contract_feedback:
+        if item not in feedback:
+            feedback.append(item)
+    changed_files = _normalize_repo_relative_paths(result.changed_files)
+    if not changed_files:
+        changed_files = [rel for rel in _changed_files(worktree_root) if _is_allowed_path(rel, testcase_allowed_paths)]
+    if changed_files:
+        for rel in changed_files:
+            if not _is_allowed_path(rel, testcase_allowed_paths):
+                feedback.append(f"Bug-TestCase-Agent 越界修改了非测试路径：{rel}")
+    else:
+        feedback.append("Bug-TestCase-Agent 没有产出任何测试文件改动。")
+    approved = not contract_feedback and bool(changed_files)
+    return DeliveryBugTestCaseResult(
+        approved=approved,
+        summary=str(result.summary or "").strip(),
+        feedback=feedback,
+        changed_files=changed_files,
+        reproduction_steps=contract["reproduction_steps"],
+        test_case_files=contract["test_case_files"],
+        reproduction_commands=contract["reproduction_commands"],
+        verification_steps=contract["verification_steps"],
+        verification_commands=contract["verification_commands"],
     )
 
 
@@ -1483,6 +1699,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
             "acceptance": _acceptance_items(task_doc),
             "documentation_policy": doc_policy,
             "issue": issue_snapshot,
+            "bug_contract": _bug_contract(task_doc),
             "git_status": _git_status_text(worktree_root),
         },
         ensure_ascii=False,
@@ -1515,6 +1732,92 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
         worktree_root=worktree_root,
         result=raw_result,
         audit_evidence=audit_evidence,
+    )
+
+
+def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryBugTestCaseResult:
+    crewai_runtime.require_crewai_importable()
+
+    allowed_paths = _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root)
+    tests_allowlist = _tests_allowlist(task_doc)
+    tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
+    llm = planning._crewai_llm()
+    blob = json.dumps(
+        {
+            "task_id": task_doc.get("id") or "",
+            "title": task_doc.get("title") or "",
+            "issue_url": _issue_url(task_doc),
+            "bug_contract": _bug_contract(task_doc),
+            "bug_test_paths": allowed_paths,
+            "acceptance": _acceptance_items(task_doc),
+            "git_status": _git_status_text(worktree_root),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=planning.ROLE_BUG_TESTCASE_AGENT,
+        llm=llm,
+        verbose=verbose,
+        tools_by_profile=tools,
+    )
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
+        agent=agent,
+        spec=crewai_task_registry.DELIVERY_BUG_TESTCASE_TASK_SPEC,
+        payload=blob,
+        verbose=verbose,
+    )
+    return _normalize_bug_testcase_result(
+        task_doc=task_doc,
+        worktree_root=worktree_root,
+        result=DeliveryBugTestCaseResult.model_validate(out.model_dump()),
+    )
+
+
+def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryBugReproResult:
+    crewai_runtime.require_crewai_importable()
+
+    allowed_paths = _merge_allowed_paths(_allowed_paths(task_doc), _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root))
+    tests_allowlist = _tests_allowlist(task_doc)
+    tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
+    llm = planning._crewai_llm()
+    blob = json.dumps(
+        {
+            "task_id": task_doc.get("id") or "",
+            "title": task_doc.get("title") or "",
+            "issue_url": _issue_url(task_doc),
+            "bug_contract": _bug_contract(task_doc),
+            "git_status": _git_status_text(worktree_root),
+            "validation_evidence": _validation_evidence_payload(task_doc),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=planning.ROLE_BUG_REPRO_AGENT,
+        llm=llm,
+        verbose=verbose,
+        tools_by_profile=tools,
+    )
+    out = crewai_task_registry.kickoff_registered_task(
+        kickoff_fn=_kickoff_task_output,
+        agent=agent,
+        spec=crewai_task_registry.DELIVERY_BUG_REPRO_TASK_SPEC,
+        payload=blob,
+        verbose=verbose,
+    )
+    raw_result = DeliveryBugReproResult.model_validate(out.model_dump())
+    reproduction_evidence = _run_validation_evidence(
+        repo_root=worktree_root,
+        commands=_candidate_validation_commands(raw_result.reproduction_commands, _bug_contract(task_doc)["reproduction_commands"]),
+        allowlist=tests_allowlist,
+        source_stage="bug_repro",
+    )
+    return _normalize_bug_repro_result(
+        task_doc=task_doc,
+        result=raw_result,
+        reproduction_evidence=reproduction_evidence,
     )
 
 
@@ -1688,6 +1991,78 @@ def _emit_event(db: Any, *, event_type: str, actor: str, task_doc: dict[str, Any
         pass
 
 
+def _close_bug_task(
+    *,
+    db: Any,
+    agent_ids: dict[str, str],
+    ledger_path: Path,
+    doc: dict[str, Any],
+    logs_dir: Path,
+    actor: str,
+    task_id: str,
+    project_id: str,
+    workstream_id: str,
+    owner_role: str,
+    active_role: str,
+    close_reason: str,
+    summary: str,
+    feedback: list[str],
+    evidence: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    doc = _update_task_state(
+        ledger_path,
+        doc,
+        status="closed",
+        stage="closed",
+        owner_role=owner_role,
+        extra_execution={
+            "active_role": active_role,
+            "last_error": "",
+            "last_feedback": [str(x).strip() for x in feedback if str(x).strip()],
+            "closed_at": _utc_now_iso(),
+            "close_reason": close_reason,
+        },
+    )
+    _set_agent_state(db, agent_ids, active_role, state="DONE", action=f"closed bug: {close_reason}")
+    _finish_delivery_agents(db, agent_ids, state="DONE", action=f"delivery closed because {close_reason}")
+    _append_markdown(
+        logs_dir,
+        "02_plan.md",
+        "Bug Validation Closed",
+        [
+            summary,
+            *[f"feedback: {x}" for x in feedback],
+            *_validation_evidence_lines(list(evidence or [])),
+        ],
+    )
+    _append_metric(
+        logs_dir,
+        event_type="SELF_UPGRADE_BUG_VALIDATION_CLOSED",
+        actor=actor,
+        task_id=task_id,
+        project_id=project_id,
+        workstream_id=workstream_id,
+        message=f"bug closed during validation: {close_reason}",
+        payload={"reason": close_reason, "feedback": feedback, "summary": summary},
+    )
+    _emit_event(
+        db,
+        event_type="SELF_UPGRADE_TASK_BUG_VALIDATION_CLOSED",
+        actor=actor,
+        task_doc=doc,
+        payload={"task_id": task_id, "reason": close_reason, "feedback": feedback, "summary": summary},
+    )
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "status": "closed",
+        "reason": close_reason,
+        "feedback": feedback,
+        "worktree": str(_worktree_repo_root(doc) or _source_repo_root(doc)),
+        "project_id": project_id,
+    }
+
+
 def _resume_feedback(doc: dict[str, Any]) -> list[str]:
     execution = _execution_state(doc)
     feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
@@ -1824,52 +2199,31 @@ def execute_task_delivery(
                 _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
                 _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
             else:
-                if audit_result.closure == "rejected" and audit_result.classification == "bug" and bool(audit_result.reproduction_evidence) and not bool(audit_result.reproduced_in_audit):
-                    doc = _update_task_state(
-                        ledger_path,
-                        doc,
-                        status="closed",
-                        stage="closed",
-                        owner_role=owner_role,
-                        extra_execution={
-                            "active_role": planning.ROLE_ISSUE_AUDIT_AGENT,
-                            "last_error": "",
-                            "last_feedback": audit_result.feedback,
-                            "closed_at": _utc_now_iso(),
-                            "close_reason": "bug_not_reproducible",
-                        },
-                    )
-                    _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="DONE", action="issue audit closed non-reproducible bug")
-                    _finish_delivery_agents(db, agent_ids, state="DONE", action="delivery closed because bug is not reproducible")
-                    _append_markdown(
-                        logs_dir,
-                        "02_plan.md",
-                        "Issue Audit Closed",
-                        [
-                            audit_result.summary or "Issue 审计确认当前 bug 无法复现，任务关闭。",
-                            f"reproduced_in_audit: {bool(audit_result.reproduced_in_audit)}",
-                            *[f"feedback: {x}" for x in audit_result.feedback],
-                            *_validation_evidence_lines(list(audit_result.reproduction_evidence or [])),
-                        ],
-                    )
-                    _append_metric(
-                        logs_dir,
-                        event_type="SELF_UPGRADE_ISSUE_AUDIT_CLOSED",
+                if lane == "bug":
+                    close_reason = "bug_rejected_by_audit"
+                    if audit_result.classification != "bug":
+                        close_reason = "bug_misclassified"
+                    elif audit_result.closure == "duplicate":
+                        close_reason = "bug_duplicate"
+                    elif bool(audit_result.reproduction_evidence) and not bool(audit_result.reproduced_in_audit):
+                        close_reason = "bug_not_reproducible"
+                    return _close_bug_task(
+                        db=db,
+                        agent_ids=agent_ids,
+                        ledger_path=ledger_path,
+                        doc=doc,
+                        logs_dir=logs_dir,
                         actor=actor,
                         task_id=task_id,
                         project_id=project_id,
                         workstream_id=workstream_id,
-                        message="issue audit closed non-reproducible bug",
-                        payload=audit_result.model_dump(),
+                        owner_role=owner_role,
+                        active_role=planning.ROLE_ISSUE_AUDIT_AGENT,
+                        close_reason=close_reason,
+                        summary=audit_result.summary or "Issue 审计未通过，bug 任务直接关闭。",
+                        feedback=audit_result.feedback,
+                        evidence=list(audit_result.reproduction_evidence or []),
                     )
-                    _emit_event(
-                        db,
-                        event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_CLOSED",
-                        actor=actor,
-                        task_doc=doc,
-                        payload={"task_id": task_id, "reason": "bug_not_reproducible", **audit_result.model_dump()},
-                    )
-                    return {"ok": True, "task_id": task_id, "status": "closed", "reason": "bug_not_reproducible", "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
                 blocked_status = "needs_clarification" if audit_result.closure in ("needs_clarification", "split_required", "duplicate", "misclassified", "pending") else "blocked"
                 doc = _update_task_state(
                     ledger_path,
@@ -1911,6 +2265,163 @@ def execute_task_delivery(
                     payload={"task_id": task_id, **audit_result.model_dump()},
                 )
                 return {"ok": False, "task_id": task_id, "status": blocked_status, "feedback": audit_result.feedback, "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
+
+        if lane == "bug":
+            doc = _load_yaml(ledger_path)
+            if not _bug_contract_complete(doc, worktree_root=worktree_root):
+                doc = _update_task_state(
+                    ledger_path,
+                    doc,
+                    status="doing",
+                    stage="bug_testcase",
+                    owner_role=owner_role,
+                    extra_execution={"active_role": planning.ROLE_BUG_TESTCASE_AGENT},
+                )
+                _set_agent_state(db, agent_ids, planning.ROLE_BUG_TESTCASE_AGENT, state="RUNNING", action="bootstrapping failing bug test case")
+                bug_testcase_result = _run_bug_testcase_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+                if lease_guard:
+                    lease_guard.assert_held(task_id=task_id)
+                doc = _load_yaml(ledger_path)
+                if not bug_testcase_result.approved:
+                    return _close_bug_task(
+                        db=db,
+                        agent_ids=agent_ids,
+                        ledger_path=ledger_path,
+                        doc=doc,
+                        logs_dir=logs_dir,
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        owner_role=owner_role,
+                        active_role=planning.ROLE_BUG_TESTCASE_AGENT,
+                        close_reason="bug_not_verifiable",
+                        summary=bug_testcase_result.summary or "Bug-TestCase-Agent 无法产出稳定的 failing test，任务关闭。",
+                        feedback=bug_testcase_result.feedback,
+                    )
+                doc = _merge_bug_contract_into_doc(
+                    doc,
+                    reproduction_steps=bug_testcase_result.reproduction_steps,
+                    test_case_files=bug_testcase_result.test_case_files,
+                    reproduction_commands=bug_testcase_result.reproduction_commands,
+                    verification_steps=bug_testcase_result.verification_steps,
+                    verification_commands=bug_testcase_result.verification_commands,
+                )
+                _write_yaml(ledger_path, doc)
+                _set_agent_state(db, agent_ids, planning.ROLE_BUG_TESTCASE_AGENT, state="DONE", action="bootstrapped failing bug test case")
+                _append_markdown(
+                    logs_dir,
+                    "02_plan.md",
+                    "Bug Test Case Bootstrap",
+                    [
+                        bug_testcase_result.summary or "Bug-TestCase-Agent 已产出可执行的 failing test。",
+                        *[f"feedback: {x}" for x in bug_testcase_result.feedback],
+                        *[f"changed_file: {x}" for x in bug_testcase_result.changed_files],
+                    ],
+                )
+                _append_metric(
+                    logs_dir,
+                    event_type="SELF_UPGRADE_BUG_TESTCASE_BOOTSTRAPPED",
+                    actor=actor,
+                    task_id=task_id,
+                    project_id=project_id,
+                    workstream_id=workstream_id,
+                    message="bug testcase bootstrap succeeded",
+                    payload=bug_testcase_result.model_dump(),
+                )
+                _emit_event(
+                    db,
+                    event_type="SELF_UPGRADE_TASK_BUG_TESTCASE_BOOTSTRAPPED",
+                    actor=actor,
+                    task_doc=doc,
+                    payload={"task_id": task_id, **bug_testcase_result.model_dump()},
+                )
+
+            doc = _load_yaml(ledger_path)
+            doc = _update_task_state(
+                ledger_path,
+                doc,
+                status="doing",
+                stage="bug_repro",
+                owner_role=owner_role,
+                extra_execution={"active_role": planning.ROLE_BUG_REPRO_AGENT},
+            )
+            _set_agent_state(db, agent_ids, planning.ROLE_BUG_REPRO_AGENT, state="RUNNING", action="verifying bug is reproducible before coding")
+            bug_repro_result = _run_bug_repro_stage(task_doc=doc, worktree_root=worktree_root, verbose=verbose)
+            if lease_guard:
+                lease_guard.assert_held(task_id=task_id)
+            doc = _load_yaml(ledger_path)
+            doc = _persist_validation_evidence(
+                ledger_path,
+                doc,
+                stage="bug_repro",
+                evidence=list(bug_repro_result.reproduction_evidence or []),
+            )
+            audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+            audit_doc.update(
+                {
+                    "reproduction_commands": list(bug_repro_result.reproduction_commands or audit_doc.get("reproduction_commands") or []),
+                    "reproduction_evidence": list(bug_repro_result.reproduction_evidence or []),
+                    "reproduced_in_audit": bool(bug_repro_result.reproduced),
+                    "updated_at": _utc_now_iso(),
+                }
+            )
+            doc["self_upgrade_audit"] = audit_doc
+            _write_yaml(ledger_path, doc)
+            if not bug_repro_result.approved:
+                return _close_bug_task(
+                    db=db,
+                    agent_ids=agent_ids,
+                    ledger_path=ledger_path,
+                    doc=doc,
+                    logs_dir=logs_dir,
+                    actor=actor,
+                    task_id=task_id,
+                    project_id=project_id,
+                    workstream_id=workstream_id,
+                    owner_role=owner_role,
+                    active_role=planning.ROLE_BUG_REPRO_AGENT,
+                    close_reason="bug_not_reproducible",
+                    summary=bug_repro_result.summary or "Bug-Repro-Agent 未能证明 bug 仍然存在，任务关闭。",
+                    feedback=bug_repro_result.feedback,
+                    evidence=list(bug_repro_result.reproduction_evidence or []),
+                )
+            doc = _update_task_state(
+                ledger_path,
+                doc,
+                status="doing",
+                stage="bug_repro",
+                owner_role=owner_role,
+                extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
+            )
+            _set_agent_state(db, agent_ids, planning.ROLE_BUG_REPRO_AGENT, state="DONE", action="confirmed bug is reproducible")
+            _append_markdown(
+                logs_dir,
+                "02_plan.md",
+                "Bug Reproduction",
+                [
+                    bug_repro_result.summary or "Bug-Repro-Agent 已确认 bug 当前可复现。",
+                    *[f"feedback: {x}" for x in bug_repro_result.feedback],
+                    *_validation_evidence_lines(list(bug_repro_result.reproduction_evidence or [])),
+                ],
+            )
+            _append_metric(
+                logs_dir,
+                event_type="SELF_UPGRADE_BUG_REPRO_CONFIRMED",
+                actor=actor,
+                task_id=task_id,
+                project_id=project_id,
+                workstream_id=workstream_id,
+                message="bug reproduction confirmed before coding",
+                payload=bug_repro_result.model_dump(),
+            )
+            _emit_event(
+                db,
+                event_type="SELF_UPGRADE_TASK_BUG_REPRO_CONFIRMED",
+                actor=actor,
+                task_doc=doc,
+                payload={"task_id": task_id, **bug_repro_result.model_dump()},
+            )
 
         _update_task_state(
             ledger_path,

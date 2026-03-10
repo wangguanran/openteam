@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from app import crewai_spec_loader
 from app.crewai_task_models import (
     DeliveryAuditResult,
+    DeliveryBugReproResult,
+    DeliveryBugTestCaseResult,
     DeliveryDocumentationResult,
     DeliveryImplementationResult,
     DeliveryQAResult,
@@ -31,6 +33,8 @@ TASK_OUTPUT_MODEL_MAP: dict[str, Type[BaseModel]] = {
     "DeliveryReviewResult": DeliveryReviewResult,
     "DeliveryQAResult": DeliveryQAResult,
     "DeliveryAuditResult": DeliveryAuditResult,
+    "DeliveryBugReproResult": DeliveryBugReproResult,
+    "DeliveryBugTestCaseResult": DeliveryBugTestCaseResult,
     "DeliveryDocumentationResult": DeliveryDocumentationResult,
 }
 
@@ -98,16 +102,49 @@ FALLBACK_TASK_SPECS["audit_self_upgrade_issue"] = CrewTaskSpec(
         "- Confirm whether the issue is really a bug, feature, quality, or process item.\n"
         "- Confirm whether the issue description is closed-loop enough to execute now.\n"
         "- If the issue is vague, duplicated, misclassified, or not worth doing, reject it.\n"
-        "- If current_lane == bug, do not approve unless the issue/task contains explicit reproduction_steps, repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps.\n"
-        "- For bug items, reproduction_commands must be real test commands/scripts that reproduce the current bug before coding. Do not invent missing files, commands, or steps.\n"
-        "- For bug items, verification_commands should describe the commands QA should rerun after the fix when they are known.\n"
-        "- For bug items, if you actually run the reproduction_commands and the bug is no longer reproducible, set closure=rejected and explain that the issue should be closed instead of asking for clarification.\n"
-        "- Set closure to one of: ready, needs_clarification, split_required, duplicate, misclassified, rejected.\n"
+        "- For bug items, check whether the existing issue/task already contains explicit reproduction_steps, repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps.\n"
+        "- For bug items, if the report is worth pursuing but the executable bug contract is incomplete, keep closure=ready and explain what the downstream bug-validation agents still need to establish.\n"
+        "- Set closure to one of: ready, duplicate, misclassified, rejected.\n"
         "- docs_required should be true when README/runbook/changelog/operator docs need to be updated.\n"
         "- Keep summary and feedback in 简体中文.\n\n"
         "Task context:\n{payload}"
     ),
     output_model=DeliveryAuditResult,
+)
+
+
+FALLBACK_TASK_SPECS["reproduce_bug_before_fix"] = CrewTaskSpec(
+    task_name="reproduce_bug_before_fix",
+    expected_output="A structured JSON bug reproduction decision.",
+    description_template=(
+        "Act as the dedicated bug reproduction gate before any bugfix coding starts.\n"
+        "Rules:\n"
+        "- Use the current bug contract and validation tools to decide whether the bug is still reproducible now.\n"
+        "- Keep summary and feedback in 简体中文.\n"
+        "- Return reproduction_commands that the runtime should rerun as durable proof.\n"
+        "- Set reproduced=true only when the current commands should fail before the fix.\n"
+        "- If the bug is not reproducible anymore, reject it so the runtime can close the issue.\n\n"
+        "Task context:\n{payload}"
+    ),
+    output_model=DeliveryBugReproResult,
+)
+
+
+FALLBACK_TASK_SPECS["bootstrap_bug_testcase"] = CrewTaskSpec(
+    task_name="bootstrap_bug_testcase",
+    expected_output="A structured JSON bug test-case bootstrap decision.",
+    description_template=(
+        "Bootstrap the smallest failing automated test for this bug in the current task worktree.\n"
+        "Rules:\n"
+        "- Edit only approved bug test paths.\n"
+        "- Do not fix the bug implementation itself.\n"
+        "- Create or update only the minimum test assets needed to prove the bug currently exists.\n"
+        "- Return repo-relative test_case_files, executable reproduction_commands, and post-fix verification_steps/verification_commands.\n"
+        "- Approve only when the bug can be turned into a stable failing automated test.\n"
+        "- Keep summary and feedback in 简体中文.\n\n"
+        "Task context:\n{payload}"
+    ),
+    output_model=DeliveryBugTestCaseResult,
 )
 
 
@@ -155,6 +192,8 @@ DELIVERY_CODING_TASK_SPEC = get_task_spec("implement_self_upgrade_task")
 DELIVERY_REVIEW_TASK_SPEC = get_task_spec("review_self_upgrade_task")
 DELIVERY_QA_TASK_SPEC = get_task_spec("qa_self_upgrade_task")
 DELIVERY_AUDIT_TASK_SPEC = get_task_spec("audit_self_upgrade_issue")
+DELIVERY_BUG_REPRO_TASK_SPEC = get_task_spec("reproduce_bug_before_fix")
+DELIVERY_BUG_TESTCASE_TASK_SPEC = get_task_spec("bootstrap_bug_testcase")
 DELIVERY_DOCUMENTATION_TASK_SPEC = get_task_spec("document_self_upgrade_task")
 
 

@@ -47,6 +47,27 @@ class DeliveryAuditResult(BaseModel):
     reproduction_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class DeliveryBugReproResult(BaseModel):
+    approved: bool = False
+    reproduced: bool = False
+    summary: str = ""
+    feedback: list[str] = Field(default_factory=list)
+    reproduction_commands: list[str] = Field(default_factory=list)
+    reproduction_evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DeliveryBugTestCaseResult(BaseModel):
+    approved: bool = False
+    summary: str = ""
+    feedback: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    reproduction_steps: list[str] = Field(default_factory=list)
+    test_case_files: list[str] = Field(default_factory=list)
+    reproduction_commands: list[str] = Field(default_factory=list)
+    verification_steps: list[str] = Field(default_factory=list)
+    verification_commands: list[str] = Field(default_factory=list)
+
+
 class DeliveryDocumentationResult(BaseModel):
     approved: bool = False
     updated: bool = False

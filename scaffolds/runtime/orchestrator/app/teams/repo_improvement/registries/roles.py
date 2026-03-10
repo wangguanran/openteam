@@ -16,6 +16,8 @@ ROLE_QA_AGENT = "QA-Agent"
 ROLE_PROCESS_OPTIMIZATION_ANALYST = "Process-Optimization-Analyst"
 ROLE_ISSUE_DISCUSSION_AGENT = "Issue-Discussion-Agent"
 ROLE_ISSUE_AUDIT_AGENT = "Issue-Audit-Agent"
+ROLE_BUG_REPRO_AGENT = "Bug-Repro-Agent"
+ROLE_BUG_TESTCASE_AGENT = "Bug-TestCase-Agent"
 ROLE_DOCUMENTATION_AGENT = "Documentation-Agent"
 ROLE_MILESTONE_MANAGER = "Milestone-Manager-Agent"
 ROLE_CODE_QUALITY_ANALYST = "Code-Quality-Analyst"
@@ -49,6 +51,8 @@ ROLE_DISPLAY_ZH = {
     ROLE_PROCESS_OPTIMIZATION_ANALYST: "流程优化分析 Agent",
     ROLE_ISSUE_DISCUSSION_AGENT: "需求答复 Agent",
     ROLE_ISSUE_AUDIT_AGENT: "问题审计 Agent",
+    ROLE_BUG_REPRO_AGENT: "缺陷复现 Agent",
+    ROLE_BUG_TESTCASE_AGENT: "缺陷测试用例 Agent",
     ROLE_DOCUMENTATION_AGENT: "文档同步 Agent",
     ROLE_MILESTONE_MANAGER: "里程碑经理 Agent",
     ROLE_CODE_QUALITY_ANALYST: "代码质量分析 Agent",
@@ -127,9 +131,21 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_ISSUE_AUDIT_AGENT: CrewRoleSpec(
         role_id=ROLE_ISSUE_AUDIT_AGENT,
-        goal="Audit the issue before scheduling any coding work, confirm the classification, reproduce bug reports with executable tests, and reject work that is not closed-loop enough to execute.",
-        backstory="You are the delivery audit gate. You stop vague, duplicate, misclassified, or low-value issues before the scheduler dispatches engineering work. For bug issues, you require explicit reproduction steps, concrete test case scripts, and post-fix verification steps, and you run the reproduction test before allowing coding.",
+        goal="Audit the issue before scheduling any coding work, confirm the classification, and reject work that is duplicate, misclassified, stale, or not closed-loop enough to route into the delivery workflow.",
+        backstory="You are the delivery audit gate. You stop vague, duplicate, misclassified, or low-value issues before the scheduler dispatches engineering work. For bug issues, you verify whether the report is worth pursuing now and route it into dedicated bug reproduction or test-case bootstrap stages instead of letting vague reports reach coding.",
         tool_profile="qa",
+    ),
+    ROLE_BUG_REPRO_AGENT: CrewRoleSpec(
+        role_id=ROLE_BUG_REPRO_AGENT,
+        goal="Use the current bug contract to prove whether the bug is still reproducible before any bugfix coding starts.",
+        backstory="You are the pre-fix reproduction gate. You only trust executable evidence, you rerun the declared failing commands, and you close stale bug reports instead of sending them downstream.",
+        tool_profile="qa",
+    ),
+    ROLE_BUG_TESTCASE_AGENT: CrewRoleSpec(
+        role_id=ROLE_BUG_TESTCASE_AGENT,
+        goal="Bootstrap the smallest failing automated test case that proves the reported bug exists in the current task worktree.",
+        backstory="You are a bug-validation specialist. You create the minimum failing test under approved test paths, capture the exact reproduction commands, and stop if the bug cannot be turned into a stable executable test.",
+        tool_profile="write",
     ),
     ROLE_FEATURE_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_FEATURE_CODING_AGENT,
@@ -303,6 +319,8 @@ def delivery_team_blueprint(*, owner_role: str, review_role: str, qa_role: str, 
         members=(
             TeamMemberSpec(role_id=ROLE_SCHEDULER_AGENT, state="RUNNING", current_action="dispatching self-upgrade task"),
             TeamMemberSpec(role_id=ROLE_ISSUE_AUDIT_AGENT, state="IDLE", current_action="waiting for issue audit"),
+            TeamMemberSpec(role_id=ROLE_BUG_TESTCASE_AGENT, state="IDLE", current_action="waiting for failing test bootstrap"),
+            TeamMemberSpec(role_id=ROLE_BUG_REPRO_AGENT, state="IDLE", current_action="waiting for bug reproduction"),
             TeamMemberSpec(role_id=str(owner_role), state="IDLE", current_action="waiting for coding"),
             TeamMemberSpec(role_id=str(review_role), state="IDLE", current_action="waiting for review"),
             TeamMemberSpec(role_id=str(qa_role), state="IDLE", current_action="waiting for QA"),
