@@ -44,7 +44,7 @@ cd ../team-os
 cd team-os-runtime
 cp .env.example .env
 # 编辑 .env，至少填写 POSTGRES_PASSWORD，按需填写 OPENAI_API_KEY
-make up
+make up-build
 make ps
 ```
 
@@ -54,6 +54,11 @@ make ps
 cd team-os-runtime
 make down
 ```
+
+说明：
+
+- `make up-build`：使用本地 `team-os` 源码通过统一 Dockerfile 构建并启动
+- `make up`：直接使用本地已有或预先 `pull` 下来的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动
 
 ## 镜像化启动（推荐给新机器）
 
@@ -71,7 +76,7 @@ cd ../team-os
 - 生成/更新 `.env`
 - 写入 `TEAMOS_DB_URL`
 - 拉取 `ghcr.io/wangguanran/teamos-control-plane:main`
-- 启动 `docker-compose.image.yml`
+- 启动统一的 `docker-compose.yml`
 
 构建期和运行期网络是分离的：
 
@@ -124,13 +129,10 @@ curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
 ## Makefile
 
 - `make up` / `make down`
-- `make up-image` / `make down-image`
+- `make build` / `make up-build`
 - `make pull`
-- `make pull-image`
 - `make ps`
-- `make ps-image`
 - `make logs`
-- `make logs-image`
 - `make doctor`
 
 ## teamos CLI（在 team-os 仓库）

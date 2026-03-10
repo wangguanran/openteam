@@ -146,7 +146,7 @@ def run_checks(*, repo_root: Path) -> CheckResult:
         failures.append(f"repo purity violations detected ({len(purity_violations)}): {sample}")
 
     # 4) runtime template should mount Workspace (for containers)
-    compose_tpl = repo_root / "templates" / "runtime" / "docker-compose.yml"
+    compose_tpl = repo_root / "scaffolds" / "runtime" / "docker-compose.yml"
     if compose_tpl.exists():
         text = compose_tpl.read_text(encoding="utf-8", errors="replace")
         if "TEAMOS_WORKSPACE_ROOT" not in text:

@@ -11,7 +11,7 @@ Usage:
 
 Purpose:
   Initialize an image-based team-os-runtime deployment, write the required .env values,
-  pull the published control-plane image, and start the runtime with docker compose.
+  pull the published control-plane image, and start the runtime with the unified docker compose file.
 
 Defaults:
   --path  ../team-os-runtime-image
@@ -105,9 +105,9 @@ upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
 (
   cd "$target"
   if [[ "$skip_pull" -ne 1 ]]; then
-    docker compose -f docker-compose.image.yml pull
+    docker compose pull
   fi
-  docker compose -f docker-compose.image.yml up -d
+  docker compose up -d --no-build
 )
 
 echo
@@ -115,5 +115,5 @@ echo "runtime_path=$target"
 echo "image=$image"
 echo "base_url=http://127.0.0.1:${port}"
 echo "next:"
-echo "  cd \"$target\" && docker compose -f docker-compose.image.yml ps"
+echo "  cd \"$target\" && docker compose ps"
 echo "  curl -fsS http://127.0.0.1:${port}/healthz"

@@ -33,8 +33,10 @@ services:
       retries: 12
 
   control-plane:
+    image: ${TEAMOS_CONTROL_PLANE_IMAGE:-ghcr.io/wangguanran/teamos-control-plane:main}
     build:
-      context: ./orchestrator
+      context: ${TEAM_OS_REPO_PATH:-../team-os}
+      dockerfile: tooling/docker/runtime-control-plane.Dockerfile
       args:
         TEAMOS_PYTHON_BASE_IMAGE: ${TEAMOS_PYTHON_BASE_IMAGE:-python:3.11-slim-bookworm}
         HTTP_PROXY: ${TEAMOS_BUILD_HTTP_PROXY:-}
@@ -132,9 +134,9 @@ services:
       - "127.0.0.1:${CONTROL_PLANE_PORT:-8787}:8787"
     volumes:
       # Default: read-only repo mount, with minimal writable subpaths layered on top.
-      - ../team-os:/team-os:ro
+      - ${TEAM_OS_REPO_PATH:-../team-os}:/team-os:ro
       - ./state/teamos:/team-os/.team-os:rw
-      - ../team-os/docs:/team-os/docs
+      - ${TEAM_OS_REPO_PATH:-../team-os}/docs:/team-os/docs
       # Runtime root persistence (all runtime outputs stay in team-os-runtime).
       - ./state:/teamos-runtime/state:rw
       - ./hub:/teamos-runtime/hub:rw
