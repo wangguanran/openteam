@@ -155,7 +155,7 @@ MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
     (("delivery", "review", "qa", "release"), "Delivery"),
     (("proposal", "discussion"), "Proposal"),
     (("teamos", " cli ", " cli/", "/teamos"), "CLI"),
-    (("temporal", "postgres", "redis", "hub"), "Hub"),
+    (("postgres", "redis", "hub"), "Hub"),
     (("requirements", "raw_inputs", "requirement"), "Requirements"),
     (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
     (("security", "auth", "oauth", "token"), "Security"),

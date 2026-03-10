@@ -53,7 +53,6 @@ _DEPENDENCY_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("redis", re.compile(r"\bredis\b", re.IGNORECASE), "Redis (optional)"),
     ("github", re.compile(r"\bgithub\b|gh\s+cli|projects\s+v2", re.IGNORECASE), "GitHub API/Projects (gh auth required)"),
     ("docker", re.compile(r"\bdocker\b", re.IGNORECASE), "Docker runtime"),
-    ("temporal", re.compile(r"\btemporal\b", re.IGNORECASE), "Temporal runtime"),
     ("oauth", re.compile(r"\boauth\b|codex\s+login|device\s+auth", re.IGNORECASE), "Codex OAuth (codex login)"),
 ]
 

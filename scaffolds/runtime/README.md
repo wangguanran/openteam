@@ -4,8 +4,7 @@
 
 - Control Plane（Python + FastAPI + CrewAI orchestrator）
 - OpenHands Agent Server（隔离执行平面）
-- Temporal + UI（兼容组件，可选）
-- Postgres（Temporal DB + 运行时元数据预留）
+- Postgres（运行时元数据）
 
 ## 安全提示 (先读)
 
@@ -114,12 +113,6 @@ curl -fsS -X POST http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/improvement/ta
     "repo_locator": "wangguanran/team-os",
     "workstream_id": "general"
   }'
-```
-
-Temporal UI：
-
-```bash
-open http://127.0.0.1:${TEMPORAL_UI_PORT:-18081}
 ```
 
 OpenHands Agent Server health（若暴露到宿主）：

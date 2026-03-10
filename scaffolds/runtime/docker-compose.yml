@@ -3,88 +3,17 @@ services:
     image: postgres:${POSTGRESQL_VERSION:-16}
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-temporal}
+      POSTGRES_USER: ${POSTGRES_USER:-teamos}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-temporal} -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-teamos} -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  temporal-admin-tools:
-    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.29.1-tctl-1.18.4-cli-1.5.0}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - DB=postgres12
-      - DB_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-temporal}
-      - POSTGRES_PWD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      - POSTGRES_SEEDS=postgres
-      - SQL_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-    entrypoint: ["/bin/sh"]
-    command: /etc/temporal/scripts/setup-postgres.sh
-    volumes:
-      - ./temporal/scripts:/etc/temporal/scripts:ro
-    restart: "no"
-
-  temporal:
-    image: temporalio/server:${TEMPORAL_VERSION:-1.29.1}
-    restart: unless-stopped
-    depends_on:
-      temporal-admin-tools:
-        condition: service_completed_successfully
-    environment:
-      - DB=postgres12
-      - DB_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-temporal}
-      - POSTGRES_PWD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      - POSTGRES_SEEDS=postgres
-      - DYNAMIC_CONFIG_FILE_PATH=/etc/temporal/config/dynamicconfig/development-sql.yaml
-      - BIND_ON_IP=0.0.0.0
-    ports:
-      - "127.0.0.1:${TEMPORAL_GRPC_PORT:-7233}:7233"
-    volumes:
-      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 7233 || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  temporal-create-namespace:
-    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.29.1-tctl-1.18.4-cli-1.5.0}
-    depends_on:
-      temporal:
-        condition: service_healthy
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - DEFAULT_NAMESPACE=default
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - "/etc/temporal/scripts/create-namespace.sh"
-    volumes:
-      - ./temporal/scripts:/etc/temporal/scripts:ro
-    restart: "no"
-
-  temporal-ui:
-    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.34.0}
-    restart: unless-stopped
-    depends_on:
-      temporal:
-        condition: service_healthy
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      # Adjust if you host UI elsewhere.
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-    ports:
-      - "127.0.0.1:${TEMPORAL_UI_PORT:-18081}:8080"
 
   openhands-agent-server:
     image: ghcr.io/openhands/agent-server:latest-python
@@ -128,7 +57,7 @@ services:
         TEAMOS_PIP_TRUSTED_HOST: ${TEAMOS_PIP_TRUSTED_HOST:-}
     restart: unless-stopped
     depends_on:
-      temporal:
+      postgres:
         condition: service_healthy
       openhands-agent-server:
         condition: service_healthy
@@ -141,10 +70,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # GitHub auth: recommended to set from `gh auth token` (OAuth); do not commit real values.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      TEMPORAL_ADDRESS: temporal:7233
       OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-temporal}:${POSTGRES_PASSWORD}@postgres:5432/team_os
-      TEAMOS_DB_URL: postgresql://${POSTGRES_USER:-temporal}:${POSTGRES_PASSWORD}@postgres:5432/team_os
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD}@postgres:5432/team_os
+      TEAMOS_DB_URL: postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD}@postgres:5432/team_os
       TEAMOS_DEMO_SEED: ${TEAMOS_DEMO_SEED:-0}
       TEAMOS_CODEX_MODEL: ${TEAMOS_CODEX_MODEL:-}
       TEAMOS_SELF_UPGRADE_AUTO: ${TEAMOS_SELF_UPGRADE_AUTO:-1}
@@ -187,11 +115,11 @@ services:
       HTTP_PROXY: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
       HTTPS_PROXY: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
       ALL_PROXY: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,temporal,openhands-agent-server,control-plane}
+      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane}
       http_proxy: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
       https_proxy: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
       all_proxy: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,temporal,openhands-agent-server,control-plane}
+      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane}
       # GitHub Projects panel sync (view-layer)
       TEAMOS_PANEL_GH_AUTO_SYNC: ${TEAMOS_PANEL_GH_AUTO_SYNC:-0}
       TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}

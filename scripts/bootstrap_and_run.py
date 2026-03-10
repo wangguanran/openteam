@@ -213,7 +213,6 @@ def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
         ("redis", "redis"),
         ("yaml", "PyYAML"),
         ("psycopg", "psycopg[binary]"),
-        ("temporalio", "temporalio"),
         ("crewai", _crewai_pip_spec()),
     ]
     code = (

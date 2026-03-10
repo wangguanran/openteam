@@ -423,18 +423,16 @@ docker compose ps
 ```bash
 cd team-os-runtime
 mkdir -p backups
-# 备份 temporal DB（也可改成 pg_dumpall）
-docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d temporal > backups/temporal_$(date +%Y%m%d_%H%M%S).sql
+# 备份 Team OS runtime DB（也可改成 pg_dumpall）
+docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d team_os > backups/team_os_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 恢复（示例）：
 
 ```bash
 cd team-os-runtime
-cat backups/temporal_<timestamp>.sql | docker compose exec -T postgres psql -U "$POSTGRES_USER" -d temporal
+cat backups/team_os_<timestamp>.sql | docker compose exec -T postgres psql -U "$POSTGRES_USER" -d team_os
 ```
-
-> 说明：Temporal 会使用多个 DB（含 visibility）。如需完整恢复，请按实际 DB 列表分别 dump/restore，并在任务日志中记录操作与结果。
 
 健康检查（示例）：
 
@@ -446,12 +444,6 @@ OpenHands 健康检查（示例）：
 
 ```bash
 curl -fsS http://127.0.0.1:18000/alive
-```
-
-Temporal UI（示例）：
-
-```bash
-open http://127.0.0.1:18081
 ```
 
 ## 6. 部署验证 (需要落盘证据)
@@ -467,10 +459,9 @@ make ps
 
 已验证（2026-02-15，本机 localhost 绑定）：
 
-- `postgres/temporal/temporal-ui/openhands-agent-server/control-plane` 均为 `running/healthy`
+- `postgres/openhands-agent-server/control-plane` 均为 `running/healthy`
 - Control Plane：`curl -fsS http://127.0.0.1:8787/healthz` 返回 `{"status":"ok", ...}`
 - OpenHands Agent Server：`curl -fsS http://127.0.0.1:18000/alive` 返回 `{"status":"ok"}`
-- Temporal UI：`http://127.0.0.1:18081`
 
 新增（Control Plane + CLI）验收点（完成后在此落证据）：
 
@@ -553,7 +544,6 @@ cd team-os
 
 - Docker/Compose 不可用：确认 Docker Desktop 运行；执行 `docker info`
 - 端口冲突：用 `lsof -iTCP -sTCP:LISTEN -n -P | rg <port>`
-- Temporal 不可用（如启用兼容组件）：查看 `docker compose logs temporal` 与 `docker compose logs temporal-ui`
 - OpenHands 不可用（如启用兼容组件）：查看 `docker compose logs openhands-agent-server`，确认是否需要 docker socket（风险见 `docs/product/SECURITY.md`）
 - Control Plane 健康检查失败：查看 `docker compose logs control-plane`
 
