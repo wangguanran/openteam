@@ -70,6 +70,12 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
         self.assertEqual(spec.tool_profile, "read")
         self.assertTrue(spec.goal)
 
+    def test_issue_audit_role_uses_qa_tool_profile(self):
+        spec = crewai_role_registry.get_role_spec(crewai_role_registry.ROLE_ISSUE_AUDIT_AGENT)
+
+        self.assertEqual(spec.tool_profile, "qa")
+        self.assertIn("reproduce bug reports", spec.goal)
+
     def test_repo_improvement_team_doc_loads_from_nested_path(self):
         doc = crewai_spec_loader.team_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT)
 

@@ -31,6 +31,9 @@ class CrewAITaskRegistryTests(unittest.TestCase):
 
         self.assertIn('{"task_id":"T-1"}', text)
         self.assertIn("docs_required", text)
+        self.assertIn("reproduction_steps", text)
+        self.assertIn("test_case_files", text)
+        self.assertIn("verification_steps", text)
 
     def test_get_task_spec_loads_yaml_backed_model_mapping(self):
         spec = crewai_task_registry.get_task_spec("document_self_upgrade_task")

@@ -439,6 +439,78 @@ def _candidate_validation_commands(*groups: list[str]) -> list[str]:
     return out
 
 
+def _clean_text_list(raw_items: Any) -> list[str]:
+    if raw_items is None:
+        return []
+    if isinstance(raw_items, (str, bytes)):
+        values = [raw_items]
+    else:
+        try:
+            values = list(raw_items)
+        except Exception:
+            values = [raw_items]
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        text = str(raw or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _normalize_repo_relative_paths(raw_items: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in _clean_text_list(raw_items):
+        rel = _normalize_repo_relative_path(raw)
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        out.append(rel)
+    return out
+
+
+def _audit_infra_error(detail: str) -> bool:
+    text = str(detail or "").strip()
+    return text == "command_not_allowed" or text.startswith("command_parse_failed:")
+
+
+def _audit_reproduced(evidence: list[dict[str, Any]]) -> bool:
+    return any(
+        not bool(item.get("ok")) and not _audit_infra_error(str(item.get("stderr_tail") or ""))
+        for item in evidence
+    )
+
+
+def _audit_evidence_feedback(evidence: list[dict[str, Any]]) -> list[str]:
+    feedback: list[str] = []
+    for item in evidence:
+        command = str(item.get("command") or "").strip()
+        detail = str(item.get("stderr_tail") or "").strip()
+        if not command:
+            continue
+        if detail == "command_not_allowed":
+            feedback.append(f"复现测试命令不在允许列表内：{command}")
+        elif detail.startswith("command_parse_failed:"):
+            feedback.append(f"复现测试命令无法解析：{command}")
+    return feedback
+
+
+def _missing_repo_files(repo_root: Path, rel_paths: list[str]) -> list[str]:
+    missing: list[str] = []
+    for rel in rel_paths:
+        try:
+            path = _resolve_repo_path(repo_root, rel)
+        except DeliveryError:
+            missing.append(rel)
+            continue
+        if not path.exists() or not path.is_file():
+            missing.append(rel)
+    return missing
+
+
 def _validation_evidence(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     execution = _execution_state(doc)
     raw = execution.get("validation_evidence") or {}
@@ -1259,7 +1331,13 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
     return DeliveryQAResult.model_validate(out.model_dump())
 
 
-def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditResult) -> DeliveryAuditResult:
+def _normalize_audit_result(
+    *,
+    task_doc: dict[str, Any],
+    worktree_root: Path,
+    result: DeliveryAuditResult,
+    audit_evidence: Optional[list[dict[str, Any]]] = None,
+) -> DeliveryAuditResult:
     lane = str(_task_lane(task_doc) or "bug").strip().lower() or "bug"
     classification = str(result.classification or lane).strip().lower()
     if classification not in ("bug", "feature", "process", "quality"):
@@ -1269,7 +1347,17 @@ def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditRe
         closure = "ready" if result.approved else "needs_clarification"
     approved = bool(result.approved)
     worth_doing = bool(result.worth_doing)
-    feedback = [str(x).strip() for x in (result.feedback or []) if str(x).strip()]
+    feedback = _clean_text_list(result.feedback)
+    reproduction_steps = _clean_text_list(result.reproduction_steps)
+    test_case_files = _normalize_repo_relative_paths(result.test_case_files)
+    reproduction_commands = _candidate_validation_commands(_clean_text_list(result.reproduction_commands))
+    verification_steps = _clean_text_list(result.verification_steps)
+    verification_commands = _candidate_validation_commands(
+        _clean_text_list(result.verification_commands),
+        _tests_allowlist(task_doc),
+    )
+    normalized_audit_evidence = list(audit_evidence or result.reproduction_evidence or [])
+    reproduced_in_audit = _audit_reproduced(normalized_audit_evidence)
     if classification != lane and closure == "ready":
         closure = "misclassified"
         approved = False
@@ -1278,6 +1366,32 @@ def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditRe
         closure = "rejected"
         approved = False
         feedback.append("审计认为该问题当前不值得进入开发。")
+    if lane == "bug" and classification == "bug" and worth_doing and closure in ("ready", "needs_clarification", "pending", "split_required"):
+        bug_feedback: list[str] = []
+        if not reproduction_steps:
+            bug_feedback.append("缺少明确的 bug 复现路径/步骤。")
+        if not test_case_files:
+            bug_feedback.append("缺少 repo 内可定位的测试 case 脚本。")
+        else:
+            missing_test_case_files = _missing_repo_files(worktree_root, test_case_files)
+            if missing_test_case_files:
+                bug_feedback.append("测试 case 脚本不存在或越界：" + ", ".join(missing_test_case_files[:10]))
+        if not reproduction_commands:
+            bug_feedback.append("缺少可执行的 bug 复现测试命令。")
+        if not verification_steps:
+            bug_feedback.append("缺少修复后的验证步骤。")
+        bug_feedback.extend(_audit_evidence_feedback(normalized_audit_evidence))
+        if reproduction_commands:
+            if not normalized_audit_evidence:
+                bug_feedback.append("Issue Audit Agent 未留下实际的 pre-fix 复现测试证据。")
+            elif not reproduced_in_audit:
+                bug_feedback.append("Issue Audit Agent 已执行复现测试，但未能证明 bug 当前可复现。")
+        for item in bug_feedback:
+            if item not in feedback:
+                feedback.append(item)
+        if bug_feedback and closure == "ready":
+            closure = "needs_clarification"
+            approved = False
     if closure != "ready":
         approved = False
     if not feedback and not approved:
@@ -1291,6 +1405,13 @@ def _normalize_audit_result(*, task_doc: dict[str, Any], result: DeliveryAuditRe
         module=str(result.module or "").strip(),
         summary=str(result.summary or "").strip(),
         feedback=feedback,
+        reproduction_steps=reproduction_steps,
+        test_case_files=test_case_files,
+        reproduction_commands=reproduction_commands,
+        verification_steps=verification_steps,
+        verification_commands=verification_commands,
+        reproduced_in_audit=reproduced_in_audit,
+        reproduction_evidence=normalized_audit_evidence,
     )
 
 
@@ -1364,7 +1485,21 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
         payload=blob,
         verbose=verbose,
     )
-    return _normalize_audit_result(task_doc=task_doc, result=DeliveryAuditResult.model_validate(out.model_dump()))
+    raw_result = DeliveryAuditResult.model_validate(out.model_dump())
+    audit_evidence: list[dict[str, Any]] = []
+    if str(_task_lane(task_doc) or "").strip().lower() == "bug":
+        audit_evidence = _run_validation_evidence(
+            repo_root=worktree_root,
+            commands=raw_result.reproduction_commands,
+            allowlist=tests_allowlist,
+            source_stage="audit",
+        )
+    return _normalize_audit_result(
+        task_doc=task_doc,
+        worktree_root=worktree_root,
+        result=raw_result,
+        audit_evidence=audit_evidence,
+    )
 
 
 def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryDocumentationResult:
@@ -1623,6 +1758,13 @@ def execute_task_delivery(
                     "docs_required": bool(audit_result.docs_required),
                     "summary": str(audit_result.summary or "").strip(),
                     "feedback": [str(x).strip() for x in (audit_result.feedback or []) if str(x).strip()],
+                    "reproduction_steps": [str(x).strip() for x in (audit_result.reproduction_steps or []) if str(x).strip()],
+                    "test_case_files": [str(x).strip() for x in (audit_result.test_case_files or []) if str(x).strip()],
+                    "reproduction_commands": [str(x).strip() for x in (audit_result.reproduction_commands or []) if str(x).strip()],
+                    "verification_steps": [str(x).strip() for x in (audit_result.verification_steps or []) if str(x).strip()],
+                    "verification_commands": [str(x).strip() for x in (audit_result.verification_commands or []) if str(x).strip()],
+                    "reproduced_in_audit": bool(audit_result.reproduced_in_audit),
+                    "reproduction_evidence": list(audit_result.reproduction_evidence or []),
                     "audit_role": planning.ROLE_ISSUE_AUDIT_AGENT,
                     "updated_at": _utc_now_iso(),
                     "approved_at": _utc_now_iso() if audit_result.approved else str(audit_doc.get("approved_at") or ""),
@@ -1652,7 +1794,17 @@ def execute_task_delivery(
                     extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
                 )
                 _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="DONE", action="issue audit approved")
-                _append_markdown(logs_dir, "02_plan.md", "Issue Audit", [audit_result.summary or "Issue 审计通过。", *[f"feedback: {x}" for x in audit_result.feedback]])
+                _append_markdown(
+                    logs_dir,
+                    "02_plan.md",
+                    "Issue Audit",
+                    [
+                        audit_result.summary or "Issue 审计通过。",
+                        f"reproduced_in_audit: {bool(audit_result.reproduced_in_audit)}",
+                        *[f"feedback: {x}" for x in audit_result.feedback],
+                        *_validation_evidence_lines(list(audit_result.reproduction_evidence or [])),
+                    ],
+                )
                 _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
                 _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
             else:
@@ -1667,7 +1819,17 @@ def execute_task_delivery(
                 )
                 _set_agent_state(db, agent_ids, planning.ROLE_ISSUE_AUDIT_AGENT, state="FAILED", action=f"issue audit {audit_result.closure}")
                 _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery waiting for issue clarification")
-                _append_markdown(logs_dir, "02_plan.md", "Issue Audit Blocked", [audit_result.summary or audit_result.closure, *[f"feedback: {x}" for x in audit_result.feedback]])
+                _append_markdown(
+                    logs_dir,
+                    "02_plan.md",
+                    "Issue Audit Blocked",
+                    [
+                        audit_result.summary or audit_result.closure,
+                        f"reproduced_in_audit: {bool(audit_result.reproduced_in_audit)}",
+                        *[f"feedback: {x}" for x in audit_result.feedback],
+                        *_validation_evidence_lines(list(audit_result.reproduction_evidence or [])),
+                    ],
+                )
                 _append_metric(
                     logs_dir,
                     event_type="SELF_UPGRADE_ISSUE_AUDIT_BLOCKED",

@@ -42,6 +42,9 @@ class UpgradeWorkItem(BaseModel):
     allowed_paths: list[str] = Field(default_factory=list)
     tests: list[str] = Field(default_factory=list)
     acceptance: list[str] = Field(default_factory=list)
+    reproduction_steps: list[str] = Field(default_factory=list)
+    test_case_files: list[str] = Field(default_factory=list)
+    verification_steps: list[str] = Field(default_factory=list)
     worktree_hint: str = ""
     module: str = ""
 
@@ -1107,6 +1110,9 @@ def _default_work_items(*, repo_root: Path, finding: UpgradeFinding) -> list[Upg
             allowed_paths=list(finding.files or []),
             tests=list(finding.tests or []),
             acceptance=list(finding.acceptance or []),
+            reproduction_steps=[],
+            test_case_files=[],
+            verification_steps=list(finding.acceptance or []),
             worktree_hint=_worktree_hint(repo_root=repo_root, lane=finding.lane, title=finding.title),
             module=_normalize_module_name(
                 str(finding.module or "").strip(),
@@ -1252,6 +1258,9 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
                     allowed_paths=[str(x).strip() for x in (getattr(item, "allowed_paths", None) or finding.files or []) if str(x).strip()][:20],
                     tests=[str(x).strip() for x in (getattr(item, "tests", None) or finding.tests or []) if str(x).strip()][:20],
                     acceptance=[str(x).strip() for x in (getattr(item, "acceptance", None) or finding.acceptance or []) if str(x).strip()][:20],
+                    reproduction_steps=[str(x).strip() for x in (getattr(item, "reproduction_steps", None) or []) if str(x).strip()][:10],
+                    test_case_files=[str(x).strip() for x in (getattr(item, "test_case_files", None) or []) if str(x).strip()][:10],
+                    verification_steps=[str(x).strip() for x in (getattr(item, "verification_steps", None) or getattr(item, "acceptance", None) or finding.acceptance or []) if str(x).strip()][:10],
                     worktree_hint=_normalize_worktree_hint(
                         repo_root=repo_root,
                         lane=lane,
@@ -1379,6 +1388,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], max_findings: int, ver
             "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
             "- Each work item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding.\n"
+            "- Bug work items must also include reproduction_steps, repo-relative test_case_files, and verification_steps. Do not leave bug reproduction implicit.\n"
             "- Quality work items should prefer deleting dead files, consolidating duplicate code, extracting shared logic, or narrowing oversized modules. Do not propose cosmetic-only cleanup.\n"
             "- Coding work items must be issue-scoped only; no extra optimization outside the listed paths.\n"
             "- 所有面向用户的自然语言字段必须使用简体中文，包括 title、summary、rationale、acceptance、work_items.title、work_items.summary。\n"
@@ -1675,6 +1685,11 @@ def _task_issue_audit_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> 
     lane = str(audit.get("classification") or finding.lane or "").strip().lower() or str(finding.lane or "bug").strip().lower() or "bug"
     closure = str(audit.get("closure") or audit.get("status") or "pending").strip() or "pending"
     feedback = [str(x).strip() for x in (audit.get("feedback") or []) if str(x).strip()]
+    reproduction_steps = [str(x).strip() for x in (audit.get("reproduction_steps") or []) if str(x).strip()]
+    test_case_files = [str(x).strip() for x in (audit.get("test_case_files") or []) if str(x).strip()]
+    reproduction_commands = [str(x).strip() for x in (audit.get("reproduction_commands") or []) if str(x).strip()]
+    verification_steps = [str(x).strip() for x in (audit.get("verification_steps") or []) if str(x).strip()]
+    verification_commands = [str(x).strip() for x in (audit.get("verification_commands") or []) if str(x).strip()]
     lines = [
         f"- 审计角色: {role_display_zh(str(audit.get('audit_role') or ROLE_ISSUE_AUDIT_AGENT))} ({str(audit.get('audit_role') or ROLE_ISSUE_AUDIT_AGENT)})",
         f"- 当前状态: {str(audit.get('status') or 'pending')}",
@@ -1683,8 +1698,17 @@ def _task_issue_audit_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> 
         f"- 值得进入开发: {'是' if bool(audit.get('worth_doing', True)) else '否'}",
         f"- 需要文档同步: {'是' if bool(audit.get('docs_required', False)) else '否'}",
     ]
+    if lane == "bug":
+        lines.append(f"- 审计已实际复现: {'是' if bool(audit.get('reproduced_in_audit')) else '否'}")
     if str(audit.get("summary") or "").strip():
         lines.append(f"- 审计结论: {str(audit.get('summary') or '').strip()}")
+    if lane == "bug":
+        lines.extend([f"- 复现路径: {item}" for item in reproduction_steps] or ["- 复现路径: （未指定）"])
+        lines.extend([f"- 测试 case 脚本: {item}" for item in test_case_files] or ["- 测试 case 脚本: （未指定）"])
+        lines.extend([f"- 复现测试命令: {item}" for item in reproduction_commands] or ["- 复现测试命令: （未指定）"])
+        lines.extend([f"- 修复后验证步骤: {item}" for item in verification_steps] or ["- 修复后验证步骤: （未指定）"])
+        if verification_commands:
+            lines.extend([f"- 修复后验证命令: {item}" for item in verification_commands])
     lines.extend([f"- 审计反馈: {item}" for item in feedback] or ["- 审计反馈: （待审计）"])
     return lines
 
@@ -2892,9 +2916,24 @@ def _issue_body(
         "",
         _normalize_issue_text(finding.rationale, empty_fallback="(无)"),
         "",
-        "## 范围内",
-        "",
     ])
+    if str(finding.lane or "").strip().lower() == "bug":
+        lines.extend(
+            [
+                "## Bug 复现与修复验证",
+                "",
+            ]
+        )
+        lines.extend([f"- 复现路径: {x}" for x in (work_item.reproduction_steps or [])] or ["- 复现路径: （未指定）"])
+        lines.extend([f"- 测试 case 脚本: {x}" for x in (work_item.test_case_files or [])] or ["- 测试 case 脚本: （未指定）"])
+        lines.extend([f"- 修复后验证步骤: {x}" for x in (work_item.verification_steps or work_item.acceptance or [])] or ["- 修复后验证步骤: （未指定）"])
+        lines.extend([""])
+    lines.extend(
+        [
+            "## 范围内",
+            "",
+        ]
+    )
     lines.extend([f"- {x}" for x in (work_item.allowed_paths or finding.files or [])] or ["- （未指定）"])
     lines.extend(
         [
@@ -3060,6 +3099,9 @@ def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding
             allowed_paths=[str(x).strip() for x in (work_item_raw.get("allowed_paths") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("allowed_paths") or su.get("files") or []) if str(x).strip()],
             tests=[str(x).strip() for x in (work_item_raw.get("tests") or su.get("tests") or []) if str(x).strip()],
             acceptance=[str(x).strip() for x in (work_item_raw.get("acceptance") or su.get("acceptance") or []) if str(x).strip()],
+            reproduction_steps=[str(x).strip() for x in (work_item_raw.get("reproduction_steps") or []) if str(x).strip()],
+            test_case_files=[str(x).strip() for x in (work_item_raw.get("test_case_files") or []) if str(x).strip()],
+            verification_steps=[str(x).strip() for x in (work_item_raw.get("verification_steps") or work_item_raw.get("acceptance") or su.get("acceptance") or []) if str(x).strip()],
             worktree_hint=str(work_item_raw.get("worktree_hint") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("worktree_hint") or "").strip(),
             module=_normalize_module_name(
                 str(work_item_raw.get("module") or su.get("module") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("module") or "").strip(),

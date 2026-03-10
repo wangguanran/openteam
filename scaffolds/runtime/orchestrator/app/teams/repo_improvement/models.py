@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,13 @@ class DeliveryAuditResult(BaseModel):
     module: str = ""
     summary: str = ""
     feedback: list[str] = Field(default_factory=list)
+    reproduction_steps: list[str] = Field(default_factory=list)
+    test_case_files: list[str] = Field(default_factory=list)
+    reproduction_commands: list[str] = Field(default_factory=list)
+    verification_steps: list[str] = Field(default_factory=list)
+    verification_commands: list[str] = Field(default_factory=list)
+    reproduced_in_audit: bool = False
+    reproduction_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DeliveryDocumentationResult(BaseModel):
@@ -46,4 +53,3 @@ class DeliveryDocumentationResult(BaseModel):
     summary: str = ""
     changed_files: list[str] = Field(default_factory=list)
     followups: list[str] = Field(default_factory=list)
-

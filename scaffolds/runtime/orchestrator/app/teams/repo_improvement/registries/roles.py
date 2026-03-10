@@ -127,9 +127,9 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_ISSUE_AUDIT_AGENT: CrewRoleSpec(
         role_id=ROLE_ISSUE_AUDIT_AGENT,
-        goal="Audit the issue before scheduling any coding work, confirm the classification, and reject work that is not closed-loop enough to execute.",
-        backstory="You are the delivery audit gate. You stop vague, duplicate, misclassified, or low-value issues before the scheduler dispatches engineering work.",
-        tool_profile="read",
+        goal="Audit the issue before scheduling any coding work, confirm the classification, reproduce bug reports with executable tests, and reject work that is not closed-loop enough to execute.",
+        backstory="You are the delivery audit gate. You stop vague, duplicate, misclassified, or low-value issues before the scheduler dispatches engineering work. For bug issues, you require explicit reproduction steps, concrete test case scripts, and post-fix verification steps, and you run the reproduction test before allowing coding.",
+        tool_profile="qa",
     ),
     ROLE_FEATURE_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_FEATURE_CODING_AGENT,

@@ -141,6 +141,147 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
 
             self.assertEqual([task["task_id"] for task in tasks], ["TEAMOS-1001"])
 
+    def test_normalize_audit_result_blocks_bug_without_reproduction_contract(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+
+            result = crewai_self_upgrade_delivery._normalize_audit_result(
+                task_doc=task_doc,
+                worktree_root=repo_root,
+                result=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                    approved=True,
+                    classification="bug",
+                    closure="ready",
+                    worth_doing=True,
+                    docs_required=False,
+                    summary="审计通过",
+                ),
+                audit_evidence=[],
+            )
+
+        self.assertFalse(result.approved)
+        self.assertEqual(result.closure, "needs_clarification")
+        self.assertIn("缺少明确的 bug 复现路径/步骤。", result.feedback)
+        self.assertIn("缺少 repo 内可定位的测试 case 脚本。", result.feedback)
+        self.assertIn("缺少可执行的 bug 复现测试命令。", result.feedback)
+        self.assertIn("缺少修复后的验证步骤。", result.feedback)
+
+    def test_run_issue_audit_stage_executes_bug_reproduction_command(self):
+        def _audit_run(cmd: list[str], *, cwd: Path, timeout_sec: int = 300) -> dict:
+            text = " ".join(str(x) for x in cmd)
+            if "status --short" in text:
+                return {"returncode": 0, "stdout": "", "stderr": ""}
+            if "unittest" in text:
+                return {"returncode": 1, "stdout": "FAIL\n", "stderr": ""}
+            return {"returncode": 0, "stdout": "", "stderr": ""}
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            (repo_root / "tests").mkdir(parents=True, exist_ok=True)
+            (repo_root / "tests" / "test_demo.py").write_text("import unittest\n", encoding="utf-8")
+            task_doc = _base_task_doc(repo_root=repo_root)
+
+            with mock.patch("app.crewai_self_upgrade_delivery.crewai_runtime.require_crewai_importable"), mock.patch(
+                "app.crewai_self_upgrade_delivery.planning._crewai_llm",
+                return_value=object(),
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery._build_repo_tools",
+                return_value={"qa": [], "read": [], "write": []},
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery.crewai_agent_factory.build_crewai_agent",
+                return_value=object(),
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery.crewai_task_registry.kickoff_registered_task",
+                return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                    approved=True,
+                    classification="bug",
+                    closure="ready",
+                    worth_doing=True,
+                    docs_required=False,
+                    summary="审计通过",
+                    reproduction_steps=["执行 demo 入口并观察测试失败。"],
+                    test_case_files=["tests/test_demo.py"],
+                    reproduction_commands=["python -m unittest tests.test_demo"],
+                    verification_steps=["修复后重新运行 python -m unittest tests.test_demo。"],
+                    verification_commands=["python -m unittest tests.test_demo"],
+                ),
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery._issue_snapshot",
+                return_value={"number": 101, "url": "https://github.com/foo/bar/issues/101", "title": "demo bug", "body": "demo body", "state": "open", "labels": ["bug"]},
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery._run",
+                side_effect=_audit_run,
+            ):
+                result = crewai_self_upgrade_delivery._run_issue_audit_stage(
+                    task_doc=task_doc,
+                    worktree_root=repo_root,
+                    verbose=False,
+                )
+
+        self.assertTrue(result.approved)
+        self.assertTrue(result.reproduced_in_audit)
+        self.assertEqual(result.reproduction_commands, ["python -m unittest tests.test_demo"])
+        self.assertEqual(result.test_case_files, ["tests/test_demo.py"])
+        self.assertEqual(len(result.reproduction_evidence), 1)
+        self.assertEqual(result.reproduction_evidence[0]["returncode"], 1)
+
+    def test_run_issue_audit_stage_blocks_when_bug_is_not_reproduced(self):
+        def _audit_run(cmd: list[str], *, cwd: Path, timeout_sec: int = 300) -> dict:
+            text = " ".join(str(x) for x in cmd)
+            if "status --short" in text:
+                return {"returncode": 0, "stdout": "", "stderr": ""}
+            if "unittest" in text:
+                return {"returncode": 0, "stdout": "OK\n", "stderr": ""}
+            return {"returncode": 0, "stdout": "", "stderr": ""}
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            (repo_root / "tests").mkdir(parents=True, exist_ok=True)
+            (repo_root / "tests" / "test_demo.py").write_text("import unittest\n", encoding="utf-8")
+            task_doc = _base_task_doc(repo_root=repo_root)
+
+            with mock.patch("app.crewai_self_upgrade_delivery.crewai_runtime.require_crewai_importable"), mock.patch(
+                "app.crewai_self_upgrade_delivery.planning._crewai_llm",
+                return_value=object(),
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery._build_repo_tools",
+                return_value={"qa": [], "read": [], "write": []},
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery.crewai_agent_factory.build_crewai_agent",
+                return_value=object(),
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery.crewai_task_registry.kickoff_registered_task",
+                return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                    approved=True,
+                    classification="bug",
+                    closure="ready",
+                    worth_doing=True,
+                    docs_required=False,
+                    summary="审计通过",
+                    reproduction_steps=["执行 demo 入口并观察测试失败。"],
+                    test_case_files=["tests/test_demo.py"],
+                    reproduction_commands=["python -m unittest tests.test_demo"],
+                    verification_steps=["修复后重新运行 python -m unittest tests.test_demo。"],
+                ),
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery._issue_snapshot",
+                return_value={"number": 101, "url": "https://github.com/foo/bar/issues/101", "title": "demo bug", "body": "demo body", "state": "open", "labels": ["bug"]},
+            ), mock.patch(
+                "app.crewai_self_upgrade_delivery._run",
+                side_effect=_audit_run,
+            ):
+                result = crewai_self_upgrade_delivery._run_issue_audit_stage(
+                    task_doc=task_doc,
+                    worktree_root=repo_root,
+                    verbose=False,
+                )
+
+        self.assertFalse(result.approved)
+        self.assertEqual(result.closure, "needs_clarification")
+        self.assertIn("未能证明 bug 当前可复现", " ".join(result.feedback))
+
     def test_execute_task_delivery_dry_run_closes_task(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
