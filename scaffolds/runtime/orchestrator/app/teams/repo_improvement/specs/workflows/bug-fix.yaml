@@ -1,6 +1,7 @@
 workflow_id: bug-fix
 display_name_zh: 缺陷修复流程
 lane: bug
+enabled: true
 description: Discover actionable bugs and deliver them directly without proposal approval.
 task_source: direct_task
 requires_user_confirmation: false

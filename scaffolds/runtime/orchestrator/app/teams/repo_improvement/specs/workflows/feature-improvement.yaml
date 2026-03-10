@@ -1,6 +1,7 @@
 workflow_id: feature-improvement
 display_name_zh: 功能改进流程
 lane: feature
+enabled: true
 description: Discover feature opportunities, wait for proposal approval, then deliver approved work items.
 task_source: proposal
 requires_user_confirmation: true

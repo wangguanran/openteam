@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any
 
 from app import crewai_role_registry
@@ -14,6 +15,8 @@ class WorkflowSpec:
     lane: str
     display_name_zh: str = ""
     description: str = ""
+    enabled: bool = True
+    disabled_reason: str = ""
     stages: tuple[str, ...] = ()
     task_source: str = "proposal"
     requires_user_confirmation: bool = False
@@ -44,6 +47,8 @@ class WorkflowSpec:
         return mapping.get(bump) or self.baseline_action_default
 
     def should_materialize(self, *, status: str, due: bool) -> bool:
+        if not self.enabled:
+            return False
         if self.task_source == "direct_task":
             return True
         if not due:
@@ -60,6 +65,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         lane="feature",
         display_name_zh="功能改进流程",
         description="Discover feature opportunities, wait for proposal approval, then deliver approved work items.",
+        enabled=True,
         stages=(
             crewai_role_registry.STAGE_PLANNING,
             crewai_role_registry.STAGE_PROPOSAL_CONFIRMATION,
@@ -79,6 +85,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         lane="bug",
         display_name_zh="缺陷修复流程",
         description="Discover actionable bugs and deliver them directly without proposal approval.",
+        enabled=True,
         stages=(
             crewai_role_registry.STAGE_PLANNING,
             crewai_role_registry.STAGE_DELIVERY,
@@ -95,6 +102,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         lane="quality",
         display_name_zh="质量改进流程",
         description="Discover code-quality improvements, confirm proposals, then deliver approved tasks.",
+        enabled=True,
         stages=(
             crewai_role_registry.STAGE_PLANNING,
             crewai_role_registry.STAGE_PROPOSAL_CONFIRMATION,
@@ -113,6 +121,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         lane="process",
         display_name_zh="流程改进流程",
         description="Discover runtime and delivery process improvements, then deliver them with governance and cooldown controls.",
+        enabled=True,
         stages=(
             crewai_role_registry.STAGE_PLANNING,
             crewai_role_registry.STAGE_DELIVERY,
@@ -140,6 +149,8 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
         lane=str(doc.get("lane") or "").strip().lower(),
         display_name_zh=str(doc.get("display_name_zh") or "").strip(),
         description=str(doc.get("description") or "").strip(),
+        enabled=bool(doc.get("enabled", True)),
+        disabled_reason=str(doc.get("disabled_reason") or "").strip(),
         stages=tuple(str(item).strip() for item in list(doc.get("stages") or []) if str(item).strip()),
         task_source=str(doc.get("task_source") or "proposal").strip(),
         requires_user_confirmation=bool(doc.get("requires_user_confirmation")),
@@ -153,15 +164,47 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
     )
 
 
+def _team_workflow_override(team_id: str, workflow_id: str) -> dict[str, Any]:
+    team = crewai_spec_loader.team_doc(team_id)
+    raw = team.get("workflow_settings") or {}
+    if not isinstance(raw, dict):
+        return {}
+    override = raw.get(str(workflow_id or "").strip()) or {}
+    return override if isinstance(override, dict) else {}
+
+
+def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str) -> WorkflowSpec:
+    team = crewai_spec_loader.team_doc(team_id)
+    workflow_ids = {str(item).strip() for item in list(team.get("workflow_ids") or []) if str(item).strip()}
+    enabled = bool(spec.enabled)
+    disabled_reason = str(spec.disabled_reason or "").strip()
+    if workflow_ids and spec.workflow_id not in workflow_ids:
+        enabled = False
+        if not disabled_reason:
+            disabled_reason = "workflow_not_in_team_workflow_ids"
+
+    override = _team_workflow_override(team_id, spec.workflow_id)
+    if "enabled" in override:
+        enabled = bool(override.get("enabled"))
+        if not enabled and not disabled_reason:
+            disabled_reason = str(override.get("disabled_reason") or "").strip() or "workflow_disabled_by_team_config"
+        if enabled:
+            disabled_reason = ""
+    elif not enabled and not disabled_reason:
+        disabled_reason = "workflow_disabled"
+
+    return replace(spec, enabled=enabled, disabled_reason=disabled_reason)
+
+
 def workflow_spec(workflow_id: str) -> WorkflowSpec:
     wid = str(workflow_id or "").strip()
     if not wid:
         raise KeyError("workflow_id is required")
     loaded = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, wid)
     if loaded:
-        return _workflow_spec_from_doc(loaded)
+        return _apply_team_workflow_overrides(_workflow_spec_from_doc(loaded), team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT)
     if wid in FALLBACK_WORKFLOW_SPECS:
-        return FALLBACK_WORKFLOW_SPECS[wid]
+        return _apply_team_workflow_overrides(FALLBACK_WORKFLOW_SPECS[wid], team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT)
     raise KeyError(f"unknown workflow spec: {wid}")
 
 
@@ -169,7 +212,7 @@ def workflow_for_lane(lane: str) -> WorkflowSpec:
     normalized_lane = str(lane or "bug").strip().lower() or "bug"
     for doc in crewai_spec_loader.list_team_workflow_docs(crewai_role_registry.TEAM_REPO_IMPROVEMENT):
         if str(doc.get("lane") or "").strip().lower() == normalized_lane:
-            return _workflow_spec_from_doc(doc)
+            return _apply_team_workflow_overrides(_workflow_spec_from_doc(doc), team_id=crewai_role_registry.TEAM_REPO_IMPROVEMENT)
     fallback_map = {
         "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
         "bug": crewai_role_registry.WORKFLOW_BUG_FIX,

@@ -27,6 +27,15 @@ workflow_ids:
   - bug-fix
   - quality-improvement
   - process-improvement
+workflow_settings:
+  feature-improvement:
+    enabled: true
+  bug-fix:
+    enabled: true
+  quality-improvement:
+    enabled: true
+  process-improvement:
+    enabled: true
 stage_ids:
   - planning
   - proposal-confirmation

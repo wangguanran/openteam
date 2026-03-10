@@ -1,6 +1,7 @@
 workflow_id: process-improvement
 display_name_zh: 流程改进流程
 lane: process
+enabled: true
 description: Discover runtime and delivery process improvements, then deliver them with governance and cooldown controls.
 task_source: proposal
 requires_user_confirmation: false

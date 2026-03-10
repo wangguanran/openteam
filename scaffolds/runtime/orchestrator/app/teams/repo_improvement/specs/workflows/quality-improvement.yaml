@@ -1,6 +1,7 @@
 workflow_id: quality-improvement
 display_name_zh: 质量改进流程
 lane: quality
+enabled: true
 description: Discover code-quality improvements, confirm proposals, then deliver approved tasks.
 task_source: proposal
 requires_user_confirmation: true

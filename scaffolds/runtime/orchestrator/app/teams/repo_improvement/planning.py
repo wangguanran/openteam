@@ -2333,8 +2333,13 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
 
 def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discussion_loop", verbose: bool = False) -> dict[str, Any]:
     proposals = [p for p in list_proposals() if str(p.get("lane") or "").strip().lower() in ("feature", "quality")]
-    stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0}
+    stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0}
     for proposal in proposals:
+        lane = str(proposal.get("lane") or "").strip().lower() or "feature"
+        workflow = crewai_workflow_registry.workflow_for_lane(lane)
+        if not workflow.enabled:
+            stats["skipped_disabled"] += 1
+            continue
         status = str(proposal.get("status") or "").strip().upper()
         if status in ("REJECTED", "MATERIALIZED"):
             continue
@@ -3389,6 +3394,21 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     for finding in plan.findings:
         workflow = crewai_workflow_registry.workflow_for_lane(finding.lane)
+        if not workflow.enabled:
+            db.add_event(
+                event_type="SELF_UPGRADE_FINDING_SKIPPED",
+                actor=actor,
+                project_id=project_id,
+                workstream_id=finding.workstream_id or workstream_id,
+                payload={
+                    "run_id": run_id,
+                    "lane": finding.lane,
+                    "workflow_id": workflow.workflow_id,
+                    "title": finding.title,
+                    "reason": workflow.disabled_reason or "workflow_disabled",
+                },
+            )
+            continue
         requires_confirmation = workflow.requires_user_confirmation or bool(finding.requires_user_confirmation)
         work_items = list(finding.work_items or []) or _default_work_items(repo_root=repo_root, finding=finding)
         if not workflow.uses_proposal:

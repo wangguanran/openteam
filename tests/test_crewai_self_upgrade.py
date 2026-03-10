@@ -390,6 +390,83 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertEqual(out["records"][0]["task_id"], "TEAMOS-1234")
             self.assertEqual((updated or {})["status"], "MATERIALIZED")
 
+    def test_run_self_upgrade_skips_disabled_feature_workflow(self):
+        db = _FakeDB()
+        plan = crewai_self_upgrade.UpgradePlan(
+            summary="feature disabled",
+            findings=[
+                crewai_self_upgrade.UpgradeFinding(
+                    kind="FEATURE",
+                    lane="feature",
+                    title="Add team dashboard",
+                    summary="Introduce a dashboard for team health.",
+                    workstream_id="general",
+                    version_bump="minor",
+                    target_version="0.2.0",
+                    requires_user_confirmation=True,
+                )
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+            spec = SimpleNamespace(
+                project_id="teamos",
+                workstream_id="general",
+                repo_path=str(repo),
+                repo_locator="foo/bar",
+                force=True,
+                dry_run=False,
+                trigger="test",
+                task_id="",
+            )
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                with mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    return_value=(plan, {"task_outputs": [], "token_usage": {}}),
+                ), mock.patch(
+                    "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                    return_value={"ok": True, "dry_run": False, "stats": {"updated": 0}},
+                ), mock.patch(
+                    "app.crewai_self_upgrade.crewai_workflow_registry.crewai_spec_loader.team_doc",
+                    return_value={
+                        "team_id": "repo-improvement",
+                        "workflow_ids": ["feature-improvement", "bug-fix", "quality-improvement", "process-improvement"],
+                        "workflow_settings": {"feature-improvement": {"enabled": False, "disabled_reason": "disabled_for_repo"}},
+                    },
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_proposal_discussion_issue",
+                    side_effect=AssertionError("disabled feature workflow must not create proposal discussion"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_issue_record",
+                    side_effect=AssertionError("disabled feature workflow must not create issues"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_task_record",
+                    side_effect=AssertionError("disabled feature workflow must not create tasks"),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-feature-disabled",
+                        crewai_info={"importable": True},
+                    )
+
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["records"], [])
+            self.assertEqual(out["pending_proposals"], [])
+            self.assertEqual(improvement_store.list_proposals(target_id=out["target_id"]), [])
+            skipped = [event for event in db.events if event.get("event_type") == "SELF_UPGRADE_FINDING_SKIPPED"]
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(skipped[0]["payload"]["workflow_id"], "feature-improvement")
+            self.assertEqual(skipped[0]["payload"]["reason"], "disabled_for_repo")
+
     def test_reconcile_feature_discussions_approves_from_issue_comment(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
