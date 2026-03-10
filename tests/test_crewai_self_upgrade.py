@@ -679,6 +679,104 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertEqual(crewai_self_upgrade._proposal_issue_title(proposal), "[Quality][Runtime] 删除未引用的旧启动适配层")
             self.assertIn("type:quality", crewai_self_upgrade._proposal_issue_labels(proposal))
 
+    def test_quality_test_gap_metadata_survives_plan_normalization(self):
+        finding = crewai_self_upgrade.UpgradeFinding(
+            kind="CODE_QUALITY",
+            lane="quality",
+            title="补齐 runtime 健康检查黑盒覆盖",
+            summary="当前 /healthz 用户路径缺少集成级回归覆盖。",
+            module="Runtime",
+            rationale="没有黑盒覆盖时，启动与健康检查回归容易漏掉。",
+            impact="MED",
+            workstream_id="general",
+            files=["scaffolds/runtime/orchestrator/app/main.py", "tests/test_runtime_health.py"],
+            tests=["python -m unittest tests.test_runtime_health"],
+            acceptance=["新增集成测试能覆盖 /healthz 行为"],
+            test_gap_type="blackbox",
+            target_paths=["scaffolds/runtime/orchestrator/app/main.py"],
+            missing_paths=["/healthz startup path"],
+            suggested_test_files=["tests/test_runtime_health.py"],
+            why_not_covered="当前只有单元级启动测试，没有面向健康检查行为的黑盒回归。",
+            version_bump="none",
+            target_version="0.1.0",
+            work_items=[
+                crewai_self_upgrade.UpgradeWorkItem(
+                    title="补齐 /healthz 黑盒回归",
+                    summary="新增端到端测试覆盖运行时健康检查。",
+                    owner_role=crewai_self_upgrade.ROLE_CODE_QUALITY_AGENT,
+                    review_role=crewai_self_upgrade.ROLE_REVIEW_AGENT,
+                    qa_role=crewai_self_upgrade.ROLE_QA_AGENT,
+                    workstream_id="general",
+                    allowed_paths=["tests/test_runtime_health.py", "scaffolds/runtime/orchestrator/app/main.py"],
+                    tests=["python -m unittest tests.test_runtime_health"],
+                    acceptance=["新增集成测试能覆盖 /healthz 行为"],
+                    test_gap_type="blackbox",
+                    target_paths=["scaffolds/runtime/orchestrator/app/main.py"],
+                    missing_paths=["/healthz startup path"],
+                    suggested_test_files=["tests/test_runtime_health.py"],
+                    why_not_covered="当前只有单元级启动测试，没有面向健康检查行为的黑盒回归。",
+                    worktree_hint="/tmp/worktrees/runtime-health-gap",
+                    module="Runtime",
+                )
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            normalized = crewai_self_upgrade._coerce_plan(
+                SimpleNamespace(to_dict=lambda: crewai_self_upgrade.UpgradePlan(summary="quality", findings=[finding]).model_dump()),
+                max_findings=3,
+                repo_root=repo_root,
+                current_version="0.1.0",
+            )
+
+        normalized_finding = normalized.findings[0]
+        normalized_item = normalized_finding.work_items[0]
+        self.assertEqual(normalized_finding.test_gap_type, "blackbox")
+        self.assertEqual(normalized_finding.target_paths, ["scaffolds/runtime/orchestrator/app/main.py"])
+        self.assertEqual(normalized_finding.missing_paths, ["/healthz startup path"])
+        self.assertEqual(normalized_finding.suggested_test_files, ["tests/test_runtime_health.py"])
+        self.assertIn("黑盒回归", normalized_finding.why_not_covered)
+        self.assertEqual(normalized_item.test_gap_type, "blackbox")
+        self.assertEqual(normalized_item.suggested_test_files, ["tests/test_runtime_health.py"])
+        self.assertEqual(normalized_item.owner_role, crewai_self_upgrade.ROLE_CODE_QUALITY_AGENT)
+
+    def test_quality_test_gap_proposal_issue_includes_gap_metadata(self):
+        doc = {
+            "proposal_id": "su-quality-gap",
+            "repo_root": "/tmp/team-os",
+            "repo_locator": "foo/bar",
+            "lane": "quality",
+            "module": "Runtime",
+            "status": "PENDING_CONFIRMATION",
+            "version_bump": "none",
+            "target_version": "0.1.0",
+            "title": "补齐 runtime 健康检查黑盒覆盖",
+            "summary": "当前 /healthz 用户路径缺少集成级回归覆盖。",
+            "rationale": "没有黑盒覆盖时，启动与健康检查回归容易漏掉。",
+            "test_gap_type": "blackbox",
+            "target_paths": ["scaffolds/runtime/orchestrator/app/main.py"],
+            "missing_paths": ["/healthz startup path"],
+            "suggested_test_files": ["tests/test_runtime_health.py"],
+            "why_not_covered": "当前只有单元级启动测试，没有面向健康检查行为的黑盒回归。",
+            "work_items": [
+                {
+                    "title": "补齐 /healthz 黑盒回归",
+                    "owner_role": crewai_self_upgrade.ROLE_CODE_QUALITY_AGENT,
+                }
+            ],
+        }
+
+        body = crewai_self_upgrade._proposal_issue_body(doc)
+        labels = crewai_self_upgrade._proposal_issue_labels(doc)
+
+        self.assertIn("## 测试缺口分析", body)
+        self.assertIn("- 测试缺口类型: blackbox", body)
+        self.assertIn("- 建议测试文件: tests/test_runtime_health.py", body)
+        self.assertIn("未覆盖原因", body)
+        self.assertIn("test-gap:blackbox", labels)
+
     def test_task_issue_template_is_chinese(self):
         finding = crewai_self_upgrade.UpgradeFinding(
             kind="BUG",
@@ -917,6 +1015,67 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             work_item=item,
         )
         self.assertIn("stage:needs-clarification", labels)
+
+    def test_finding_from_task_doc_roundtrips_quality_test_gap_fields(self):
+        task_doc = {
+            "title": "[Quality][Runtime] 补齐 /healthz 黑盒回归",
+            "status": "todo",
+            "workstream_id": "general",
+            "execution_policy": {
+                "allowed_paths": ["tests/test_runtime_health.py", "scaffolds/runtime/orchestrator/app/main.py"],
+                "review_role": crewai_self_upgrade.ROLE_REVIEW_AGENT,
+                "qa_role": crewai_self_upgrade.ROLE_QA_AGENT,
+            },
+            "self_upgrade": {
+                "kind": "CODE_QUALITY",
+                "lane": "quality",
+                "module": "Runtime",
+                "summary": "当前 /healthz 用户路径缺少集成级回归覆盖。",
+                "rationale": "没有黑盒覆盖时，启动与健康检查回归容易漏掉。",
+                "impact": "MED",
+                "files": ["scaffolds/runtime/orchestrator/app/main.py", "tests/test_runtime_health.py"],
+                "tests": ["python -m unittest tests.test_runtime_health"],
+                "acceptance": ["新增集成测试能覆盖 /healthz 行为"],
+                "test_gap_type": "blackbox",
+                "target_paths": ["scaffolds/runtime/orchestrator/app/main.py"],
+                "missing_paths": ["/healthz startup path"],
+                "suggested_test_files": ["tests/test_runtime_health.py"],
+                "why_not_covered": "当前只有单元级启动测试，没有面向健康检查行为的黑盒回归。",
+                "version_bump": "none",
+                "target_version": "0.1.0",
+                "work_item": {
+                    "title": "补齐 /healthz 黑盒回归",
+                    "summary": "新增端到端测试覆盖运行时健康检查。",
+                    "owner_role": crewai_self_upgrade.ROLE_CODE_QUALITY_AGENT,
+                    "review_role": crewai_self_upgrade.ROLE_REVIEW_AGENT,
+                    "qa_role": crewai_self_upgrade.ROLE_QA_AGENT,
+                    "workstream_id": "general",
+                    "allowed_paths": ["tests/test_runtime_health.py", "scaffolds/runtime/orchestrator/app/main.py"],
+                    "tests": ["python -m unittest tests.test_runtime_health"],
+                    "acceptance": ["新增集成测试能覆盖 /healthz 行为"],
+                    "test_gap_type": "blackbox",
+                    "target_paths": ["scaffolds/runtime/orchestrator/app/main.py"],
+                    "missing_paths": ["/healthz startup path"],
+                    "suggested_test_files": ["tests/test_runtime_health.py"],
+                    "why_not_covered": "当前只有单元级启动测试，没有面向健康检查行为的黑盒回归。",
+                    "module": "Runtime",
+                },
+            },
+        }
+
+        finding, item = crewai_self_upgrade._finding_from_task_doc(task_doc)
+
+        self.assertIsNotNone(finding)
+        self.assertIsNotNone(item)
+        assert finding is not None
+        assert item is not None
+        self.assertEqual(finding.test_gap_type, "blackbox")
+        self.assertEqual(finding.target_paths, ["scaffolds/runtime/orchestrator/app/main.py"])
+        self.assertEqual(finding.missing_paths, ["/healthz startup path"])
+        self.assertEqual(finding.suggested_test_files, ["tests/test_runtime_health.py"])
+        self.assertIn("黑盒回归", finding.why_not_covered)
+        self.assertEqual(item.test_gap_type, "blackbox")
+        self.assertEqual(item.suggested_test_files, ["tests/test_runtime_health.py"])
 
 
 if __name__ == "__main__":

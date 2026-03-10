@@ -45,6 +45,11 @@ class UpgradeWorkItem(BaseModel):
     reproduction_steps: list[str] = Field(default_factory=list)
     test_case_files: list[str] = Field(default_factory=list)
     verification_steps: list[str] = Field(default_factory=list)
+    test_gap_type: str = ""
+    target_paths: list[str] = Field(default_factory=list)
+    missing_paths: list[str] = Field(default_factory=list)
+    suggested_test_files: list[str] = Field(default_factory=list)
+    why_not_covered: str = ""
     worktree_hint: str = ""
     module: str = ""
 
@@ -61,6 +66,11 @@ class UpgradeFinding(BaseModel):
     files: list[str] = Field(default_factory=list)
     tests: list[str] = Field(default_factory=list)
     acceptance: list[str] = Field(default_factory=list)
+    test_gap_type: str = ""
+    target_paths: list[str] = Field(default_factory=list)
+    missing_paths: list[str] = Field(default_factory=list)
+    suggested_test_files: list[str] = Field(default_factory=list)
+    why_not_covered: str = ""
     version_bump: str = "patch"
     target_version: str = ""
     baseline_action: str = ""
@@ -105,6 +115,7 @@ ROLE_ISSUE_DISCUSSION_AGENT = crewai_role_registry.ROLE_ISSUE_DISCUSSION_AGENT
 ROLE_ISSUE_AUDIT_AGENT = crewai_role_registry.ROLE_ISSUE_AUDIT_AGENT
 ROLE_BUG_REPRO_AGENT = crewai_role_registry.ROLE_BUG_REPRO_AGENT
 ROLE_BUG_TESTCASE_AGENT = crewai_role_registry.ROLE_BUG_TESTCASE_AGENT
+ROLE_TEST_CASE_GAP_AGENT = crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT
 ROLE_DOCUMENTATION_AGENT = crewai_role_registry.ROLE_DOCUMENTATION_AGENT
 ROLE_MILESTONE_MANAGER = crewai_role_registry.ROLE_MILESTONE_MANAGER
 ROLE_CODE_QUALITY_ANALYST = crewai_role_registry.ROLE_CODE_QUALITY_ANALYST
@@ -157,6 +168,7 @@ class LocalizedWorkItemText(BaseModel):
     title: str = ""
     summary: str = ""
     acceptance: list[str] = Field(default_factory=list)
+    why_not_covered: str = ""
 
 
 class LocalizedFindingText(BaseModel):
@@ -164,6 +176,7 @@ class LocalizedFindingText(BaseModel):
     summary: str = ""
     rationale: str = ""
     acceptance: list[str] = Field(default_factory=list)
+    why_not_covered: str = ""
     work_items: list[LocalizedWorkItemText] = Field(default_factory=list)
 
 
@@ -171,6 +184,7 @@ class LocalizedProposalText(BaseModel):
     title: str = ""
     summary: str = ""
     rationale: str = ""
+    why_not_covered: str = ""
     work_items: list[LocalizedWorkItemText] = Field(default_factory=list)
 
 
@@ -180,6 +194,7 @@ class LocalizedTaskText(BaseModel):
     summary: str = ""
     rationale: str = ""
     acceptance: list[str] = Field(default_factory=list)
+    why_not_covered: str = ""
 
 
 def _env_truthy(name: str, default: str = "0") -> bool:
@@ -813,9 +828,10 @@ def _translate_to_zh_structured(*, payload: dict[str, Any], schema_model: type[B
 def _localize_finding_to_zh(finding: UpgradeFinding) -> UpgradeFinding:
     if not _zh_localization_enabled():
         return finding
-    texts = [finding.title, finding.summary, finding.rationale, *list(finding.acceptance or [])]
+    texts = [finding.title, finding.summary, finding.rationale, finding.why_not_covered, *list(finding.acceptance or [])]
     texts.extend([w.title for w in (finding.work_items or [])])
     texts.extend([w.summary for w in (finding.work_items or [])])
+    texts.extend([w.why_not_covered for w in (finding.work_items or [])])
     texts.extend([x for w in (finding.work_items or []) for x in (w.acceptance or [])])
     if not any(_looks_english(x) for x in texts):
         return finding
@@ -826,11 +842,13 @@ def _localize_finding_to_zh(finding: UpgradeFinding) -> UpgradeFinding:
                 "summary": finding.summary,
                 "rationale": finding.rationale,
                 "acceptance": list(finding.acceptance or []),
+                "why_not_covered": str(finding.why_not_covered or ""),
                 "work_items": [
                     {
                         "title": str(w.title or ""),
                         "summary": str(w.summary or ""),
                         "acceptance": list(w.acceptance or []),
+                        "why_not_covered": str(w.why_not_covered or ""),
                     }
                     for w in (finding.work_items or [])
                 ],
@@ -851,6 +869,7 @@ def _localize_finding_to_zh(finding: UpgradeFinding) -> UpgradeFinding:
                     "title": str(patch.title or work_item.title).strip() or work_item.title,
                     "summary": str(patch.summary or work_item.summary).strip() or work_item.summary,
                     "acceptance": [str(x).strip() for x in (patch.acceptance or work_item.acceptance or []) if str(x).strip()],
+                    "why_not_covered": str(patch.why_not_covered or work_item.why_not_covered).strip() or str(work_item.why_not_covered or ""),
                 }
             )
         )
@@ -860,6 +879,7 @@ def _localize_finding_to_zh(finding: UpgradeFinding) -> UpgradeFinding:
             "summary": str(localized.summary or finding.summary).strip() or finding.summary,
             "rationale": str(localized.rationale or finding.rationale).strip() or finding.rationale,
             "acceptance": [str(x).strip() for x in (localized.acceptance or finding.acceptance or []) if str(x).strip()],
+            "why_not_covered": str(localized.why_not_covered or finding.why_not_covered).strip() or str(finding.why_not_covered or ""),
             "work_items": out_items,
         }
     )
@@ -868,7 +888,7 @@ def _localize_finding_to_zh(finding: UpgradeFinding) -> UpgradeFinding:
 def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
     if not _zh_localization_enabled():
         return dict(doc)
-    texts = [doc.get("title"), doc.get("summary"), doc.get("rationale")]
+    texts = [doc.get("title"), doc.get("summary"), doc.get("rationale"), doc.get("why_not_covered")]
     texts.extend([str((x or {}).get("title") or "") for x in (doc.get("work_items") or []) if isinstance(x, dict)])
     texts.extend([str((x or {}).get("summary") or "") for x in (doc.get("work_items") or []) if isinstance(x, dict)])
     if not any(_looks_english(x) for x in texts):
@@ -879,11 +899,13 @@ def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
                 "title": str(doc.get("title") or ""),
                 "summary": str(doc.get("summary") or ""),
                 "rationale": str(doc.get("rationale") or ""),
+                "why_not_covered": str(doc.get("why_not_covered") or ""),
                 "work_items": [
                     {
                         "title": str((x or {}).get("title") or ""),
                         "summary": str((x or {}).get("summary") or ""),
                         "acceptance": list(((x or {}).get("acceptance") or [])),
+                        "why_not_covered": str((x or {}).get("why_not_covered") or ""),
                     }
                     for x in (doc.get("work_items") or [])
                     if isinstance(x, dict)
@@ -898,6 +920,7 @@ def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
     out["title"] = str(localized.title or doc.get("title") or "").strip() or str(doc.get("title") or "")
     out["summary"] = str(localized.summary or doc.get("summary") or "").strip() or str(doc.get("summary") or "")
     out["rationale"] = str(localized.rationale or doc.get("rationale") or "").strip() or str(doc.get("rationale") or "")
+    out["why_not_covered"] = str(localized.why_not_covered or doc.get("why_not_covered") or "").strip() or str(doc.get("why_not_covered") or "")
     out["module"] = _normalize_module_name(
         str(doc.get("module") or "").strip(),
         paths=[str(x).strip() for x in (doc.get("files") or []) if str(x).strip()],
@@ -916,6 +939,8 @@ def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
         item["summary"] = str(patch.summary or item.get("summary") or "").strip() or str(item.get("summary") or "")
         if patch.acceptance:
             item["acceptance"] = [str(x).strip() for x in patch.acceptance if str(x).strip()]
+        if patch.why_not_covered:
+            item["why_not_covered"] = str(patch.why_not_covered).strip()
         item["owner_role"] = _normalize_owner_role(str(item.get("owner_role") or "").strip(), lane)
         item["review_role"] = _normalize_review_role(str(item.get("review_role") or "").strip())
         item["qa_role"] = _normalize_qa_role(str(item.get("qa_role") or "").strip())
@@ -941,7 +966,7 @@ def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
     work_item = su.get("work_item") or {}
     if not isinstance(work_item, dict):
         work_item = {}
-    texts = [doc.get("title"), su.get("summary"), su.get("rationale"), work_item.get("title"), work_item.get("summary")]
+    texts = [doc.get("title"), su.get("summary"), su.get("rationale"), su.get("why_not_covered"), work_item.get("title"), work_item.get("summary"), work_item.get("why_not_covered")]
     texts.extend(list(su.get("acceptance") or []))
     texts.extend(list(work_item.get("acceptance") or []))
     if not any(_looks_english(x) for x in texts):
@@ -954,6 +979,7 @@ def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
                 "summary": str(work_item.get("summary") or su.get("summary") or ""),
                 "rationale": str(su.get("rationale") or ""),
                 "acceptance": list(work_item.get("acceptance") or su.get("acceptance") or []),
+                "why_not_covered": str(work_item.get("why_not_covered") or su.get("why_not_covered") or ""),
             },
             schema_model=LocalizedTaskText,
             prompt_title="自升级任务单",
@@ -970,6 +996,8 @@ def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
         su_out["rationale"] = str(localized.rationale).strip()
     if localized.acceptance:
         su_out["acceptance"] = [str(x).strip() for x in localized.acceptance if str(x).strip()]
+    if localized.why_not_covered:
+        su_out["why_not_covered"] = str(localized.why_not_covered).strip()
     wi_out = dict(work_item)
     if localized.title:
         wi_out["title"] = str(localized.title).strip()
@@ -977,6 +1005,8 @@ def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
         wi_out["summary"] = str(localized.summary).strip()
     if localized.acceptance:
         wi_out["acceptance"] = [str(x).strip() for x in localized.acceptance if str(x).strip()]
+    if localized.why_not_covered:
+        wi_out["why_not_covered"] = str(localized.why_not_covered).strip()
     lane = str(su.get("lane") or "bug").strip().lower() or "bug"
     wi_out["owner_role"] = _normalize_owner_role(str(wi_out.get("owner_role") or out.get("owner_role") or "").strip(), lane)
     wi_out["review_role"] = _normalize_review_role(str(wi_out.get("review_role") or ((out.get("execution_policy") or {}) if isinstance(out.get("execution_policy"), dict) else {}).get("review_role") or "").strip())
@@ -1119,6 +1149,11 @@ def _default_work_items(*, repo_root: Path, finding: UpgradeFinding) -> list[Upg
             reproduction_steps=[],
             test_case_files=[],
             verification_steps=list(finding.acceptance or []),
+            test_gap_type=str(finding.test_gap_type or "").strip().lower(),
+            target_paths=[str(x).strip() for x in (finding.target_paths or []) if str(x).strip()],
+            missing_paths=[str(x).strip() for x in (finding.missing_paths or []) if str(x).strip()],
+            suggested_test_files=[str(x).strip() for x in (finding.suggested_test_files or []) if str(x).strip()],
+            why_not_covered=str(finding.why_not_covered or "").strip(),
             worktree_hint=_worktree_hint(repo_root=repo_root, lane=finding.lane, title=finding.title),
             module=_normalize_module_name(
                 str(finding.module or "").strip(),
@@ -1273,6 +1308,11 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
                     reproduction_steps=[str(x).strip() for x in (getattr(item, "reproduction_steps", None) or []) if str(x).strip()][:10],
                     test_case_files=[str(x).strip() for x in (getattr(item, "test_case_files", None) or []) if str(x).strip()][:10],
                     verification_steps=[str(x).strip() for x in (getattr(item, "verification_steps", None) or getattr(item, "acceptance", None) or finding.acceptance or []) if str(x).strip()][:10],
+                    test_gap_type=str(getattr(item, "test_gap_type", "") or getattr(finding, "test_gap_type", "") or "").strip().lower(),
+                    target_paths=[str(x).strip() for x in (getattr(item, "target_paths", None) or getattr(finding, "target_paths", None) or []) if str(x).strip()][:20],
+                    missing_paths=[str(x).strip() for x in (getattr(item, "missing_paths", None) or getattr(finding, "missing_paths", None) or []) if str(x).strip()][:20],
+                    suggested_test_files=[str(x).strip() for x in (getattr(item, "suggested_test_files", None) or getattr(finding, "suggested_test_files", None) or []) if str(x).strip()][:20],
+                    why_not_covered=str(getattr(item, "why_not_covered", "") or getattr(finding, "why_not_covered", "") or "").strip(),
                     worktree_hint=_normalize_worktree_hint(
                         repo_root=repo_root,
                         lane=lane,
@@ -1302,6 +1342,11 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
             files=[str(x).strip() for x in (finding.files or []) if str(x).strip()][:20],
             tests=[str(x).strip() for x in (finding.tests or []) if str(x).strip()][:20],
             acceptance=[str(x).strip() for x in (finding.acceptance or []) if str(x).strip()][:20],
+            test_gap_type=str(getattr(finding, "test_gap_type", "") or "").strip().lower(),
+            target_paths=[str(x).strip() for x in (getattr(finding, "target_paths", None) or []) if str(x).strip()][:20],
+            missing_paths=[str(x).strip() for x in (getattr(finding, "missing_paths", None) or []) if str(x).strip()][:20],
+            suggested_test_files=[str(x).strip() for x in (getattr(finding, "suggested_test_files", None) or []) if str(x).strip()][:20],
+            why_not_covered=str(getattr(finding, "why_not_covered", "") or "").strip(),
             version_bump=version_bump,
             target_version=target_version,
             baseline_action=str(getattr(finding, "baseline_action", "") or "").strip() or _lane_default_baseline_action(lane, version_bump),
@@ -1330,8 +1375,10 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
     llm = _crewai_llm()
     feature_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("feature", project_id=project_id) or int(max_findings)))
+    quality_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("quality", project_id=project_id) or int(max_findings)))
     product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
     test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
+    test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, llm=llm, verbose=verbose)
     issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, llm=llm, verbose=verbose)
     review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, llm=llm, verbose=verbose)
     qa_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, llm=llm, verbose=verbose)
@@ -1355,13 +1402,28 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
         name="qa_bug_scan",
         description=(
             "Analyze the repository context as a test manager.\n"
-            f"Return at most {int(max_findings)} bug or test-gap candidates.\n"
-            "Focus on black-box behavior, white-box coverage gaps, regressions, and CI/test problems.\n"
+            f"Return at most {int(max_findings)} bug or regression candidates.\n"
+            "Focus on reproducible defects, behavior regressions, and CI/test failures that already point to a concrete bug.\n"
             "Use only the supplied context.\n\n"
             f"Repository context:\n{repo_blob}"
         ),
-        expected_output="A shortlist of bug findings and test weaknesses with concrete evidence.",
+        expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
         agent=test_manager,
+        markdown=True,
+    )
+    test_gap_task = Task(
+        name="qa_test_gap_scan",
+        description=(
+            "Analyze the repository context as a dedicated test-case gap agent.\n"
+            f"Return at most {int(quality_scan_limit)} high-value black-box or white-box test gap candidates.\n"
+            "Only propose a candidate when there is a clearly identifiable untested path, missing regression protection, or behavior/branch coverage gap worth tracking as an issue.\n"
+            "For each candidate, distinguish test_gap_type as blackbox or whitebox, identify target_paths and missing_paths, suggest repo-relative suggested_test_files, and explain why the path is not covered today.\n"
+            "Use lane=quality and kind=CODE_QUALITY for these findings.\n"
+            "Use only the supplied context.\n\n"
+            f"Repository context:\n{repo_blob}"
+        ),
+        expected_output="A shortlist of blackbox/whitebox test gap findings with uncovered paths and suggested test files.",
+        agent=test_case_gap_agent,
         markdown=True,
     )
     process_task = Task(
@@ -1379,8 +1441,9 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
         name="code_quality_scan",
         description=(
             "Review the repository context as a code quality analyst.\n"
-            f"Return at most {int(max_findings)} code quality candidates.\n"
+            f"Return at most {int(quality_scan_limit)} code quality candidates.\n"
             "Focus on duplicated logic, unnecessary files, dead/stale code candidates, oversized modules, and reuse/refactor opportunities.\n"
+            "Do not spend candidates on pure test-gap discovery; that is handled by the dedicated test-case gap scan.\n"
             "Only propose work when the quality gain is concrete and the change can be broken into small, scoped items.\n"
             "Use only the supplied context.\n\n"
             f"Repository context:\n{repo_blob}"
@@ -1392,17 +1455,20 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
     plan_task = Task(
         name="draft_execution_backlog",
         description=(
-            "Transform the feature scan, bug scan, code quality scan, and process scan into an actionable upgrade backlog.\n"
+            "Transform the feature scan, bug scan, test-gap scan, code quality scan, and process scan into an actionable upgrade backlog.\n"
             "Output JSON matching UpgradePlan.\n"
             "Rules:\n"
             "- Features use lane=feature, kind=FEATURE, require user confirmation, and use version_bump=major or minor.\n"
             "- Bugs use lane=bug, kind=BUG, no user confirmation, and use version_bump=patch.\n"
             "- Code quality improvements use lane=quality, kind=CODE_QUALITY, require user confirmation, default to version_bump=none, and focus on cleanup/refactor/reuse/deletion work.\n"
+            "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
+            "- Test-gap findings and work_items should carry target_paths, missing_paths, suggested_test_files, and why_not_covered so downstream issues can explain the exact uncovered path.\n"
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
             "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
             "- Each work item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding.\n"
             "- Bug work items must also include reproduction_steps, repo-relative test_case_files, and verification_steps. Do not leave bug reproduction implicit.\n"
+            "- Test-gap work items should prefer the Code-Quality-Agent, stay scoped to test files plus their target paths, and preserve blackbox/whitebox classification in test_gap_type.\n"
             "- Quality work items should prefer deleting dead files, consolidating duplicate code, extracting shared logic, or narrowing oversized modules. Do not propose cosmetic-only cleanup.\n"
             "- Coding work items must be issue-scoped only; no extra optimization outside the listed paths.\n"
             "- 所有面向用户的自然语言字段必须使用简体中文，包括 title、summary、rationale、acceptance、work_items.title、work_items.summary。\n"
@@ -1411,7 +1477,7 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
         ),
         expected_output="A structured JSON upgrade plan.",
         agent=issue_drafter,
-        context=[feature_task, bug_task, quality_task, process_task],
+        context=[feature_task, bug_task, test_gap_task, quality_task, process_task],
         output_json=UpgradePlan,
     )
     review_task = Task(
@@ -1421,12 +1487,13 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
             "Reject large or fuzzy work items. Ensure every coding work item has clear path scope, task-linked commit discipline, and explicit downstream review/QA roles.\n"
             "Reject any finding that spans multiple modules or uses an unstable module name.\n"
             "For quality items, reject vague refactors or cleanup that is not backed by concrete evidence from the repository context.\n"
+            "For test-gap quality items, reject anything without a clear blackbox/whitebox classification, uncovered path, and suggested test file location.\n"
             "Keep all user-facing natural language fields in Simplified Chinese.\n"
             f"Keep no more than {int(max_findings)} findings in the final output."
         ),
         expected_output="A validated structured JSON upgrade plan ready for issue/task recording.",
         agent=review_agent,
-        context=[feature_task, bug_task, quality_task, process_task, plan_task],
+        context=[feature_task, bug_task, test_gap_task, quality_task, process_task, plan_task],
         output_json=UpgradePlan,
     )
     qa_task = Task(
@@ -1434,19 +1501,20 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
         description=(
             "Finalize the plan from a QA and release perspective.\n"
             "Make sure each work item has explicit tests and acceptance. Features and quality items must wait for user confirmation. Bugs can flow immediately.\n"
+            "For test-gap quality items, require explicit blackbox/whitebox typing and target_paths/missing_paths so the issue can explain what remains untested.\n"
             "Preserve the single-module rule so downstream issue titles can follow [Type][Module] xxx.\n"
             "Keep all user-facing natural language fields in Simplified Chinese.\n"
             "No item should be closeable without review and QA acceptance."
         ),
         expected_output="A final structured JSON upgrade plan ready for runtime materialization.",
         agent=qa_agent,
-        context=[feature_task, bug_task, quality_task, process_task, plan_task, review_task],
+        context=[feature_task, bug_task, test_gap_task, quality_task, process_task, plan_task, review_task],
         output_json=UpgradePlan,
     )
 
     crew = Crew(
-        agents=[product_manager, test_manager, issue_drafter, review_agent, qa_agent, process_analyst, code_quality_analyst],
-        tasks=[feature_task, bug_task, quality_task, process_task, plan_task, review_task, qa_task],
+        agents=[product_manager, test_manager, test_case_gap_agent, issue_drafter, review_agent, qa_agent, process_analyst, code_quality_analyst],
+        tasks=[feature_task, bug_task, test_gap_task, quality_task, process_task, plan_task, review_task, qa_task],
         process=Process.sequential,
         verbose=verbose,
     )
@@ -1580,7 +1648,11 @@ def _finding_fingerprint(*, repo_locator: str, repo_root: Path, finding: Upgrade
             str(repo_locator or ""),
             str(repo_root),
             str(finding.kind or "").upper(),
+            str(finding.lane or "").strip().lower(),
+            str(finding.module or "").strip().lower(),
             str(finding.title or "").strip().lower(),
+            str(finding.test_gap_type or "").strip().lower(),
+            ",".join(sorted([str(x).strip() for x in (finding.missing_paths or []) if str(x).strip()])),
         ]
     )
     return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
@@ -1597,6 +1669,8 @@ def _work_item_key(item: UpgradeWorkItem) -> str:
             str(item.owner_role or "").strip(),
             ",".join(sorted([str(x).strip() for x in (item.allowed_paths or []) if str(x).strip()])),
             ",".join(sorted([str(x).strip() for x in (item.tests or []) if str(x).strip()])),
+            str(item.test_gap_type or "").strip().lower(),
+            ",".join(sorted([str(x).strip() for x in (item.suggested_test_files or []) if str(x).strip()])),
         ]
     )
     if not seed.strip():
@@ -1643,6 +1717,9 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
         _proposal_status_label(str(doc.get("status") or "")),
         _version_label(str(doc.get("version_bump") or "")),
     ]
+    test_gap_type = str(doc.get("test_gap_type") or "").strip().lower()
+    if lane == "quality" and test_gap_type in ("blackbox", "whitebox"):
+        labels.append(f"test-gap:{test_gap_type}")
     return sorted({str(x).strip() for x in labels if str(x).strip()})
 
 
@@ -1695,6 +1772,9 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
         milestone_title = str(milestone_doc.get("title") or _milestone_title_for_target_version(str(finding.target_version or ""))).strip()
     if milestone_title:
         labels.append(f"milestone:{_module_slug(milestone_title)}")
+    test_gap_type = str(work_item.test_gap_type or finding.test_gap_type or "").strip().lower()
+    if lane == "quality" and test_gap_type in ("blackbox", "whitebox"):
+        labels.append(f"test-gap:{test_gap_type}")
     return sorted({str(x).strip() for x in labels if str(x).strip()})
 
 
@@ -2204,6 +2284,20 @@ def _proposal_issue_body(doc: dict[str, Any]) -> str:
             lines.append(f"- {str(item.get('title') or '').strip() or '(未命名工作项)'} [{role_display_zh(_normalize_owner_role(str(item.get('owner_role') or '').strip(), str(doc.get('lane') or 'feature')))}]")
     else:
         lines.append("- （无）")
+    test_gap_type = str(doc.get("test_gap_type") or "").strip().lower()
+    if lane == "quality" and test_gap_type in ("blackbox", "whitebox"):
+        lines.extend(
+            [
+                "",
+                "## 测试缺口分析",
+                "",
+                f"- 测试缺口类型: {test_gap_type}",
+            ]
+        )
+        lines.extend([f"- 目标路径: {x}" for x in (doc.get("target_paths") or [])] or ["- 目标路径: （未指定）"])
+        lines.extend([f"- 未测路径: {x}" for x in (doc.get("missing_paths") or [])] or ["- 未测路径: （未指定）"])
+        lines.extend([f"- 建议测试文件: {x}" for x in (doc.get("suggested_test_files") or [])] or ["- 建议测试文件: （未指定）"])
+        lines.append(f"- 未覆盖原因: {_normalize_issue_text(str(doc.get('why_not_covered') or ''), empty_fallback='（未指定）')}")
     lines.extend(
         [
             "",
@@ -2557,6 +2651,11 @@ def _upsert_proposal(
         "files": list(finding.files or []),
         "tests": list(finding.tests or []),
         "acceptance": list(finding.acceptance or []),
+        "test_gap_type": str(finding.test_gap_type or "").strip().lower(),
+        "target_paths": [str(x).strip() for x in (finding.target_paths or []) if str(x).strip()],
+        "missing_paths": [str(x).strip() for x in (finding.missing_paths or []) if str(x).strip()],
+        "suggested_test_files": [str(x).strip() for x in (finding.suggested_test_files or []) if str(x).strip()],
+        "why_not_covered": str(finding.why_not_covered or "").strip(),
         "created_at": str(existing.get("created_at") or now),
         "updated_at": now,
         "approved_at": str(existing.get("approved_at") or ""),
@@ -2833,6 +2932,11 @@ def _ensure_task_record(
         "files": finding.files,
         "tests": finding.tests,
         "acceptance": finding.acceptance,
+        "test_gap_type": str(finding.test_gap_type or "").strip().lower(),
+        "target_paths": [str(x).strip() for x in (finding.target_paths or []) if str(x).strip()],
+        "missing_paths": [str(x).strip() for x in (finding.missing_paths or []) if str(x).strip()],
+        "suggested_test_files": [str(x).strip() for x in (finding.suggested_test_files or []) if str(x).strip()],
+        "why_not_covered": str(finding.why_not_covered or "").strip(),
         "version_bump": finding.version_bump,
         "target_version": finding.target_version,
         "baseline_action": finding.baseline_action,
@@ -2947,6 +3051,19 @@ def _issue_body(
         lines.extend([f"- 复现路径: {x}" for x in (work_item.reproduction_steps or [])] or ["- 复现路径: （未指定）"])
         lines.extend([f"- 测试 case 脚本: {x}" for x in (work_item.test_case_files or [])] or ["- 测试 case 脚本: （未指定）"])
         lines.extend([f"- 修复后验证步骤: {x}" for x in (work_item.verification_steps or work_item.acceptance or [])] or ["- 修复后验证步骤: （未指定）"])
+        lines.extend([""])
+    if str(finding.lane or "").strip().lower() == "quality" and str(work_item.test_gap_type or finding.test_gap_type or "").strip().lower() in ("blackbox", "whitebox"):
+        lines.extend(
+            [
+                "## 测试缺口分析",
+                "",
+                f"- 测试缺口类型: {str(work_item.test_gap_type or finding.test_gap_type or '').strip().lower()}",
+            ]
+        )
+        lines.extend([f"- 目标路径: {x}" for x in (work_item.target_paths or finding.target_paths or [])] or ["- 目标路径: （未指定）"])
+        lines.extend([f"- 未测路径: {x}" for x in (work_item.missing_paths or finding.missing_paths or [])] or ["- 未测路径: （未指定）"])
+        lines.extend([f"- 建议测试文件: {x}" for x in (work_item.suggested_test_files or finding.suggested_test_files or [])] or ["- 建议测试文件: （未指定）"])
+        lines.append(f"- 未覆盖原因: {_normalize_issue_text(str(work_item.why_not_covered or finding.why_not_covered or ''), empty_fallback='（未指定）')}")
         lines.extend([""])
     lines.extend(
         [
@@ -3122,6 +3239,11 @@ def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding
             reproduction_steps=[str(x).strip() for x in (work_item_raw.get("reproduction_steps") or []) if str(x).strip()],
             test_case_files=[str(x).strip() for x in (work_item_raw.get("test_case_files") or []) if str(x).strip()],
             verification_steps=[str(x).strip() for x in (work_item_raw.get("verification_steps") or work_item_raw.get("acceptance") or su.get("acceptance") or []) if str(x).strip()],
+            test_gap_type=str(work_item_raw.get("test_gap_type") or su.get("test_gap_type") or "").strip().lower(),
+            target_paths=[str(x).strip() for x in (work_item_raw.get("target_paths") or su.get("target_paths") or []) if str(x).strip()],
+            missing_paths=[str(x).strip() for x in (work_item_raw.get("missing_paths") or su.get("missing_paths") or []) if str(x).strip()],
+            suggested_test_files=[str(x).strip() for x in (work_item_raw.get("suggested_test_files") or su.get("suggested_test_files") or []) if str(x).strip()],
+            why_not_covered=str(work_item_raw.get("why_not_covered") or su.get("why_not_covered") or "").strip(),
             worktree_hint=str(work_item_raw.get("worktree_hint") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("worktree_hint") or "").strip(),
             module=_normalize_module_name(
                 str(work_item_raw.get("module") or su.get("module") or ((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("module") or "").strip(),
@@ -3151,6 +3273,11 @@ def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding
             files=[str(x).strip() for x in (su.get("files") or work_item.allowed_paths or []) if str(x).strip()],
             tests=[str(x).strip() for x in (su.get("tests") or work_item.tests or []) if str(x).strip()],
             acceptance=[str(x).strip() for x in (su.get("acceptance") or work_item.acceptance or []) if str(x).strip()],
+            test_gap_type=str(su.get("test_gap_type") or work_item.test_gap_type or "").strip().lower(),
+            target_paths=[str(x).strip() for x in (su.get("target_paths") or work_item.target_paths or []) if str(x).strip()],
+            missing_paths=[str(x).strip() for x in (su.get("missing_paths") or work_item.missing_paths or []) if str(x).strip()],
+            suggested_test_files=[str(x).strip() for x in (su.get("suggested_test_files") or work_item.suggested_test_files or []) if str(x).strip()],
+            why_not_covered=str(su.get("why_not_covered") or work_item.why_not_covered or "").strip(),
             version_bump=str(su.get("version_bump") or "patch").strip() or "patch",
             target_version=str(su.get("target_version") or "").strip(),
             baseline_action=str(su.get("baseline_action") or "").strip(),

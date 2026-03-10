@@ -15,6 +15,7 @@ ROLE_REVIEW_AGENT = "Review-Agent"
 ROLE_QA_AGENT = "QA-Agent"
 ROLE_PROCESS_OPTIMIZATION_ANALYST = "Process-Optimization-Analyst"
 ROLE_ISSUE_DISCUSSION_AGENT = "Issue-Discussion-Agent"
+ROLE_TEST_CASE_GAP_AGENT = "Test-Case-Gap-Agent"
 ROLE_ISSUE_AUDIT_AGENT = "Issue-Audit-Agent"
 ROLE_BUG_REPRO_AGENT = "Bug-Repro-Agent"
 ROLE_BUG_TESTCASE_AGENT = "Bug-TestCase-Agent"
@@ -50,6 +51,7 @@ ROLE_DISPLAY_ZH = {
     ROLE_QA_AGENT: "QA Agent",
     ROLE_PROCESS_OPTIMIZATION_ANALYST: "流程优化分析 Agent",
     ROLE_ISSUE_DISCUSSION_AGENT: "需求答复 Agent",
+    ROLE_TEST_CASE_GAP_AGENT: "测试缺口分析 Agent",
     ROLE_ISSUE_AUDIT_AGENT: "问题审计 Agent",
     ROLE_BUG_REPRO_AGENT: "缺陷复现 Agent",
     ROLE_BUG_TESTCASE_AGENT: "缺陷测试用例 Agent",
@@ -96,8 +98,13 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_TEST_MANAGER: CrewRoleSpec(
         role_id=ROLE_TEST_MANAGER,
-        goal="Identify bugs, regressions, and missing black-box or white-box tests from the repository context.",
-        backstory="You reason like a QA/test lead and focus on reproducible defects, weak test coverage, and operational risk.",
+        goal="Identify actionable bugs, regressions, and concrete defect signals from the repository context.",
+        backstory="You reason like a QA/test lead and focus on reproducible defects, failing behavior, and operational risk. Pure test coverage gaps belong to the dedicated test-case gap role instead of this bug role.",
+    ),
+    ROLE_TEST_CASE_GAP_AGENT: CrewRoleSpec(
+        role_id=ROLE_TEST_CASE_GAP_AGENT,
+        goal="Identify high-value black-box and white-box test coverage gaps that should become explicit repo improvement issues.",
+        backstory="You think like a test architecture lead. You map behavior paths and internal branches to existing tests, flag uncovered paths, distinguish black-box versus white-box gaps, and recommend concrete test file locations.",
     ),
     ROLE_ISSUE_DRAFTER: CrewRoleSpec(
         role_id=ROLE_ISSUE_DRAFTER,
@@ -281,7 +288,8 @@ def planning_team_blueprint() -> TeamBlueprint:
         team_id=STAGE_PLANNING,
         members=(
             TeamMemberSpec(role_id=ROLE_PRODUCT_MANAGER, state="RUNNING", current_action="discovering feature opportunities"),
-            TeamMemberSpec(role_id=ROLE_TEST_MANAGER, state="RUNNING", current_action="scanning bugs and test gaps"),
+            TeamMemberSpec(role_id=ROLE_TEST_MANAGER, state="RUNNING", current_action="scanning bugs and regressions"),
+            TeamMemberSpec(role_id=ROLE_TEST_CASE_GAP_AGENT, state="RUNNING", current_action="mapping black-box and white-box test gaps"),
             TeamMemberSpec(role_id=ROLE_ISSUE_DRAFTER, state="RUNNING", current_action="splitting work into executable items"),
             TeamMemberSpec(role_id=ROLE_PLAN_REVIEW_AGENT, state="RUNNING", current_action="checking scope and review gates"),
             TeamMemberSpec(role_id=ROLE_PLAN_QA_AGENT, state="RUNNING", current_action="reviewing QA and acceptance gates"),

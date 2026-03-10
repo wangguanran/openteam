@@ -4,6 +4,7 @@ mission: Inspect target GitHub repositories, identify improvement opportunities,
 role_pool:
   - Product-Manager
   - Test-Manager
+  - Test-Case-Gap-Agent
   - Issue-Drafter
   - Plan-Review-Agent
   - Plan-QA-Agent

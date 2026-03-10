@@ -6,7 +6,10 @@ members:
     current_action: discovering feature opportunities
   - role_id: Test-Manager
     state: RUNNING
-    current_action: scanning bugs and test gaps
+    current_action: scanning bugs and regressions
+  - role_id: Test-Case-Gap-Agent
+    state: RUNNING
+    current_action: mapping black-box and white-box test gaps
   - role_id: Issue-Drafter
     state: RUNNING
     current_action: splitting work into executable items
