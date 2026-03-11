@@ -1,0 +1,105 @@
+name: Runtime Image CrewAI Sync
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  packages: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check crewAI main vs latest runtime image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from datetime import datetime, timezone
+
+          owner = os.environ["OWNER"]
+          repo = os.environ["REPO"]
+
+          def gh_api(path: str, method: str = "GET", body: dict | None = None, allow_failure: bool = False) -> dict | list:
+              cmd = ["gh", "api", "-H", "Accept: application/vnd.github+json", path]
+              if method != "GET":
+                  cmd.extend(["-X", method])
+              if body:
+                  for key, value in body.items():
+                      cmd.extend(["-f", f"{key}={value}"])
+              try:
+                  out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+              except subprocess.CalledProcessError:
+                  if allow_failure:
+                      return []
+                  raise
+              return json.loads(out)
+
+          def parse_ts(value: str | None) -> datetime | None:
+              if not value:
+                  return None
+              return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+          crew = gh_api("repos/wangguanran/crewAI/commits/main")
+          crew_sha = str(crew.get("sha") or "").strip()
+          crew_ts = parse_ts(((crew.get("commit") or {}).get("committer") or {}).get("date"))
+
+          versions = gh_api(
+              f"/users/{owner}/packages/container/teamos-control-plane/versions?per_page=100",
+              allow_failure=True,
+          )
+          versions = versions if isinstance(versions, list) else []
+          latest_version = max(versions, key=lambda item: str(item.get("updated_at") or "")) if versions else {}
+          image_ts = parse_ts(str(latest_version.get("updated_at") or "").strip())
+
+          runs = gh_api(f"repos/{owner}/{repo}/actions/workflows/runtime-image.yml/runs?per_page=20")
+          runs = (runs or {}).get("workflow_runs") or []
+          in_progress = [
+              run for run in runs
+              if str(run.get("status") or "").lower() in {"queued", "in_progress", "waiting", "pending"}
+          ]
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          lines = [
+              f"crewAI main sha: `{crew_sha}`",
+              f"crewAI main ts: `{crew_ts.isoformat() if crew_ts else ''}`",
+              f"latest image ts: `{image_ts.isoformat() if image_ts else ''}`",
+              f"in-progress runtime-image runs: `{len(in_progress)}`",
+          ]
+
+          should_dispatch = False
+          if crew_ts is not None and (image_ts is None or crew_ts > image_ts) and not in_progress:
+              should_dispatch = True
+              subprocess.check_call(
+                  [
+                      "gh",
+                      "api",
+                      f"repos/{owner}/{repo}/actions/workflows/runtime-image.yml/dispatches",
+                      "-X",
+                      "POST",
+                      "-f",
+                      "ref=main",
+                  ]
+              )
+              lines.append("dispatch: `triggered`")
+          else:
+              lines.append("dispatch: `skipped`")
+
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fp:
+                  fp.write("## CrewAI sync check\n")
+                  for line in lines:
+                      fp.write(f"- {line}\n")
+
+          print(json.dumps({"crewai_sha": crew_sha, "should_dispatch": should_dispatch}, ensure_ascii=False))
+          PY

@@ -58,6 +58,31 @@ export TEAMOS_CREWAI_REASONING_EFFORT=xhigh
 
 当前 runtime 默认使用 `openai-codex/gpt-5.4`，并将 `TEAMOS_CREWAI_REASONING_EFFORT` 设为 `xhigh`。
 
+如需让本地 runtime 自动跟随 GHCR 上的新 `control-plane` 镜像，设置：
+
+```bash
+TEAMOS_CONTROL_PLANE_AUTO_UPDATE=1
+TEAMOS_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC=300
+TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
+```
+
+启用后：
+
+- `make up` / `make up-build` 会自动拉起本地镜像 watcher
+- watcher 会周期性执行 `docker compose pull control-plane`
+- 检测到本地镜像更新后，会自动重建 `control-plane`
+- 如需只在空闲时更新，可设置 `TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1`
+- 日志落在 `state/auto_update/watcher.log`
+
+手动查看/控制：
+
+```bash
+make auto-update-status
+make auto-update-check
+make auto-update-stop
+make auto-update-start
+```
+
 停止：
 
 ```bash
@@ -90,6 +115,7 @@ cd ../team-os
 - 生成/更新 `.env`
 - 拉取 `ghcr.io/wangguanran/teamos-control-plane:main`
 - 启动统一的 `docker-compose.yml`
+- 若 `.env` 中启用了 `TEAMOS_CONTROL_PLANE_AUTO_UPDATE=1`，同步拉起本地镜像 watcher
 
 数据库模式：
 

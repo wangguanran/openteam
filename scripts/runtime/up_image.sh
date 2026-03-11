@@ -103,6 +103,7 @@ upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
     docker compose pull
   fi
   docker compose up -d --no-build
+  python3 ./scripts/auto_update.py start --runtime-dir . >/dev/null
 )
 
 echo
