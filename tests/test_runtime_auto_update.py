@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import tempfile
 import unittest
@@ -119,3 +120,7 @@ class RuntimeAutoUpdateTests(unittest.TestCase):
             run_mock.call_args_list[1].args[0],
             ["docker", "compose", "up", "-d", "--no-build", "--force-recreate", "--no-deps", "control-plane"],
         )
+
+    def test_query_active_run_count_handles_remote_disconnect(self) -> None:
+        with patch.object(runtime_auto_update.urllib.request, "urlopen", side_effect=http.client.RemoteDisconnected("closed")):
+            self.assertIsNone(runtime_auto_update.query_active_run_count("http://127.0.0.1:8787"))

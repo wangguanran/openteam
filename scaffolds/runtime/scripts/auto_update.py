@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import signal
@@ -110,7 +111,7 @@ def query_active_run_count(base_url: str) -> int | None:
         with urllib.request.urlopen(url, timeout=3) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         return active_run_count_from_status(payload if isinstance(payload, dict) else {})
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError, http.client.HTTPException):
         return None
 
 
