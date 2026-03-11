@@ -24,8 +24,8 @@
 
 - Control Plane（Python + FastAPI + CrewAI Orchestrator）：统一流程编排入口；对外提供 HTTP API 供 CLI 查询/对话/注入需求
 - Deterministic Pipelines（`scripts/pipelines/*.py`）：唯一允许的真相源写入执行层
-- Hub（Postgres + Redis）：审批、锁、运行态聚合数据
-- 兼容组件（可选保留）：OpenHands Agent Server、Temporal
+- Hub（Postgres）：审批、锁、运行态聚合数据
+- 兼容组件（可选保留）：OpenHands Agent Server
 
 ## 4. 日常操作 (Team OS 仓库)
 
@@ -60,18 +60,18 @@ cd team-os
 ./teamos task ship <TASK_ID> --scope teamos --summary "一句话变更摘要"
 ```
 
-## 5. Runtime 部署与运维 (team-os-runtime)
+## 5. Runtime 部署与运维
 
-Runtime 目录：`../team-os-runtime`
+Runtime 配置目录：`~/.teamos/runtime-config/default`
 
-在新环境创建 runtime 目录（推荐，从 Team OS 模板生成；runtime 目录本身不作为 git repo）：
+在新环境创建 runtime 配置目录（推荐，从 Team OS 模板生成；运行态 state/hub/cache/tmp 将进入 Docker named volumes）：
 
 ```bash
 cd team-os
 ./scripts/teamos.sh runtime-init
 # 可选：自动生成本地 secrets（不回显、不入库）
 ./scripts/teamos.sh runtime-secrets
-cd ../team-os-runtime
+cd ~/.teamos/runtime-config/default
 make up
 make ps
 ```
@@ -112,7 +112,7 @@ cd team-os
 启动（需要先创建 `.env`，不要入库）：
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 cp .env.example .env
 # 外部数据库：填写 TEAMOS_DB_URL
 # 本地数据库：保持 TEAMOS_DB_URL 为空；按需填写 POSTGRES_PASSWORD
@@ -131,7 +131,7 @@ Team OS 强制 **Repo vs Workspace** 边界：
 
 默认 Workspace 路径：
 
-- `../team-os-runtime/workspace`（可通过 `TEAMOS_RUNTIME_ROOT` 或 CLI `--workspace-root` 覆盖）
+- `~/.teamos/workspace`（可通过 `TEAMOS_WORKSPACE_ROOT` 或 CLI `--workspace-root` 覆盖）
 
 project_id 约束（跨平台文件系统安全）：
 
@@ -262,7 +262,7 @@ cd team-os
 
 Workstream 是“平台/模块协作域”的一级概念，用于让 agents/tasks/requirements 可过滤、可并行协作：
 
-- 登记表：`../team-os-runtime/state/workstreams.yaml`
+- 登记表：runtime state volume 内的 `workstreams.yaml`
 - 约束：任务台账必须填写 `workstream_id`；需求必须包含 `workstreams`
 - 常用过滤示例：
 
@@ -284,9 +284,9 @@ GitHub Projects v2 是 Team OS 的 **主面板/视图层**，用于：
 重要原则：
 
 - Projects 只是视图层，系统真相源仍是：
-  - scope=`teamos`（Team OS 自身）：`../team-os-runtime/state/ledger`、`team-os/docs/product/teamos/requirements/**`
+  - scope=`teamos`（Team OS 自身）：runtime state volume 内的 `ledger`、`team-os/docs/product/teamos/requirements/**`
   - scope=`project:<id>`（项目）：`<WORKSPACE>/projects/<id>/state/{ledger,logs,requirements,plan,prompts}`
-  - Control Plane 的运行态状态库（SQLite）：`../team-os-runtime/state/runtime.db`（可迁移 Postgres）
+  - Control Plane 的运行态状态库（SQLite）：runtime state volume 内的 `runtime.db`（可迁移 Postgres）
 - Projects 必须可随时从真相源 **全量重建/重同步**（不依赖 Projects 本身的编辑为事实来源）。
 
 #### 5.4.1 创建/绑定一个 Project（每个 `project_id` 一个）
@@ -341,7 +341,7 @@ gh auth status
 export GITHUB_TOKEN="$(gh auth token -h github.com)"
 ```
 
-然后把 `GITHUB_TOKEN` 写入本地 `team-os-runtime/.env`（不入库）或通过环境变量注入。
+然后把 `GITHUB_TOKEN` 写入本地 `~/.teamos/runtime-config/default/.env`（不入库）或通过环境变量注入。
 
 #### 5.4.4 同步（dry-run / full / incremental）
 
@@ -375,7 +375,7 @@ cd team-os
 
 启用后台自动同步（30~60s 级别刷新；会写入 Projects）：
 
-在 `team-os-runtime/.env` 中设置：
+在 `~/.teamos/runtime-config/default/.env` 中设置：
 
 ```bash
 TEAMOS_PANEL_GH_WRITE_ENABLED=1
@@ -407,14 +407,14 @@ TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC=60
 停止：
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 make down
 ```
 
 升级（需要审批后执行，避免 `latest` 漂移；建议先阅读变更日志/风险）：
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 docker compose pull
 docker compose up -d
 docker compose ps
@@ -423,7 +423,7 @@ docker compose ps
 备份（最小可用：备份 Postgres；注意不要把备份文件入库）：
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 mkdir -p backups
 # 备份 Team OS runtime DB（也可改成 pg_dumpall）
 docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d team_os > backups/team_os_$(date +%Y%m%d_%H%M%S).sql
@@ -432,7 +432,7 @@ docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d team_os > backups
 恢复（示例）：
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 cat backups/team_os_<timestamp>.sql | docker compose exec -T postgres psql -U "$POSTGRES_USER" -d team_os
 ```
 
@@ -453,7 +453,7 @@ curl -fsS http://127.0.0.1:18000/alive
 将实际执行的命令与验证结果摘要写入本节（不要落盘 secrets）。
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 make pull
 make up
 make ps

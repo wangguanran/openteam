@@ -103,7 +103,10 @@ def _runtime_override_for_repo(repo_root: Path) -> str:
     """
     if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip():
         return ""
-    return str(repo_root.parent / "team-os-runtime")
+    home = str(os.getenv("TEAMOS_HOME") or "").strip()
+    if home:
+        return str((Path(home).expanduser().resolve() / "runtime" / "default").resolve())
+    return str((Path.home() / ".teamos" / "runtime" / "default").resolve())
 
 
 def _can_use_db(dsn: str) -> bool:

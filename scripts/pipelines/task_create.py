@@ -14,6 +14,7 @@ from _common import (
     PipelineError,
     add_default_args,
     append_jsonl,
+    default_runtime_root,
     ensure_dir,
     parse_scope,
     read_text,
@@ -62,7 +63,7 @@ def _task_paths(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> tu
     Returns (tasks_dir, logs_root).
     """
     if scope == "teamos":
-        runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(repo.parent / "team-os-runtime")
+        runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
         state_root = runtime_state_root(override=runtime_override)
         return (state_root / "ledger" / "tasks", state_root / "logs" / "tasks")
 

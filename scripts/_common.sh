@@ -23,6 +23,29 @@ sed_escape_repl() {
   printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
 
+upsert_kv_file() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp "${file}.tmp.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { done = 0 }
+    index($0, key "=") == 1 {
+      print key "=" value
+      done = 1
+      next
+    }
+    { print }
+    END {
+      if (!done) {
+        print key "=" value
+      }
+    }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+}
+
 slugify() {
   # Best-effort ASCII slug: lower, spaces -> -, remove disallowed chars.
   # shellcheck disable=SC2001
@@ -34,6 +57,18 @@ slugify() {
 ensure_dir() {
   local d="$1"
   mkdir -p "$d"
+}
+
+teamos_home_dir() {
+  if [[ -n "${TEAMOS_HOME:-}" ]]; then
+    printf '%s\n' "$TEAMOS_HOME"
+  else
+    printf '%s/.teamos\n' "$HOME"
+  fi
+}
+
+default_runtime_config_dir() {
+  printf '%s/runtime-config/default\n' "$(teamos_home_dir)"
 }
 
 safe_create_file() {

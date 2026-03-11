@@ -1,3 +1,5 @@
+name: ${TEAMOS_DOCKER_PROJECT_NAME:-team-os-runtime}
+
 services:
   postgres:
     image: postgres:${POSTGRESQL_VERSION:-16}
@@ -130,21 +132,21 @@ services:
       TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC: ${TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC:-60}
       TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC: ${TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC:-30}
       CREWAI_DISABLE_TELEMETRY: ${CREWAI_DISABLE_TELEMETRY:-1}
-      # Runtime DB path (runtime-only; host path under team-os-runtime/state).
+      # Runtime DB path (runtime-only; persisted in Docker named volumes).
       RUNTIME_DB_PATH: ${RUNTIME_DB_PATH:-/teamos-runtime/state/runtime.db}
     ports:
       - "127.0.0.1:${CONTROL_PLANE_PORT:-8787}:8787"
     volumes:
       # Default: read-only repo mount, with minimal writable subpaths layered on top.
       - ${TEAM_OS_REPO_PATH:-../team-os}:/team-os:ro
-      - ./state/teamos:/team-os/.team-os:rw
+      - repo_overlay_data:/team-os/.team-os:rw
       - ${TEAM_OS_REPO_PATH:-../team-os}/docs:/team-os/docs
-      # Runtime root persistence (all runtime outputs stay in team-os-runtime).
-      - ./state:/teamos-runtime/state:rw
-      - ./hub:/teamos-runtime/hub:rw
-      - ./workspace:/teamos-runtime/workspace:rw
-      - ./tmp:/teamos-runtime/tmp:rw
-      - ./cache:/teamos-runtime/cache:rw
+      # Runtime root persistence now uses Docker named volumes.
+      - runtime_state_data:/teamos-runtime/state:rw
+      - runtime_hub_data:/teamos-runtime/hub:rw
+      - runtime_workspace_data:/teamos-runtime/workspace:rw
+      - runtime_tmp_data:/teamos-runtime/tmp:rw
+      - runtime_cache_data:/teamos-runtime/cache:rw
       # Workspace: all project truth sources live here (must be OUTSIDE the team-os git repo).
       - ${HOME}/.teamos/workspace:/teamos-workspace:rw
       # OAuth: reuse host Codex login state (do not commit; local-only).
@@ -159,3 +161,16 @@ services:
 
 volumes:
   postgres_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_postgres_data
+  repo_overlay_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_repo_overlay
+  runtime_state_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_state
+  runtime_hub_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_hub
+  runtime_workspace_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_runtime_workspace
+  runtime_tmp_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_tmp
+  runtime_cache_data:
+    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_cache

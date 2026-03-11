@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from _common import add_default_args, resolve_repo_root, runtime_root
+from _common import add_default_args, default_runtime_root, resolve_repo_root, runtime_root
 
 
 def _chmod_best_effort(path: Path, mode: int) -> None:
@@ -54,13 +54,13 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = resolve_repo_root(args)
     override = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
-    rt = runtime_root(override=override if override else str(repo.parent / "team-os-runtime"))
+    rt = runtime_root(override=override if override else str(default_runtime_root()))
 
     out = {
         "ok": True,
         "repo_root": str(repo),
         "runtime_root": str(rt),
-        "runtime_root_source": "env" if override else "default_repo_parent",
+        "runtime_root_source": "env" if override else "default_teamos_home",
     }
     if args.ensure:
         out["dirs"] = _ensure_runtime_dirs(rt)

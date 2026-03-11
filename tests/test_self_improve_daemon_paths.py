@@ -27,7 +27,7 @@ class SelfImproveDaemonPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "team-os"
             repo.mkdir(parents=True, exist_ok=True)
-            runtime = Path(td) / "team-os-runtime"
+            runtime = (Path(td) / "team-os-runtime").resolve()
             old = os.environ.get("TEAMOS_RUNTIME_ROOT")
             os.environ["TEAMOS_RUNTIME_ROOT"] = str(runtime)
             try:

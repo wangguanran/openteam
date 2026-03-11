@@ -27,7 +27,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Optional
 
-from _common import PipelineError, add_default_args, resolve_repo_root, runtime_state_root, utc_now_iso, write_json
+from _common import PipelineError, add_default_args, default_runtime_root, resolve_repo_root, runtime_state_root, utc_now_iso, write_json
 from _db import connect, get_db_url
 from db_migrate import apply_migrations as _apply_migrations
 
@@ -85,7 +85,7 @@ def _runtime_state_root_for_repo(repo: Path) -> Path:
     override = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if override:
         return runtime_state_root(override=override)
-    return runtime_state_root(override=str(repo.parent / "team-os-runtime"))
+    return runtime_state_root(override=str(default_runtime_root()))
 
 
 def _pid_path(repo: Path) -> Path:

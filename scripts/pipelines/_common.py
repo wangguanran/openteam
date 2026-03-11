@@ -85,19 +85,30 @@ def repo_root() -> Path:
     raise PipelineError("Cannot locate team-os repo root (set TEAM_OS_REPO_PATH or run from within the repo)")
 
 
+def teamos_home() -> Path:
+    raw = str(os.getenv("TEAMOS_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".teamos").resolve()
+
+
+def default_runtime_root() -> Path:
+    return (teamos_home() / "runtime" / "default").resolve()
+
+
 def runtime_root(*, override: str = "") -> Path:
     """
     Resolve runtime root outside repo.
     Priority:
     1) explicit override
     2) env TEAMOS_RUNTIME_ROOT
-    3) <repo_root>/../team-os-runtime
+    3) ~/.teamos/runtime/default
     """
     v = str(override or "").strip()
     if not v:
         v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if not v:
-        v = str(repo_root().parent / "team-os-runtime")
+        v = str(default_runtime_root())
     return Path(v).expanduser().resolve()
 
 

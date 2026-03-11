@@ -10,11 +10,11 @@ Usage:
   ./scripts/runtime_up_image.sh [--db-url <postgres-dsn>] [--path <dir>] [--image <ref>] [--port <port>] [--force] [--skip-pull]
 
 Purpose:
-  Initialize an image-based team-os-runtime deployment, write the required .env values,
+  Initialize an image-based TeamOS runtime config directory, write the required .env values,
   pull the published control-plane image, and start the runtime with the unified docker compose file.
 
 Defaults:
-  --path  ../team-os-runtime-image
+  --path  ~/.teamos/runtime-config/default
   --image ghcr.io/wangguanran/teamos-control-plane:main
   --port  8787
   --db-url unset (control-plane uses local postgres)
@@ -22,7 +22,7 @@ EOF
 }
 
 ROOT="$(teamos_root)"
-target="${ROOT}/../team-os-runtime-image"
+target="$(default_runtime_config_dir)"
 db_url=""
 image="ghcr.io/wangguanran/teamos-control-plane:main"
 port="8787"
@@ -83,19 +83,26 @@ fi
 upsert_env() {
   local key="$1"
   local value="$2"
-  local escaped
-  escaped="$(sed_escape_repl "$value")"
-  if grep -qE "^${key}=" "$env_file"; then
-    sed -i.bak -E "s|^${key}=.*$|${key}=${escaped}|" "$env_file"
-  else
-    printf '%s=%s\n' "$key" "$value" >>"$env_file"
-  fi
+  upsert_kv_file "$env_file" "$key" "$value"
 }
 
 upsert_env "TEAMOS_DB_URL" "$db_url"
 upsert_env "TEAMOS_CONTROL_PLANE_IMAGE" "$image"
 upsert_env "CONTROL_PLANE_PORT" "$port"
 upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
+upsert_env "TEAM_OS_REPO_PATH" "$ROOT"
+
+base_name="$(basename "$target")"
+if [[ "$base_name" == "default" ]]; then
+  project_name="team-os-runtime"
+else
+  project_name="teamos-$(slugify "$base_name")"
+  if [[ -z "$project_name" || "$project_name" == "teamos-" ]]; then
+    project_name="team-os-runtime"
+  fi
+fi
+upsert_env "TEAMOS_DOCKER_PROJECT_NAME" "$project_name"
+upsert_env "TEAMOS_DOCKER_VOLUME_PREFIX" "$project_name"
 
 (
   cd "$target"
@@ -107,7 +114,7 @@ upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
 )
 
 echo
-echo "runtime_path=$target"
+echo "runtime_config_path=$target"
 echo "image=$image"
 if [[ -n "$db_url" ]]; then
   echo "database_mode=external"
@@ -115,6 +122,7 @@ if [[ -n "$db_url" ]]; then
 else
   echo "database_mode=localdb"
 fi
+echo "runtime_data_mode=docker_named_volumes"
 echo "base_url=http://127.0.0.1:${port}"
 echo "next:"
 echo "  cd \"$target\" && docker compose ps"

@@ -10,12 +10,13 @@ Usage:
   ./scripts/teamos.sh runtime-init [--path <dir>] [--force]
 
 Default:
-  --path ../team-os-runtime  (sibling of the team-os repo)
+  --path ~/.teamos/runtime-config/default
 
 Behavior:
-  - Copies runtime scaffold files from scaffolds/runtime into the target directory
+  - Copies only runtime deployment config files into the runtime config directory
   - By default, does NOT overwrite existing files
   - With --force, overwrites existing files with a .bak.<timestamp> backup
+  - Seeds TEAM_OS_REPO_PATH and docker project defaults in .env.example
 EOF
 }
 
@@ -48,7 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$target" ]]; then
-  target="$ROOT/../team-os-runtime"
+  target="$(default_runtime_config_dir)"
 fi
 
 if [[ ! -d "$TEMPLATE_DIR" ]]; then
@@ -63,8 +64,21 @@ copied=0
 skipped=0
 overwritten=0
 
-while IFS= read -r -d '' src; do
-  rel="${src#"$TEMPLATE_DIR/"}"
+copy_paths=(
+  "Makefile"
+  "README.md"
+  ".gitignore"
+  ".env.example"
+  "docker-compose.yml"
+  "scripts/auto_update.py"
+)
+
+for rel in "${copy_paths[@]}"; do
+  src="$TEMPLATE_DIR/$rel"
+  if [[ ! -f "$src" ]]; then
+    echo "Missing template file: $rel" >&2
+    exit 1
+  fi
   dest="$target/$rel"
   ensure_dir "$(dirname "$dest")"
 
@@ -85,10 +99,26 @@ while IFS= read -r -d '' src; do
   cp -p "$src" "$dest"
   echo "created: $rel"
   copied=$((copied + 1))
-done < <(find "$TEMPLATE_DIR" -type f -print0)
+done
+
+env_example="$target/.env.example"
+if [[ -f "$env_example" ]]; then
+  base_name="$(basename "$target")"
+  if [[ "$base_name" == "default" ]]; then
+    project_name="team-os-runtime"
+  else
+    project_name="teamos-$(slugify "$base_name")"
+    if [[ -z "$project_name" || "$project_name" == "teamos-" ]]; then
+      project_name="team-os-runtime"
+    fi
+  fi
+  upsert_kv_file "$env_example" "TEAM_OS_REPO_PATH" "$ROOT"
+  upsert_kv_file "$env_example" "TEAMOS_DOCKER_PROJECT_NAME" "$project_name"
+  upsert_kv_file "$env_example" "TEAMOS_DOCKER_VOLUME_PREFIX" "$project_name"
+fi
 
 echo
-echo "runtime_path=$target"
+echo "runtime_config_path=$target"
 echo "copied_files=$copied"
 echo "skipped_files=$skipped"
 echo "overwritten_files=$overwritten"
@@ -98,5 +128,6 @@ echo "  cd \"$target\""
 echo "  cp .env.example .env"
 echo "  # optional: generate local secrets (no output):"
 echo "  #   cd \"$ROOT\" && ./scripts/teamos.sh runtime-secrets --path \"$target\""
+echo "  # runtime state/tmp/cache will live in Docker named volumes"
 echo "  make up"
 echo "  make ps"

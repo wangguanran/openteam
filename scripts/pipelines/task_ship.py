@@ -24,6 +24,7 @@ from _common import (
     add_default_args,
     append_jsonl,
     append_text,
+    default_runtime_root,
     read_text,
     read_yaml,
     resolve_repo_root,
@@ -56,7 +57,7 @@ def _locate_task(repo: Path, ws_root: Path, *, scope: str, task_id: str) -> tupl
         raise PipelineError("task_id is required")
 
     scope = str(scope or "").strip()
-    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(repo.parent / "team-os-runtime")
+    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
     state_root = runtime_state_root(override=runtime_override)
 
     # 1) teamos

@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from _common import PipelineError, add_default_args, resolve_repo_root, resolve_workspace_root, runtime_state_root
+from _common import PipelineError, add_default_args, default_runtime_root, resolve_repo_root, resolve_workspace_root, runtime_state_root
 from _db import connect, get_db_url
 from repo_purity_check import main as _repo_purity_main
 from workspace_doctor import check_workspace
@@ -113,7 +113,7 @@ def _self_upgrade_check(repo_root: Path) -> dict[str, Any]:
     Best-effort runtime-state check for self-upgrade.
     Persistent state now lives in the runtime DB / control-plane status, not local JSON files.
     """
-    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(repo_root.parent / "team-os-runtime")
+    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
     state_root = runtime_state_root(override=runtime_override)
     return {
         "ok": True,

@@ -1,6 +1,6 @@
 # TEAMOS.md (通用 AI 开发团队操作系统规范)
 
-> 目标：在单机上长期运行一个可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统 (Team OS)”，并通过 `team-os-runtime` 提供 24/7 运行时。
+> 目标：在单机上长期运行一个可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统 (Team OS)”，并通过 TeamOS runtime（默认配置目录 `~/.teamos/runtime-config/default`）提供 24/7 运行时。
 
 ## 1. 组件与边界
 
@@ -20,7 +20,7 @@
 - **CrewAI Flow**：统一流程语义（Genesis/Delivery/Incident/Self-Improve 等），入口 `POST /v1/runs/start`。
 - **Deterministic Pipelines**：所有会改变真相源的动作必须由 `scripts/pipelines/*.py` 执行。
 - **Postgres/Hub**：集中式运行态、审批与锁等数据。
-- **兼容运行组件（可选）**：Runtime 模板可保留 Temporal/OpenHands 组件用于兼容场景，但不作为流程编排真相源。
+- **兼容运行组件（可选）**：Runtime 模板可保留 OpenHands 组件用于兼容场景，但不作为流程编排真相源。
 
 ### 1.4 观测 (MVP)
 
@@ -42,7 +42,7 @@
     - ledger/logs：`<WORKSPACE>/projects/<id>/state/ledger/**`、`<WORKSPACE>/projects/<id>/state/logs/**`
     - prompts/plan/kb：`<WORKSPACE>/projects/<id>/state/prompts|plan|kb/**`
     - repo workdir：`<WORKSPACE>/projects/<id>/repo/**`
-  - Control Plane 运行态状态库：`.team-os/state/runtime.db`（忽略入库；可迁移 Postgres）
+  - Control Plane 运行态状态与缓存：Docker named volumes（容器内 `/teamos-runtime/*`）
 - Panel 必须可随时从真相源 **全量重建/重同步**：
   - 通过 Control Plane 的 `POST /v1/panel/github/sync`（`mode=full`）实现
   - 字段/状态/workstream 映射以 `integrations/github_projects/mapping.yaml` 为准

@@ -1,6 +1,6 @@
 # Team OS (通用 AI 开发团队操作系统)
 
-本仓库提供一个可长期运行、可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统（Team OS）”，并通过“Runtime 模板”在单机上 24/7 运行 Control Plane（CrewAI Orchestrator）+ 确定性 Pipelines + Hub(Postgres/Redis)。
+本仓库提供一个可长期运行、可审计、可扩展、可自我升级的“通用 AI 开发团队操作系统（Team OS）”，并通过“Runtime 模板”在单机上 24/7 运行 Control Plane（CrewAI Orchestrator）+ 确定性 Pipelines + Hub(Postgres)。
 
 核心约束（硬规则）：
 
@@ -13,7 +13,7 @@
 ```bash
 git clone https://github.com/wangguanran/team-os.git
 cd team-os
-./run.sh            # 一键启动（runtime + Hub + migrate + control-plane + CrewAI self-upgrade bootstrap）
+./run.sh            # 一键启动（runtime + Hub + migrate + control-plane + CrewAI repo-improvement bootstrap）
 ./run.sh status
 ./run.sh doctor
 ./run.sh stop
@@ -31,22 +31,22 @@ export TEAMOS_LLM_API_KEY="<your_api_key>"
 ./teamos config init
 ./teamos workspace init
 ./teamos workspace doctor
-# 默认 Workspace: ../team-os-runtime/workspace
-# 覆盖方式: TEAMOS_RUNTIME_ROOT 或 TEAMOS_WORKSPACE_ROOT
+# 默认 Workspace: ~/.teamos/workspace
+# 覆盖方式: TEAMOS_WORKSPACE_ROOT（runtime root 默认 ~/.teamos/runtime/default）
 
 # 在项目 repo 目录下可直接进入 requirement REPL（无需子命令）
-cd ../team-os-runtime/workspace/projects/<project_id>/repo
+cd ~/.teamos/workspace/projects/<project_id>/repo
 teamos
 # 启动后会提示：输入会落盘为 Raw，不要输入密码/密钥
 # 控制命令：/help /status /exit
 
-# 检查 self-upgrade 已触发并写入 runtime 状态库
-./teamos status | grep '^self_upgrade\.'
-curl -fsS http://127.0.0.1:8787/v1/status | jq '.self_upgrade'
+# 检查 repo-improvement 已触发并写入 runtime 状态库
+./teamos status | grep '^repo_improvement\.'
+curl -fsS http://127.0.0.1:8787/v1/status | jq '.repo_improvement'
 
 # 查看 feature/process proposals，并决定哪些进入执行
-./teamos self-upgrade-proposals
-./teamos self-upgrade-decide <proposal_id> approve
+./teamos repo-improvement-proposals
+./teamos repo-improvement-decide <proposal_id> approve
 ```
 
 ## Repo vs Workspace（硬隔离）
@@ -56,7 +56,7 @@ curl -fsS http://127.0.0.1:8787/v1/status | jq '.self_upgrade'
 任何 `project:<id>` 的真相源文件（requirements/冲突报告/任务台账/任务日志/prompts/知识库/状态快照/项目 repo workdir 等）必须落在 **Workspace**（不在 `team-os/` 目录树内）：
 
 ```text
-../team-os-runtime/workspace/
+~/.teamos/workspace/
   projects/
     <project_id>/
       repo/        # 项目代码工作区（clone/checkout）
@@ -87,8 +87,8 @@ cd team-os
 - Team OS 规范与落盘结构已完成：`AGENTS.md`、`TEAMOS.md`、`docs/`（运行态动态数据在 repo 外 runtime root）
 - 默认角色与 Crew Flow 定义已落盘：`specs/roles/`、`specs/workflows/`
 - 统一脚本入口可用：`./scripts/teamos.sh`
-  - `doctor/new-task/skill-boot/retro/self-upgrade`
-  - `runtime-init/runtime-secrets`（用于在新环境生成 `team-os-runtime`）
+  - `doctor/new-task/skill-boot/retro/repo-improvement`
+  - `runtime-init/runtime-secrets`（用于在新环境生成 `~/.teamos/runtime-config/default`）
 - Runtime 模板已落盘：`scaffolds/runtime/`
 - Runtime 最小闭环已验证（本机 localhost 绑定）：
   - Control Plane：`http://127.0.0.1:8787/healthz`（状态：`/v1/status`）
@@ -96,21 +96,20 @@ cd team-os
   - Hub 运行状态：`GET /v1/hub/status`
   - Hub 容器编排：`teamos hub init|up|status|migrate`
   - 任务状态/决策流由 CrewAI + 确定性 pipelines 统一处理（并可同步到 GitHub Projects 视图层）
-  - 兼容组件（可选保留）：OpenHands + Temporal
+- 兼容组件（可选保留）：OpenHands
   - OpenHands Agent Server：`http://127.0.0.1:18000/alive`
-  - Temporal UI：`http://127.0.0.1:18081`
-  - Temporal gRPC：`127.0.0.1:7233`
   - Postgres：`127.0.0.1:15432`
 
 详细操作请看中文执行手册：`docs/runbooks/EXECUTION_RUNBOOK.md`
 
-## 为什么不提交 team-os-runtime
+## 为什么不提交 runtime 配置与数据
 
-`team-os-runtime` 是“部署目录”，包含：
+本地 runtime 由两部分组成：
 
-- 真实 `.env`（secrets）
-- 容器卷数据（Postgres/Temporal 状态）
-- 与宿主机强相关的运行态文件
+- `~/.teamos/runtime-config/default`：启动配置（`.env`、compose、watcher）
+- Docker named volumes：runtime state/hub/cache/tmp/worktrees
+
+因此这些都不应入库。
 
 因此本仓库只提交 “Runtime 模板”到 `scaffolds/runtime/`，在新环境用：
 
@@ -120,14 +119,13 @@ cd team-os
 ./scripts/teamos.sh runtime-secrets
 ```
 
-生成新的 `../team-os-runtime`。
+生成新的 `~/.teamos/runtime-config/default`。
 
 ## 目录速览
 
 - `specs/`：声明式资产（roles / workflows / prompts / policies / schemas）
-- `../team-os-runtime/state/kb/`：知识库（含来源摘要、Skill Cards）
-- `../team-os-runtime/state/ledger/`：任务台账、自我升级台账、pending issues
-- `../team-os-runtime/state/logs/`：任务全流程日志（00~07）
+- `~/.teamos/runtime-config/default/`：运行配置与本地 watcher 日志
+- Docker named volumes：runtime state/hub/cache/tmp/worktrees
 - `scaffolds/`：可部署骨架（runtime / hub）
 - `templates/`：内容模板与任务日志模板
 - `tooling/`：集群、镜像、数据库迁移等执行支撑资产

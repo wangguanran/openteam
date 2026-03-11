@@ -10,6 +10,13 @@ class StateError(Exception):
     pass
 
 
+def _teamos_home() -> Path:
+    raw = str(os.getenv("TEAMOS_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".teamos").resolve()
+
+
 def team_os_root() -> Path:
     """
     Team OS repo root.
@@ -38,12 +45,12 @@ def runtime_root() -> Path:
     """
     Runtime root contract:
     - env TEAMOS_RUNTIME_ROOT
-    - default: <team_os_root>/../team-os-runtime
+    - default: ~/.teamos/runtime/default
     """
     v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if v:
         return Path(v).expanduser().resolve()
-    return (team_os_root().parent / "team-os-runtime").resolve()
+    return (_teamos_home() / "runtime" / "default").resolve()
 
 
 def runtime_state_root() -> Path:

@@ -40,7 +40,10 @@ def _runtime_root(repo: Path) -> Path:
     v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if v:
         return Path(v).expanduser().resolve()
-    return (repo.parent / "team-os-runtime").resolve()
+    home = str(os.getenv("TEAMOS_HOME") or "").strip()
+    if home:
+        return (Path(home).expanduser().resolve() / "runtime" / "default").resolve()
+    return (Path.home() / ".teamos" / "runtime" / "default").resolve()
 
 
 def _workspace_root(runtime_root: Path) -> Path:

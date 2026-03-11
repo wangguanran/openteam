@@ -10,7 +10,7 @@ Usage:
   ./scripts/teamos.sh runtime-secrets [--path <dir>]
 
 Default:
-  --path ../team-os-runtime  (sibling of the team-os repo)
+  --path ~/.teamos/runtime-config/default
 
 Behavior:
   - Ensures <dir>/.env exists (creates from .env.example if missing)
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$target" ]]; then
-  target="$ROOT/../team-os-runtime"
+  target="$(default_runtime_config_dir)"
 fi
 
 env_example="$target/.env.example"

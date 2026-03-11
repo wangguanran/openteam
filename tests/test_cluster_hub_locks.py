@@ -23,12 +23,12 @@ class ClusterHubLocksTests(unittest.TestCase):
         return locks.LockHandle(lock_key=f"{backend}:test", backend=backend, holder={}, acquired_at="now", expires_at="")
 
     def test_cluster_lock_file_backend(self):
-        with tempfile.TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {"TEAMOS_HOME": str(Path(td) / ".teamos-home")}, clear=False):
             repo = Path(td)
             h = locks.acquire_cluster_lock(repo_root=repo, wait_sec=0.2, poll_sec=0.05, prefer_db=False)
             try:
                 self.assertEqual(h.backend, "file")
-                self.assertTrue((repo.parent / "team-os-runtime" / "state" / "locks" / "cluster.lock").exists())
+                self.assertTrue((Path(td) / ".teamos-home" / "runtime" / "default" / "state" / "locks" / "cluster.lock").exists())
             finally:
                 locks.release_lock(h)
 

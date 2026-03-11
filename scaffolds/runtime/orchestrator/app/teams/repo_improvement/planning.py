@@ -626,7 +626,10 @@ def _runtime_root() -> Path:
     raw = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
-    return (team_os_root().parent / "team-os-runtime").resolve()
+    home = str(os.getenv("TEAMOS_HOME") or "").strip()
+    if home:
+        return (Path(home).expanduser().resolve() / "runtime" / "default").resolve()
+    return (Path.home() / ".teamos" / "runtime" / "default").resolve()
 
 
 def _worktrees_root() -> Path:

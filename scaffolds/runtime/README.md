@@ -1,4 +1,4 @@
-# team-os-runtime
+# TeamOS Runtime Config
 
 单机运行时环境（Docker Compose），用于 24/7 跑：
 
@@ -17,7 +17,7 @@
 Team OS 有两个层级的“真相源”：
 
 - **Team OS 自身**（scope=`teamos`）：业务真相源可落盘在 `team-os/` git 仓库（例如 `docs/product/teamos/requirements`）。
-- **运行态文件**（runtime state/db/ledger/logs/cluster）：统一落盘在 `team-os-runtime/`（不再写入 `team-os/.team-os`）。
+- **运行态文件**（runtime state/db/ledger/logs/cluster）：统一保存在 Docker named volumes（不再写入 `team-os/.team-os`，也不要求单独的 `team-os-runtime/` 目录）。
 - **任何项目**（scope=`project:<id>`）：必须落盘在 **Workspace**（不在 `team-os/` 目录树内）。
 
 默认 Workspace 路径：
@@ -41,7 +41,7 @@ cd ../team-os
 ## 启动/停止
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 cp .env.example .env
 # 外部数据库：填写 TEAMOS_DB_URL
 # 本地数据库：保持 TEAMOS_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
@@ -72,7 +72,7 @@ TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
 - watcher 会周期性执行 `docker compose pull control-plane`
 - 检测到本地镜像更新后，会自动重建 `control-plane`
 - 如需只在空闲时更新，可设置 `TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1`
-- 日志落在 `state/auto_update/watcher.log`
+- 日志落在 `auto_update/watcher.log`
 
 手动查看/控制：
 
@@ -86,7 +86,7 @@ make auto-update-start
 停止：
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 make down
 ```
 
@@ -97,6 +97,8 @@ make down
 - `docker-compose.yml` 默认总会启动本地 `postgres` 容器
 - 当 `TEAMOS_DB_URL` 为空时，control-plane 连接本地 `postgres`
 - 当 `TEAMOS_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
+- runtime state/hub/cache/tmp/worktrees 默认持久化在 Docker named volumes
+- 宿主机默认只保留 runtime 配置目录：`~/.teamos/runtime-config/default`
 
 ## 镜像化启动（推荐给新机器）
 
@@ -111,7 +113,7 @@ cd ../team-os
 
 默认会：
 
-- 初始化 `../team-os-runtime-image`
+- 初始化 `~/.teamos/runtime-config/default`
 - 生成/更新 `.env`
 - 拉取 `ghcr.io/wangguanran/teamos-control-plane:main`
 - 启动统一的 `docker-compose.yml`
@@ -131,14 +133,14 @@ cd ../team-os
 镜像化 runtime 默认：
 
 - 持久真相源使用 `TEAMOS_DB_URL`
-- 本地只保留 Docker volume 中的临时 workspace / cache / state
+- 本地只保留 Docker volume 中的 runtime 临时状态；项目真相源继续在 `~/.teamos/workspace`
 - 继续复用宿主机 `${HOME}/.codex` 和 `${HOME}/.openclaw`
 - 不会隐式把镜像内 `/team-os` 快照当作默认 target 扫描；新部署会先空转等待 target 注册
 
 ## 日志与健康检查
 
 ```bash
-cd team-os-runtime
+cd ~/.teamos/runtime-config/default
 make logs
 ```
 
@@ -205,7 +207,7 @@ export GITHUB_TOKEN="$(gh auth token -h github.com)"
 
 3) 启用后台同步（会对 GitHub Projects 写入 item/字段，属于“视图层变更”）：
 
-在 `team-os-runtime/.env` 中设置：
+在 `~/.teamos/runtime-config/default/.env` 中设置：
 
 ```bash
 TEAMOS_PANEL_GH_WRITE_ENABLED=1
@@ -222,7 +224,7 @@ Control Plane now exposes hub APIs for presentation/orchestration layers:
 - `GET /v1/hub/approvals`
 - `GET /v1/runs`
 - `POST /v1/runs/start`
-- `POST /v1/repo_improvement/run` (`/v1/self_upgrade/run` and `/v1/self_improve/run` are kept as compatibility aliases)
+- `POST /v1/repo_improvement/run`（旧别名仍保留用于兼容）
 - `GET /v1/repo_improvement/proposals`
 - `POST /v1/repo_improvement/proposals/decide`
 

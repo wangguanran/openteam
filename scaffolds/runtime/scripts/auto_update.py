@@ -177,7 +177,7 @@ def run_update_check(runtime_dir: Path) -> dict[str, Any]:
 
 
 def _state_dir(runtime_dir: Path) -> Path:
-    return runtime_dir / "state" / "auto_update"
+    return runtime_dir / "auto_update"
 
 
 def _pid_file(runtime_dir: Path) -> Path:
@@ -294,7 +294,7 @@ def watch(runtime_dir: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Watch and update the local TeamOS control-plane image.")
     ap.add_argument("command", choices=["check", "watch", "start", "stop", "status"])
-    ap.add_argument("--runtime-dir", default=".", help="Path to the team-os-runtime directory")
+    ap.add_argument("--runtime-dir", default=".", help="Path to the TeamOS runtime config directory")
     ns = ap.parse_args(argv)
 
     runtime_dir = Path(ns.runtime_dir).expanduser().resolve()

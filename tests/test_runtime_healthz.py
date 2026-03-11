@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import unittest
+import importlib.util
 from pathlib import Path
 from unittest import mock
 
@@ -26,10 +27,16 @@ if "agents" not in sys.modules:
     agents_mod.Agent = _DummyAgent
     sys.modules["agents"] = agents_mod
 
-from app import main as app_main  # noqa: E402
-from app import state_store  # noqa: E402
+FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
+if FASTAPI_AVAILABLE:
+    from app import main as app_main  # noqa: E402
+    from app import state_store  # noqa: E402
+else:  # pragma: no cover
+    app_main = None
+    state_store = None
 
 
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not available in this test environment")
 class RuntimeHealthzTests(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_env = dict(os.environ)

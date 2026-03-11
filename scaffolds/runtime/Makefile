@@ -12,7 +12,6 @@ build:
 	docker compose build control-plane
 
 up-build:
-	mkdir -p ../team-os/.team-os state/teamos state hub workspace tmp cache
 	docker compose up -d --build
 	@python3 $(AUTO_UPDATE_SCRIPT) start --runtime-dir . >/dev/null
 

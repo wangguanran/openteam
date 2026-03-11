@@ -18,6 +18,13 @@ def _expand(p: str) -> Path:
     return Path(p).expanduser().resolve()
 
 
+def _teamos_home() -> Path:
+    raw = str(os.getenv("TEAMOS_HOME") or "").strip()
+    if raw:
+        return _expand(raw)
+    return (Path.home() / ".teamos").resolve()
+
+
 def team_os_root() -> Path:
     env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
     if env:
@@ -38,7 +45,7 @@ def runtime_root() -> Path:
     v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
     if v:
         return _expand(v)
-    return (team_os_root().parent / "team-os-runtime").resolve()
+    return (_teamos_home() / "runtime" / "default").resolve()
 
 
 def workspace_root() -> Path:
