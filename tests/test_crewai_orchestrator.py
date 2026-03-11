@@ -55,8 +55,8 @@ class CrewOrchestratorTests(unittest.TestCase):
     def test_flow_alias_maps_to_deterministic_pipeline_chain(self):
         self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor", "db_migrate"])
 
-    def test_self_improve_alias_maps_to_native_self_upgrade_flow(self):
-        self.assertEqual(crew_tools.normalize_flow("self_improve"), "self_upgrade")
+    def test_self_improve_alias_maps_to_native_repo_improvement_flow(self):
+        self.assertEqual(crew_tools.normalize_flow("self_improve"), "repo_improvement")
         self.assertTrue(crew_tools.is_native_crewai_flow("self_improve"))
 
     def test_direct_pipeline_allowlist_accepts_supported_pipeline(self):

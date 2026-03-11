@@ -816,7 +816,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             [
                 "module:runtime",
                 "proposal:pending-confirmation",
-                "source:self-upgrade",
+                "source:repo-improvement",
                 "stage:proposal",
                 "teamos",
                 "type:feature",
@@ -1021,7 +1021,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
 
         self.assertEqual(title, "[Bug][Runtime] 清理旧导入引用")
         self.assertIn("<!-- teamos:self_upgrade:demo-fp-runtime-cleanup -->", body)
-        self.assertIn("# 自升级任务", body)
+        self.assertIn("# 仓库改进任务", body)
         self.assertIn("- Module: Runtime", body)
         self.assertIn("- GitHub Milestone: v0.1.1", body)
         self.assertIn("## 范围外", body)
@@ -1157,7 +1157,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             [
                 "milestone:v0-1-1",
                 "module:runtime",
-                "source:self-upgrade",
+                "source:repo-improvement",
                 "stage:queued",
                 "teamos",
                 "type:bug",
