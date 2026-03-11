@@ -317,8 +317,6 @@ DB = _db()
 # --- Panel sync scheduling (best-effort; GitHub Projects is view-layer) ---
 _PANEL_DIRTY: set[str] = set()
 _PANEL_LOCK = threading.Lock()
-_REPO_IMPROVEMENT_LOCK = threading.Lock()
-_REPO_IMPROVEMENT_DELIVERY_LOCK = threading.Lock()
 _REPO_IMPROVEMENT_STALE_AGENT_ROLES = frozenset(
     {
         crewai_self_upgrade.ROLE_PRODUCT_MANAGER,
@@ -333,6 +331,29 @@ _REPO_IMPROVEMENT_STALE_AGENT_ROLES = frozenset(
         "Process-Metrics-Agent",
     }
 )
+
+
+class _ScopedRunLocks:
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._active: set[str] = set()
+
+    def acquire(self, key: str) -> bool:
+        normalized = str(key or "").strip() or "__default__"
+        with self._guard:
+            if normalized in self._active:
+                return False
+            self._active.add(normalized)
+            return True
+
+    def release(self, key: str) -> None:
+        normalized = str(key or "").strip() or "__default__"
+        with self._guard:
+            self._active.discard(normalized)
+
+
+_REPO_IMPROVEMENT_LOCKS = _ScopedRunLocks()
+_REPO_IMPROVEMENT_DELIVERY_LOCKS = _ScopedRunLocks()
 
 
 def _is_teamos(project_id: str) -> bool:
@@ -634,6 +655,44 @@ def _enabled_improvement_targets(*, auto_mode: str) -> list[dict[str, Any]]:
     return selected
 
 
+def _repo_improvement_lock_key(
+    *,
+    project_id: str,
+    target_id: str = "",
+    repo_path: str = "",
+    repo_url: str = "",
+    repo_locator: str = "",
+) -> str:
+    normalized_target_id = str(target_id or "").strip()
+    if normalized_target_id:
+        return f"target:{normalized_target_id}"
+    normalized_repo_path = str(repo_path or "").strip()
+    if normalized_repo_path:
+        return f"repo_path:{normalized_repo_path}"
+    normalized_repo_url = str(repo_url or "").strip()
+    if normalized_repo_url:
+        return f"repo_url:{normalized_repo_url}"
+    normalized_repo_locator = str(repo_locator or "").strip()
+    if normalized_repo_locator:
+        return f"repo_locator:{normalized_repo_locator}"
+    return f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+
+
+def _repo_improvement_delivery_lock_key(
+    *,
+    project_id: str,
+    target_id: str = "",
+    task_id: str = "",
+) -> str:
+    normalized_task_id = str(task_id or "").strip()
+    if normalized_task_id:
+        return f"task:{normalized_task_id}"
+    normalized_target_id = str(target_id or "").strip()
+    if normalized_target_id:
+        return f"target:{normalized_target_id}"
+    return f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+
+
 def _run_self_upgrade_iteration(
     *,
     actor: str,
@@ -648,7 +707,14 @@ def _run_self_upgrade_iteration(
     force: bool = False,
     trigger: str = "api",
 ) -> dict[str, Any]:
-    if not _REPO_IMPROVEMENT_LOCK.acquire(blocking=False):
+    lock_key = _repo_improvement_lock_key(
+        project_id=project_id,
+        target_id=target_id,
+        repo_path=repo_path,
+        repo_url=repo_url,
+        repo_locator=repo_locator,
+    )
+    if not _REPO_IMPROVEMENT_LOCKS.acquire(lock_key):
         payload = {
             "ok": True,
             "skipped": True,
@@ -656,6 +722,8 @@ def _run_self_upgrade_iteration(
             "project_id": project_id,
             "workstream_id": workstream_id,
             "trigger": trigger,
+            "target_id": str(target_id or "").strip(),
+            "lock_key": lock_key,
         }
         try:
             DB.add_event(
@@ -687,7 +755,7 @@ def _run_self_upgrade_iteration(
         _mark_panel_dirty(project_id)
         return out
     finally:
-        _REPO_IMPROVEMENT_LOCK.release()
+        _REPO_IMPROVEMENT_LOCKS.release(lock_key)
 
 
 def _run_self_upgrade_discussion_sync(*, actor: str) -> dict[str, Any]:
@@ -711,13 +779,20 @@ def _run_self_upgrade_delivery_iteration(
     max_tasks: Optional[int] = None,
 ) -> dict[str, Any]:
     current_project_id = str(project_id or "teamos").strip() or "teamos"
-    if not _REPO_IMPROVEMENT_DELIVERY_LOCK.acquire(blocking=False):
+    lock_key = _repo_improvement_delivery_lock_key(
+        project_id=current_project_id,
+        target_id=target_id,
+        task_id=task_id,
+    )
+    if not _REPO_IMPROVEMENT_DELIVERY_LOCKS.acquire(lock_key):
         payload = {
             "ok": True,
             "skipped": True,
             "reason": "repo_improvement_delivery_already_running",
             "project_id": current_project_id,
             "task_id": str(task_id or "").strip(),
+            "target_id": str(target_id or "").strip(),
+            "lock_key": lock_key,
         }
         try:
             DB.add_event(
@@ -768,7 +843,7 @@ def _run_self_upgrade_delivery_iteration(
             pass
         raise
     finally:
-        _REPO_IMPROVEMENT_DELIVERY_LOCK.release()
+        _REPO_IMPROVEMENT_DELIVERY_LOCKS.release(lock_key)
 
 
 def _panel_auto_sync_loop() -> None:
