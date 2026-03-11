@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import datetime as dt
 from unittest import mock
 
 
@@ -107,6 +108,57 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             spec = crewai_workflow_registry.workflow_for_lane("bug", project_id="demo")
 
         self.assertEqual(spec.dormant_after_zero_scans(), 1)
+
+    def test_project_workflow_override_can_tune_runtime_window_and_runtime_budget(self):
+        with mock.patch(
+            "app.crewai_workflow_registry.project_config_store.load_project_config",
+            return_value={
+                "repo_improvement": {
+                    "workflow_settings": {
+                        "bug-fix": {
+                            "active_window_start_hour": 9,
+                            "active_window_end_hour": 18,
+                            "max_continuous_runtime_minutes": 60,
+                        }
+                    }
+                }
+            },
+        ):
+            spec = crewai_workflow_registry.workflow_for_lane("bug", project_id="demo")
+
+        self.assertEqual(spec.active_window_start_hour(), 9)
+        self.assertEqual(spec.active_window_end_hour(), 18)
+        self.assertEqual(spec.max_continuous_runtime_minutes(), 60)
+
+    def test_workflow_policy_blocks_outside_active_window(self):
+        spec = crewai_workflow_registry.workflow_for_lane("bug")
+        spec = crewai_workflow_registry.replace(
+            spec,
+            default_active_window_start_hour=9,
+            default_active_window_end_hour=18,
+        )
+        policy = spec.evaluate_run_policy(
+            now=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+        )
+
+        self.assertFalse(policy.allowed)
+        self.assertEqual(policy.reason, "outside_active_window")
+
+    def test_workflow_policy_blocks_after_max_continuous_runtime(self):
+        spec = crewai_workflow_registry.workflow_for_lane("bug")
+        spec = crewai_workflow_registry.replace(
+            spec,
+            default_active_window_start_hour=9,
+            default_active_window_end_hour=18,
+            default_max_continuous_runtime_minutes=60,
+        )
+        policy = spec.evaluate_run_policy(
+            state={"active_since": "2026-03-11T09:00:00+08:00"},
+            now=dt.datetime(2026, 3, 11, 10, 5, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+        )
+
+        self.assertFalse(policy.allowed)
+        self.assertEqual(policy.reason, "max_continuous_runtime_exceeded")
 
 
 if __name__ == "__main__":

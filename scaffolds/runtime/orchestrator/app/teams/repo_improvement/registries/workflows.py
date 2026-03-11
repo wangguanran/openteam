@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 import os
+import datetime as _dt
 from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
 
 from app import crewai_role_registry
+from app import improvement_store
 from app import project_config_store
 from app import crewai_spec_loader
+
+
+def _workflow_now_local() -> _dt.datetime:
+    return _dt.datetime.now().astimezone()
+
+
+@dataclass(frozen=True)
+class WorkflowRunPolicy:
+    allowed: bool
+    reason: str = ""
+    active_window_start_hour: int = 0
+    active_window_end_hour: int = 24
+    max_continuous_runtime_minutes: int = 0
+    current_local_hour: int = 0
+    active_since: str = ""
+    now_iso: str = ""
 
 
 @dataclass(frozen=True)
@@ -26,6 +44,12 @@ class WorkflowSpec:
     default_version_bump: str = "none"
     max_candidates_env_var: str = ""
     default_max_candidates: int = 0
+    active_window_start_hour_env_var: str = ""
+    default_active_window_start_hour: int = 0
+    active_window_end_hour_env_var: str = ""
+    default_active_window_end_hour: int = 24
+    max_continuous_runtime_minutes_env_var: str = ""
+    default_max_continuous_runtime_minutes: int = 0
     dormant_after_zero_scans_env_var: str = ""
     default_dormant_after_zero_scans: int = 0
     cooldown_env_var: str = ""
@@ -55,6 +79,33 @@ class WorkflowSpec:
                 return max(0, int(self.default_max_candidates))
         return max(0, int(self.default_max_candidates))
 
+    def active_window_start_hour(self) -> int:
+        if self.active_window_start_hour_env_var:
+            raw = str(os.getenv(self.active_window_start_hour_env_var, str(self.default_active_window_start_hour)) or "").strip()
+            try:
+                return min(23, max(0, int(raw)))
+            except Exception:
+                return min(23, max(0, int(self.default_active_window_start_hour)))
+        return min(23, max(0, int(self.default_active_window_start_hour)))
+
+    def active_window_end_hour(self) -> int:
+        if self.active_window_end_hour_env_var:
+            raw = str(os.getenv(self.active_window_end_hour_env_var, str(self.default_active_window_end_hour)) or "").strip()
+            try:
+                return min(24, max(0, int(raw)))
+            except Exception:
+                return min(24, max(0, int(self.default_active_window_end_hour)))
+        return min(24, max(0, int(self.default_active_window_end_hour)))
+
+    def max_continuous_runtime_minutes(self) -> int:
+        if self.max_continuous_runtime_minutes_env_var:
+            raw = str(os.getenv(self.max_continuous_runtime_minutes_env_var, str(self.default_max_continuous_runtime_minutes)) or "").strip()
+            try:
+                return max(0, int(raw))
+            except Exception:
+                return max(0, int(self.default_max_continuous_runtime_minutes))
+        return max(0, int(self.default_max_continuous_runtime_minutes))
+
     def dormant_after_zero_scans(self) -> int:
         if self.dormant_after_zero_scans_env_var:
             raw = str(os.getenv(self.dormant_after_zero_scans_env_var, str(self.default_dormant_after_zero_scans)) or "").strip()
@@ -81,6 +132,87 @@ class WorkflowSpec:
             return normalized_status == "APPROVED"
         return normalized_status not in {str(item).strip().upper() for item in self.materialize_blocked_statuses}
 
+    def evaluate_run_policy(
+        self,
+        *,
+        state: dict[str, Any] | None = None,
+        force: bool = False,
+        now: _dt.datetime | None = None,
+    ) -> WorkflowRunPolicy:
+        current = (now or _workflow_now_local()).astimezone()
+        now_iso = current.replace(microsecond=0).isoformat()
+        if force:
+            return WorkflowRunPolicy(
+                allowed=True,
+                reason="force",
+                active_window_start_hour=self.active_window_start_hour(),
+                active_window_end_hour=self.active_window_end_hour(),
+                max_continuous_runtime_minutes=self.max_continuous_runtime_minutes(),
+                current_local_hour=int(current.hour),
+                active_since=now_iso,
+                now_iso=now_iso,
+            )
+
+        start_hour = self.active_window_start_hour()
+        end_hour = self.active_window_end_hour()
+        current_hour = int(current.hour)
+        if start_hour == end_hour:
+            in_window = True
+        elif start_hour < end_hour:
+            in_window = start_hour <= current_hour < end_hour
+        else:
+            in_window = current_hour >= start_hour or current_hour < end_hour
+        if not in_window:
+            return WorkflowRunPolicy(
+                allowed=False,
+                reason="outside_active_window",
+                active_window_start_hour=start_hour,
+                active_window_end_hour=end_hour,
+                max_continuous_runtime_minutes=self.max_continuous_runtime_minutes(),
+                current_local_hour=current_hour,
+                active_since="",
+                now_iso=now_iso,
+            )
+
+        state_doc = dict(state or {})
+        active_since = str(state_doc.get("active_since") or "").strip()
+        active_since_dt: _dt.datetime | None = None
+        if active_since:
+            try:
+                active_since_dt = _dt.datetime.fromisoformat(active_since.replace("Z", "+00:00")).astimezone()
+            except Exception:
+                active_since = ""
+                active_since_dt = None
+        if active_since_dt is None:
+            active_since_dt = current
+            active_since = now_iso
+
+        max_minutes = self.max_continuous_runtime_minutes()
+        if max_minutes > 0:
+            elapsed_minutes = max(0.0, (current - active_since_dt).total_seconds() / 60.0)
+            if elapsed_minutes >= float(max_minutes):
+                return WorkflowRunPolicy(
+                    allowed=False,
+                    reason="max_continuous_runtime_exceeded",
+                    active_window_start_hour=start_hour,
+                    active_window_end_hour=end_hour,
+                    max_continuous_runtime_minutes=max_minutes,
+                    current_local_hour=current_hour,
+                    active_since=active_since,
+                    now_iso=now_iso,
+                )
+
+        return WorkflowRunPolicy(
+            allowed=True,
+            reason="active",
+            active_window_start_hour=start_hour,
+            active_window_end_hour=end_hour,
+            max_continuous_runtime_minutes=max_minutes,
+            current_local_hour=current_hour,
+            active_since=active_since,
+            now_iso=now_iso,
+        )
+
 
 FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
     crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT: WorkflowSpec(
@@ -100,6 +232,9 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         default_version_bump="minor",
         max_candidates_env_var="TEAMOS_SELF_UPGRADE_FEATURE_MAX_CANDIDATES",
         default_max_candidates=5,
+        default_active_window_start_hour=0,
+        default_active_window_end_hour=24,
+        default_max_continuous_runtime_minutes=0,
         cooldown_env_var="TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS",
         default_cooldown_hours=1,
         baseline_action_default="feature_followup",
@@ -121,6 +256,9 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         default_version_bump="patch",
         max_candidates_env_var="TEAMOS_SELF_UPGRADE_BUG_MAX_CANDIDATES",
         default_max_candidates=2,
+        default_active_window_start_hour=0,
+        default_active_window_end_hour=24,
+        default_max_continuous_runtime_minutes=0,
         dormant_after_zero_scans_env_var="TEAMOS_SELF_UPGRADE_BUG_DORMANT_AFTER_ZERO_SCANS",
         default_dormant_after_zero_scans=3,
         default_cooldown_hours=0,
@@ -142,6 +280,9 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         materialize_requires_approval=True,
         default_version_bump="none",
         default_max_candidates=0,
+        default_active_window_start_hour=0,
+        default_active_window_end_hour=24,
+        default_max_continuous_runtime_minutes=0,
         cooldown_env_var="TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS",
         default_cooldown_hours=1,
         baseline_action_default="quality_improvement",
@@ -162,6 +303,9 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         materialize_blocked_statuses=("REJECTED", "HOLD", "MATERIALIZED"),
         default_version_bump="none",
         default_max_candidates=0,
+        default_active_window_start_hour=0,
+        default_active_window_end_hour=24,
+        default_max_continuous_runtime_minutes=0,
         cooldown_env_var="TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS",
         default_cooldown_hours=24,
         baseline_action_default="process_improvement",
@@ -190,6 +334,12 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
         default_version_bump=str(doc.get("default_version_bump") or "none").strip(),
         max_candidates_env_var=str(doc.get("max_candidates_env_var") or "").strip(),
         default_max_candidates=max(0, int(doc.get("default_max_candidates") or 0)),
+        active_window_start_hour_env_var=str(doc.get("active_window_start_hour_env_var") or "").strip(),
+        default_active_window_start_hour=min(23, max(0, int(doc.get("default_active_window_start_hour") or 0))),
+        active_window_end_hour_env_var=str(doc.get("active_window_end_hour_env_var") or "").strip(),
+        default_active_window_end_hour=min(24, max(0, int(doc.get("default_active_window_end_hour") or 24))),
+        max_continuous_runtime_minutes_env_var=str(doc.get("max_continuous_runtime_minutes_env_var") or "").strip(),
+        default_max_continuous_runtime_minutes=max(0, int(doc.get("default_max_continuous_runtime_minutes") or 0)),
         dormant_after_zero_scans_env_var=str(doc.get("dormant_after_zero_scans_env_var") or "").strip(),
         default_dormant_after_zero_scans=max(0, int(doc.get("default_dormant_after_zero_scans") or 0)),
         cooldown_env_var=str(doc.get("cooldown_env_var") or "").strip(),
@@ -238,12 +388,30 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
         if enabled:
             disabled_reason = ""
     max_candidates = int(spec.default_max_candidates or 0)
+    active_window_start_hour = int(spec.default_active_window_start_hour or 0)
+    active_window_end_hour = int(spec.default_active_window_end_hour or 24)
+    max_continuous_runtime_minutes = int(spec.default_max_continuous_runtime_minutes or 0)
     dormant_after_zero_scans = int(spec.default_dormant_after_zero_scans or 0)
     if "max_candidates" in override:
         try:
             max_candidates = max(0, int(override.get("max_candidates") or 0))
         except Exception:
             max_candidates = int(spec.default_max_candidates or 0)
+    if "active_window_start_hour" in override:
+        try:
+            active_window_start_hour = min(23, max(0, int(override.get("active_window_start_hour") or 0)))
+        except Exception:
+            active_window_start_hour = int(spec.default_active_window_start_hour or 0)
+    if "active_window_end_hour" in override:
+        try:
+            active_window_end_hour = min(24, max(0, int(override.get("active_window_end_hour") or 24)))
+        except Exception:
+            active_window_end_hour = int(spec.default_active_window_end_hour or 24)
+    if "max_continuous_runtime_minutes" in override:
+        try:
+            max_continuous_runtime_minutes = max(0, int(override.get("max_continuous_runtime_minutes") or 0))
+        except Exception:
+            max_continuous_runtime_minutes = int(spec.default_max_continuous_runtime_minutes or 0)
     if "dormant_after_zero_scans" in override:
         try:
             dormant_after_zero_scans = max(0, int(override.get("dormant_after_zero_scans") or 0))
@@ -264,6 +432,21 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
             max_candidates = max(0, int(override.get("max_candidates") or 0))
         except Exception:
             pass
+    if "active_window_start_hour" in override:
+        try:
+            active_window_start_hour = min(23, max(0, int(override.get("active_window_start_hour") or 0)))
+        except Exception:
+            pass
+    if "active_window_end_hour" in override:
+        try:
+            active_window_end_hour = min(24, max(0, int(override.get("active_window_end_hour") or 24)))
+        except Exception:
+            pass
+    if "max_continuous_runtime_minutes" in override:
+        try:
+            max_continuous_runtime_minutes = max(0, int(override.get("max_continuous_runtime_minutes") or 0))
+        except Exception:
+            pass
     if "dormant_after_zero_scans" in override:
         try:
             dormant_after_zero_scans = max(0, int(override.get("dormant_after_zero_scans") or 0))
@@ -275,7 +458,65 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
         enabled=enabled,
         disabled_reason=disabled_reason,
         default_max_candidates=max_candidates,
+        default_active_window_start_hour=active_window_start_hour,
+        default_active_window_end_hour=active_window_end_hour,
+        default_max_continuous_runtime_minutes=max_continuous_runtime_minutes,
         default_dormant_after_zero_scans=dormant_after_zero_scans,
+    )
+
+
+def _workflow_states(target_id: str) -> dict[str, Any]:
+    state = improvement_store.load_target_state(str(target_id or "").strip())
+    raw = state.get("workflow_states")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def workflow_runtime_state(target_id: str, workflow_id: str) -> dict[str, Any]:
+    state = _workflow_states(target_id)
+    workflow_state = state.get(str(workflow_id or "").strip())
+    return dict(workflow_state) if isinstance(workflow_state, dict) else {}
+
+
+def update_workflow_runtime_state(target_id: str, workflow_id: str, policy: WorkflowRunPolicy) -> dict[str, Any]:
+    target_key = str(target_id or "").strip()
+    workflow_key = str(workflow_id or "").strip()
+    state = improvement_store.load_target_state(target_key)
+    workflow_states = dict(state.get("workflow_states") or {}) if isinstance(state.get("workflow_states"), dict) else {}
+    current = dict(workflow_states.get(workflow_key) or {}) if isinstance(workflow_states.get(workflow_key), dict) else {}
+    active_since = str(policy.active_since or current.get("active_since") or "").strip()
+    if not policy.allowed and str(policy.reason or "") == "outside_active_window":
+        active_since = ""
+    current.update(
+        {
+            "status": "active" if policy.allowed else "paused",
+            "active_since": active_since,
+            "last_reason": str(policy.reason or ""),
+            "last_evaluated_at": str(policy.now_iso or ""),
+            "last_allowed_at": str(policy.now_iso or "") if policy.allowed else str(current.get("last_allowed_at") or ""),
+            "last_blocked_at": str(policy.now_iso or "") if not policy.allowed else str(current.get("last_blocked_at") or ""),
+            "active_window_start_hour": int(policy.active_window_start_hour),
+            "active_window_end_hour": int(policy.active_window_end_hour),
+            "max_continuous_runtime_minutes": int(policy.max_continuous_runtime_minutes),
+            "current_local_hour": int(policy.current_local_hour),
+        }
+    )
+    workflow_states[workflow_key] = current
+    state["workflow_states"] = workflow_states
+    improvement_store.save_target_state(target_key, state)
+    return current
+
+
+def evaluate_workflow_runtime_policy(
+    *,
+    workflow: WorkflowSpec,
+    target_id: str,
+    force: bool = False,
+    now: _dt.datetime | None = None,
+) -> WorkflowRunPolicy:
+    return workflow.evaluate_run_policy(
+        state=workflow_runtime_state(target_id, workflow.workflow_id),
+        force=force,
+        now=now,
     )
 
 

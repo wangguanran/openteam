@@ -174,7 +174,7 @@ def _agent_is_active(agent_state: Any) -> bool:
 
 
 def _looks_like_teamos_repo(root: Path) -> bool:
-    return (root / "AGENTS.md").exists() and (root / "scripts" / "pipelines").exists()
+    return (root / "scripts" / "pipelines").exists() and ((root / "teamos").exists() or (root / "TEAMOS.md").exists())
 
 
 def _find_team_os_repo_root() -> Optional[Path]:
@@ -1741,10 +1741,10 @@ def cmd_panel_open(args: argparse.Namespace) -> None:
 
 def cmd_self_improve(args: argparse.Namespace) -> None:
     """
-    Run one CrewAI self-upgrade iteration through the control-plane.
+    Run one CrewAI repo-improvement iteration through the control-plane.
     """
     if bool(getattr(args, "local", False)):
-        raise RuntimeError("Local self-improve pipeline has been removed. Use the runtime-managed self-upgrade flow instead.")
+        raise RuntimeError("Local repo-improvement pipeline has been removed. Use the runtime-managed repo-improvement flow instead.")
     base, prof = _base_url(args)
     repo_root = _find_team_os_repo_root()
     if not repo_root:
@@ -1757,7 +1757,7 @@ def cmd_self_improve(args: argparse.Namespace) -> None:
     payload = {
         "project_id": _default_project_id(prof, args),
         "workstream_id": str(getattr(args, "workstream", "") or "general").strip() or "general",
-        "objective": "CLI-triggered CrewAI self-upgrade",
+        "objective": "CLI-triggered CrewAI repo-improvement",
         "target_id": target_id or None,
         "repo_path": str(target_repo) if include_repo_path else "",
         "repo_url": repo_url or None,
@@ -2110,7 +2110,7 @@ def cmd_daemon_start(args: argparse.Namespace) -> None:
     """
     Legacy daemon mode has been removed.
     """
-    raise RuntimeError("Legacy self-improve daemon has been removed. Start team-os-runtime or run `teamos self-upgrade --force`.")
+    raise RuntimeError("Legacy repo-improvement daemon has been removed. Start team-os-runtime or run `teamos repo-improvement --force`.")
 
 
 def cmd_daemon_stop(args: argparse.Namespace) -> None:
@@ -3054,7 +3054,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ds.set_defaults(fn=cmd_daemon_start)
     dx = dm_sp.add_parser("stop", help="Daemon mode removed; kept only as compatibility stub")
     dx.set_defaults(fn=cmd_daemon_stop)
-    dy = dm_sp.add_parser("status", help="Show legacy daemon removal notice and current self-upgrade state")
+    dy = dm_sp.add_parser("status", help="Show legacy daemon removal notice and current repo-improvement state")
     dy.set_defaults(fn=cmd_daemon_status)
 
     def _configure_self_upgrade_parser(parser: argparse.ArgumentParser) -> None:
@@ -3069,13 +3069,24 @@ def main(argv: Optional[list[str]] = None) -> int:
         parser.add_argument("--repo-locator", default="", help="override GitHub repo locator owner/name")
         parser.set_defaults(fn=cmd_self_improve)
 
-    su = sp.add_parser("self-upgrade", help="Run CrewAI self-upgrade for the current or specified repository")
+    ri = sp.add_parser("repo-improvement", help="Run CrewAI repo-improvement for the current or specified repository")
+    _configure_self_upgrade_parser(ri)
+
+    su = sp.add_parser("self-upgrade", help="Compatibility alias for `repo-improvement`")
     _configure_self_upgrade_parser(su)
 
-    si = sp.add_parser("self-improve", help="Compatibility alias for `self-upgrade`")
+    si = sp.add_parser("self-improve", help="Compatibility alias for `repo-improvement`")
     _configure_self_upgrade_parser(si)
 
-    sup = sp.add_parser("self-upgrade-proposals", help="List self-upgrade feature/process proposals managed by the runtime")
+    rip = sp.add_parser("repo-improvement-proposals", help="List repo-improvement feature/process proposals managed by the runtime")
+    rip.add_argument("--target-id", default="", help="filter by improvement target id")
+    rip.add_argument("--project-id", default="", help="filter by project id")
+    rip.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
+    rip.add_argument("--status", default="", help="filter by status: PENDING_CONFIRMATION|APPROVED|COLLECTING|HOLD|REJECTED|MATERIALIZED")
+    rip.add_argument("--json", action="store_true", help="print raw JSON")
+    rip.set_defaults(fn=cmd_self_upgrade_proposals)
+
+    sup = sp.add_parser("self-upgrade-proposals", help="Compatibility alias for `repo-improvement-proposals`")
     sup.add_argument("--target-id", default="", help="filter by improvement target id")
     sup.add_argument("--project-id", default="", help="filter by project id")
     sup.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
@@ -3083,7 +3094,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sup.add_argument("--json", action="store_true", help="print raw JSON")
     sup.set_defaults(fn=cmd_self_upgrade_proposals)
 
-    sip = sp.add_parser("self-improve-proposals", help="Compatibility alias for `self-upgrade-proposals`")
+    sip = sp.add_parser("self-improve-proposals", help="Compatibility alias for `repo-improvement-proposals`")
     sip.add_argument("--target-id", default="", help="filter by improvement target id")
     sip.add_argument("--project-id", default="", help="filter by project id")
     sip.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
@@ -3091,8 +3102,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     sip.add_argument("--json", action="store_true", help="print raw JSON")
     sip.set_defaults(fn=cmd_self_upgrade_proposals)
 
-    sud = sp.add_parser("self-upgrade-decide", help="Approve, reject, or hold a self-upgrade proposal")
-    sud.add_argument("proposal_id", help="proposal id from `teamos self-upgrade-proposals`")
+    rid = sp.add_parser("repo-improvement-decide", help="Approve, reject, or hold a repo-improvement proposal")
+    rid.add_argument("proposal_id", help="proposal id from `teamos repo-improvement-proposals`")
+    rid.add_argument("action", choices=["approve", "reject", "hold"])
+    rid.add_argument("--title", default="", help="optional title override")
+    rid.add_argument("--summary", default="", help="optional summary override")
+    rid.add_argument("--version-bump", default="", help="optional version bump override: major|minor|patch|none")
+    rid.add_argument("--json", action="store_true", help="print raw JSON")
+    rid.set_defaults(fn=cmd_self_upgrade_decide)
+
+    sud = sp.add_parser("self-upgrade-decide", help="Compatibility alias for `repo-improvement-decide`")
+    sud.add_argument("proposal_id", help="proposal id from `teamos repo-improvement-proposals`")
     sud.add_argument("action", choices=["approve", "reject", "hold"])
     sud.add_argument("--title", default="", help="optional title override")
     sud.add_argument("--summary", default="", help="optional summary override")
@@ -3100,8 +3120,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     sud.add_argument("--json", action="store_true", help="print raw JSON")
     sud.set_defaults(fn=cmd_self_upgrade_decide)
 
-    sid = sp.add_parser("self-improve-decide", help="Compatibility alias for `self-upgrade-decide`")
-    sid.add_argument("proposal_id", help="proposal id from `teamos self-upgrade-proposals`")
+    sid = sp.add_parser("self-improve-decide", help="Compatibility alias for `repo-improvement-decide`")
+    sid.add_argument("proposal_id", help="proposal id from `teamos repo-improvement-proposals`")
     sid.add_argument("action", choices=["approve", "reject", "hold"])
     sid.add_argument("--title", default="", help="optional title override")
     sid.add_argument("--summary", default="", help="optional summary override")
@@ -3109,15 +3129,28 @@ def main(argv: Optional[list[str]] = None) -> int:
     sid.add_argument("--json", action="store_true", help="print raw JSON")
     sid.set_defaults(fn=cmd_self_upgrade_decide)
 
-    sus = sp.add_parser("self-upgrade-discussions-sync", help="Poll GitHub issue comments for feature proposals and let the discussion agent reply")
+    ris = sp.add_parser("repo-improvement-discussions-sync", help="Poll GitHub issue comments for feature proposals and let the discussion agent reply")
+    ris.add_argument("--json", action="store_true", help="print raw JSON")
+    ris.set_defaults(fn=cmd_self_upgrade_discussions_sync)
+
+    sus = sp.add_parser("self-upgrade-discussions-sync", help="Compatibility alias for `repo-improvement-discussions-sync`")
     sus.add_argument("--json", action="store_true", help="print raw JSON")
     sus.set_defaults(fn=cmd_self_upgrade_discussions_sync)
 
-    sis = sp.add_parser("self-improve-discussions-sync", help="Compatibility alias for `self-upgrade-discussions-sync`")
+    sis = sp.add_parser("self-improve-discussions-sync", help="Compatibility alias for `repo-improvement-discussions-sync`")
     sis.add_argument("--json", action="store_true", help="print raw JSON")
     sis.set_defaults(fn=cmd_self_upgrade_discussions_sync)
 
-    sudr = sp.add_parser("self-upgrade-delivery", help="Run the self-upgrade delivery executor for queued tasks")
+    ridr = sp.add_parser("repo-improvement-delivery", help="Run the repo-improvement delivery executor for queued tasks")
+    ridr.add_argument("--target-id", default="", help="limit to a specific improvement target")
+    ridr.add_argument("--task-id", default="", help="resume or force a specific task id")
+    ridr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
+    ridr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
+    ridr.add_argument("--max-tasks", type=int, default=1, help="max tasks to process in one sweep")
+    ridr.add_argument("--json", action="store_true", help="print raw JSON")
+    ridr.set_defaults(fn=cmd_self_upgrade_delivery)
+
+    sudr = sp.add_parser("self-upgrade-delivery", help="Compatibility alias for `repo-improvement-delivery`")
     sudr.add_argument("--target-id", default="", help="limit to a specific improvement target")
     sudr.add_argument("--task-id", default="", help="resume or force a specific task id")
     sudr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
@@ -3126,7 +3159,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sudr.add_argument("--json", action="store_true", help="print raw JSON")
     sudr.set_defaults(fn=cmd_self_upgrade_delivery)
 
-    sidr = sp.add_parser("self-improve-delivery", help="Compatibility alias for `self-upgrade-delivery`")
+    sidr = sp.add_parser("self-improve-delivery", help="Compatibility alias for `repo-improvement-delivery`")
     sidr.add_argument("--target-id", default="", help="limit to a specific improvement target")
     sidr.add_argument("--task-id", default="", help="resume or force a specific task id")
     sidr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
@@ -3135,13 +3168,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     sidr.add_argument("--json", action="store_true", help="print raw JSON")
     sidr.set_defaults(fn=cmd_self_upgrade_delivery)
 
-    sudt = sp.add_parser("self-upgrade-delivery-tasks", help="List self-upgrade delivery tasks and their execution state")
+    ridt = sp.add_parser("repo-improvement-delivery-tasks", help="List repo-improvement delivery tasks and their execution state")
+    ridt.add_argument("--target-id", default="", help="filter by improvement target id")
+    ridt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
+    ridt.add_argument("--json", action="store_true", help="print raw JSON")
+    ridt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
+
+    sudt = sp.add_parser("self-upgrade-delivery-tasks", help="Compatibility alias for `repo-improvement-delivery-tasks`")
     sudt.add_argument("--target-id", default="", help="filter by improvement target id")
     sudt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
     sudt.add_argument("--json", action="store_true", help="print raw JSON")
     sudt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
 
-    sidt = sp.add_parser("self-improve-delivery-tasks", help="Compatibility alias for `self-upgrade-delivery-tasks`")
+    sidt = sp.add_parser("self-improve-delivery-tasks", help="Compatibility alias for `repo-improvement-delivery-tasks`")
     sidt.add_argument("--target-id", default="", help="filter by improvement target id")
     sidt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
     sidt.add_argument("--json", action="store_true", help="print raw JSON")

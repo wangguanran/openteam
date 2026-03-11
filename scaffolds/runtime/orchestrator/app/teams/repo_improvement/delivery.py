@@ -20,6 +20,7 @@ from app import crewai_role_registry
 from app import crewai_runtime
 from app import crewai_self_upgrade as planning
 from app import crewai_task_registry
+from app import crewai_workflow_registry
 from app import improvement_store
 from app import workspace_store
 from app.crewai_task_models import (
@@ -2976,6 +2977,28 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
         if (not wanted_task_id) and str(task.get("status") or "") not in ("todo", "doing", "test", "release", "merge_conflict"):
             continue
         scanned += 1
+        task_project_id = str(task.get("project_id") or project_id or "teamos").strip() or "teamos"
+        task_target_id = str(task.get("target_id") or target_id or "").strip()
+        task_lane = str(((task.get("self_upgrade") or {}) if isinstance(task.get("self_upgrade"), dict) else {}).get("lane") or ((task.get("orchestration") or {}) if isinstance(task.get("orchestration"), dict) else {}).get("finding_lane") or "bug").strip().lower() or "bug"
+        workflow = crewai_workflow_registry.workflow_for_lane(task_lane, project_id=task_project_id)
+        runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+            workflow=workflow,
+            target_id=task_target_id,
+            force=force,
+        )
+        _ = crewai_workflow_registry.update_workflow_runtime_state(task_target_id, workflow.workflow_id, runtime_policy)
+        if not runtime_policy.allowed:
+            out.append(
+                {
+                    "ok": True,
+                    "task_id": str(task.get("task_id") or ""),
+                    "project_id": task_project_id,
+                    "skipped": True,
+                    "reason": runtime_policy.reason,
+                    "workflow_id": workflow.workflow_id,
+                }
+            )
+            continue
         ledger_path = Path(str(task.get("ledger_path") or "")).expanduser().resolve()
         lease = _claim_delivery_task_lease(db=db, actor=actor, task=task)
         if lease is None:

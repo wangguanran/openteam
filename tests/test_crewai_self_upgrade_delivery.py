@@ -1,4 +1,5 @@
 import copy
+import datetime as dt
 import os
 import sys
 import tempfile
@@ -1433,6 +1434,63 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 self.assertEqual(skipped[0]["task_id"], "TEAMOS-1001")
                 self.assertIsNotNone(db.get_task_lease(lease_key=crewai_self_upgrade_delivery._delivery_lease_key(project_id="teamos", task_id="TEAMOS-1001")))
                 self.assertIsNone(db.get_task_lease(lease_key=crewai_self_upgrade_delivery._delivery_lease_key(project_id="teamos", task_id="TEAMOS-1002")))
+
+    def test_run_delivery_sweep_skips_bug_task_outside_active_window(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            db_path = runtime_root / "state" / "runtime.db"
+            task_doc = _base_task_doc(repo_root=repo_root, task_id="TEAMOS-2001", status="todo")
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                    "RUNTIME_DB_PATH": str(db_path),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-2001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                db = RuntimeDB(str(db_path))
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery.crewai_workflow_registry.project_config_store.load_project_config",
+                    return_value={
+                        "repo_improvement": {
+                            "workflow_settings": {
+                                "bug-fix": {
+                                    "active_window_start_hour": 9,
+                                    "active_window_end_hour": 18,
+                                }
+                            }
+                        }
+                    },
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery.crewai_workflow_registry._workflow_now_local",
+                    return_value=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery.execute_task_delivery",
+                    side_effect=AssertionError("outside active window must not execute delivery"),
+                ):
+                    out = crewai_self_upgrade_delivery.run_delivery_sweep(
+                        db=db,
+                        actor="test-worker",
+                        project_id="teamos",
+                        dry_run=True,
+                        max_tasks=1,
+                    )
+
+                self.assertEqual(out["processed"], 0)
+                self.assertEqual(out["scanned"], 1)
+                self.assertEqual(out["tasks"][0]["reason"], "outside_active_window")
+                self.assertEqual(out["tasks"][0]["workflow_id"], "bug-fix")
 
 
 if __name__ == "__main__":

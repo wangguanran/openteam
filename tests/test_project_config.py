@@ -145,6 +145,63 @@ class TestProjectConfig(unittest.TestCase):
             out6 = json.loads(p6.stdout)
             self.assertTrue(out6.get("changed"))
 
+            p7 = self._run(
+                [
+                    "python3",
+                    str(script),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(ws),
+                    "--project",
+                    "demo",
+                    "set",
+                    "--key",
+                    "repo_improvement.workflow_settings.bug-fix.active_window_start_hour",
+                    "--value",
+                    "9",
+                ]
+            )
+            self.assertEqual(p7.returncode, 0, msg=p7.stderr)
+
+            p8 = self._run(
+                [
+                    "python3",
+                    str(script),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(ws),
+                    "--project",
+                    "demo",
+                    "set",
+                    "--key",
+                    "repo_improvement.workflow_settings.bug-fix.active_window_end_hour",
+                    "--value",
+                    "18",
+                ]
+            )
+            self.assertEqual(p8.returncode, 0, msg=p8.stderr)
+
+            p9 = self._run(
+                [
+                    "python3",
+                    str(script),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(ws),
+                    "--project",
+                    "demo",
+                    "set",
+                    "--key",
+                    "repo_improvement.workflow_settings.bug-fix.max_continuous_runtime_minutes",
+                    "--value",
+                    "60",
+                ]
+            )
+            self.assertEqual(p9.returncode, 0, msg=p9.stderr)
+
             pv = self._run(
                 [
                     "python3",

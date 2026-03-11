@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+import datetime as dt
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest import mock
@@ -596,6 +597,133 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertEqual(len(skipped), 1)
             self.assertEqual(skipped[0]["payload"]["workflow_id"], "feature-improvement")
             self.assertEqual(skipped[0]["payload"]["reason"], "disabled_for_repo")
+
+    def test_planning_role_ids_only_include_bug_chain_when_bug_workflow_is_exclusive(self):
+        with mock.patch(
+            "app.crewai_self_upgrade.crewai_workflow_registry.project_config_store.load_project_config",
+            return_value={
+                "repo_improvement": {
+                    "workflow_settings": {
+                        "feature-improvement": {"enabled": False},
+                        "quality-improvement": {"enabled": False},
+                        "process-improvement": {"enabled": False},
+                        "bug-fix": {"enabled": True},
+                    }
+                }
+            },
+        ):
+            roles = crewai_self_upgrade._planning_role_ids(project_id="teamos")
+
+        self.assertEqual(
+            roles,
+            {
+                crewai_self_upgrade.ROLE_TEST_MANAGER,
+                crewai_self_upgrade.ROLE_ISSUE_DRAFTER,
+                crewai_self_upgrade.ROLE_PLAN_REVIEW_AGENT,
+                crewai_self_upgrade.ROLE_PLAN_QA_AGENT,
+            },
+        )
+
+    def test_run_self_upgrade_skips_when_all_workflows_disabled(self):
+        db = _FakeDB()
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+            spec = self._make_self_upgrade_spec(repo, force=True, dry_run=True)
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                with mock.patch(
+                    "app.crewai_self_upgrade.crewai_workflow_registry.project_config_store.load_project_config",
+                    return_value={
+                        "repo_improvement": {
+                            "workflow_settings": {
+                                "feature-improvement": {"enabled": False},
+                                "quality-improvement": {"enabled": False},
+                                "process-improvement": {"enabled": False},
+                                "bug-fix": {"enabled": False},
+                            }
+                        }
+                    },
+                ), mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    side_effect=AssertionError("disabled workflows should skip before planning crew kickoff"),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-no-workflows",
+                        crewai_info={"importable": True},
+                    )
+
+            self.assertTrue(out["ok"])
+            self.assertTrue(out["skipped"])
+            self.assertEqual(out["reason"], "no_enabled_workflows")
+            skipped = [event for event in db.events if event.get("event_type") == "SELF_UPGRADE_SKIPPED"]
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(skipped[0]["payload"]["reason"], "no_enabled_workflows")
+
+    def test_run_repo_improvement_skips_bug_workflow_outside_active_window(self):
+        db = _FakeDB()
+        plan = self._bug_plan(title="Fix runtime bug outside window")
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+            spec = self._make_self_upgrade_spec(repo, force=False, dry_run=True)
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                with mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    return_value=(plan, {"task_outputs": [], "token_usage": {}}),
+                ), mock.patch(
+                    "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                    return_value={"ok": True, "dry_run": True, "stats": {"updated": 0}},
+                ), mock.patch(
+                    "app.crewai_self_upgrade.crewai_workflow_registry.project_config_store.load_project_config",
+                    return_value={
+                        "repo_improvement": {
+                            "workflow_settings": {
+                                "bug-fix": {
+                                    "active_window_start_hour": 9,
+                                    "active_window_end_hour": 18,
+                                }
+                            }
+                        }
+                    },
+                ), mock.patch(
+                    "app.crewai_self_upgrade.crewai_workflow_registry._workflow_now_local",
+                    return_value=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_issue_record",
+                    side_effect=AssertionError("outside active window must not materialize issues"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_task_record",
+                    side_effect=AssertionError("outside active window must not materialize tasks"),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-bug-window-closed",
+                        crewai_info={"importable": True},
+                    )
+
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["records"], [])
+            skipped = [event for event in db.events if event.get("event_type") == "SELF_UPGRADE_FINDING_SKIPPED"]
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(skipped[0]["payload"]["workflow_id"], "bug-fix")
+            self.assertEqual(skipped[0]["payload"]["reason"], "outside_active_window")
 
     def test_reconcile_feature_discussions_approves_from_issue_comment(self):
         db = _FakeDB()

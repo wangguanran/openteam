@@ -1568,90 +1568,117 @@ def kickoff_upgrade_plan(
     feature_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("feature", project_id=project_id) or int(max_findings)))
     bug_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("bug", project_id=project_id) or int(max_findings)))
     quality_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("quality", project_id=project_id) or int(max_findings)))
-    product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
-    test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
-    test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, llm=llm, verbose=verbose)
+    enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
+    feature_enabled = crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT in enabled_workflows
+    bug_enabled = crewai_role_registry.WORKFLOW_BUG_FIX in enabled_workflows
+    quality_enabled = crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT in enabled_workflows
+    process_enabled = crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT in enabled_workflows
+
     issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, llm=llm, verbose=verbose)
     review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, llm=llm, verbose=verbose)
     qa_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, llm=llm, verbose=verbose)
-    process_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, llm=llm, verbose=verbose)
-    code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, llm=llm, verbose=verbose)
+    enabled_agents: list[Any] = [issue_drafter, review_agent, qa_agent]
+    enabled_scan_tasks: list[Any] = []
 
-    feature_task = Task(
-        name="product_feature_scan",
-        description=(
-            "Analyze the repository context as a product manager.\n"
-            f"Return at most {int(feature_scan_limit)} feature ideas or product optimizations.\n"
-            "Mark changes that should be treated as FEATURE and note whether they imply a major or minor version bump.\n"
-            "Use only the supplied context.\n\n"
-            f"Repository context:\n{repo_blob}"
-        ),
-        expected_output="A concise shortlist of feature candidates with evidence and release impact.",
-        agent=product_manager,
-        markdown=True,
-    )
-    bug_task = Task(
-        name="qa_bug_scan",
-        description=(
-            "Analyze the repository context as a test manager.\n"
-            f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
-            "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
-            "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
-            "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
-            "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
-            + (
-                "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
-                if bug_scan_dormant
-                else ""
+    if feature_enabled:
+        product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
+        enabled_agents.append(product_manager)
+        enabled_scan_tasks.append(
+            Task(
+                name="product_feature_scan",
+                description=(
+                    "Analyze the repository context as a product manager.\n"
+                    f"Return at most {int(feature_scan_limit)} feature ideas or product optimizations.\n"
+                    "Mark changes that should be treated as FEATURE and note whether they imply a major or minor version bump.\n"
+                    "Use only the supplied context.\n\n"
+                    f"Repository context:\n{repo_blob}"
+                ),
+                expected_output="A concise shortlist of feature candidates with evidence and release impact.",
+                agent=product_manager,
+                markdown=True,
             )
-            + "Use only the supplied context.\n\n"
-            + f"Repository context:\n{repo_blob}"
-        ),
-        expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
-        agent=test_manager,
-        markdown=True,
-    )
-    test_gap_task = Task(
-        name="qa_test_gap_scan",
-        description=(
-            "Analyze the repository context as a dedicated test-case gap agent.\n"
-            f"Return at most {int(quality_scan_limit)} high-value black-box or white-box test gap candidates.\n"
-            "Only propose a candidate when there is a clearly identifiable untested path, missing regression protection, or behavior/branch coverage gap worth tracking as an issue.\n"
-            "For each candidate, distinguish test_gap_type as blackbox or whitebox, identify target_paths and missing_paths, suggest repo-relative suggested_test_files, and explain why the path is not covered today.\n"
-            "Use lane=quality and kind=CODE_QUALITY for these findings.\n"
-            "Use only the supplied context.\n\n"
-            f"Repository context:\n{repo_blob}"
-        ),
-        expected_output="A shortlist of blackbox/whitebox test gap findings with uncovered paths and suggested test files.",
-        agent=test_case_gap_agent,
-        markdown=True,
-    )
-    process_task = Task(
-        name="process_optimization_scan",
-        description=(
-            "Review the repository context and recent self-upgrade execution telemetry.\n"
-            "Identify process improvements only if they are grounded in recent failures, delays, or workflow friction.\n"
-            "Prefer one high-value process improvement over many weak ones."
-        ),
-        expected_output="A short list of process improvements grounded in run history and telemetry.",
-        agent=process_analyst,
-        markdown=True,
-    )
-    quality_task = Task(
-        name="code_quality_scan",
-        description=(
-            "Review the repository context as a code quality analyst.\n"
-            f"Return at most {int(quality_scan_limit)} code quality candidates.\n"
-            "Focus on duplicated logic, unnecessary files, dead/stale code candidates, oversized modules, and reuse/refactor opportunities.\n"
-            "Do not spend candidates on pure test-gap discovery; that is handled by the dedicated test-case gap scan.\n"
-            "Only propose work when the quality gain is concrete and the change can be broken into small, scoped items.\n"
-            "Use only the supplied context.\n\n"
-            f"Repository context:\n{repo_blob}"
-        ),
-        expected_output="A shortlist of code quality findings with evidence, cleanup value, and safe refactor boundaries.",
-        agent=code_quality_analyst,
-        markdown=True,
-    )
+        )
+    if bug_enabled:
+        test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
+        enabled_agents.append(test_manager)
+        enabled_scan_tasks.append(
+            Task(
+                name="qa_bug_scan",
+                description=(
+                    "Analyze the repository context as a test manager.\n"
+                    f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
+                    "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
+                    "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
+                    "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
+                    "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
+                    + (
+                        "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
+                        if bug_scan_dormant
+                        else ""
+                    )
+                    + "Use only the supplied context.\n\n"
+                    + f"Repository context:\n{repo_blob}"
+                ),
+                expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
+                agent=test_manager,
+                markdown=True,
+            )
+        )
+    if quality_enabled:
+        test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, llm=llm, verbose=verbose)
+        code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, llm=llm, verbose=verbose)
+        enabled_agents.extend([test_case_gap_agent, code_quality_analyst])
+        enabled_scan_tasks.extend(
+            [
+                Task(
+                    name="qa_test_gap_scan",
+                    description=(
+                        "Analyze the repository context as a dedicated test-case gap agent.\n"
+                        f"Return at most {int(quality_scan_limit)} high-value black-box or white-box test gap candidates.\n"
+                        "Only propose a candidate when there is a clearly identifiable untested path, missing regression protection, or behavior/branch coverage gap worth tracking as an issue.\n"
+                        "For each candidate, distinguish test_gap_type as blackbox or whitebox, identify target_paths and missing_paths, suggest repo-relative suggested_test_files, and explain why the path is not covered today.\n"
+                        "Use lane=quality and kind=CODE_QUALITY for these findings.\n"
+                        "Use only the supplied context.\n\n"
+                        f"Repository context:\n{repo_blob}"
+                    ),
+                    expected_output="A shortlist of blackbox/whitebox test gap findings with uncovered paths and suggested test files.",
+                    agent=test_case_gap_agent,
+                    markdown=True,
+                ),
+                Task(
+                    name="code_quality_scan",
+                    description=(
+                        "Review the repository context as a code quality analyst.\n"
+                        f"Return at most {int(quality_scan_limit)} code quality candidates.\n"
+                        "Focus on duplicated logic, unnecessary files, dead/stale code candidates, oversized modules, and reuse/refactor opportunities.\n"
+                        "Do not spend candidates on pure test-gap discovery; that is handled by the dedicated test-case gap scan.\n"
+                        "Only propose work when the quality gain is concrete and the change can be broken into small, scoped items.\n"
+                        "Use only the supplied context.\n\n"
+                        f"Repository context:\n{repo_blob}"
+                    ),
+                    expected_output="A shortlist of code quality findings with evidence, cleanup value, and safe refactor boundaries.",
+                    agent=code_quality_analyst,
+                    markdown=True,
+                ),
+            ]
+        )
+    if process_enabled:
+        process_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, llm=llm, verbose=verbose)
+        enabled_agents.append(process_analyst)
+        enabled_scan_tasks.append(
+            Task(
+                name="process_optimization_scan",
+                description=(
+                    "Review the repository context and recent self-upgrade execution telemetry.\n"
+                    "Identify process improvements only if they are grounded in recent failures, delays, or workflow friction.\n"
+                    "Prefer one high-value process improvement over many weak ones."
+                ),
+                expected_output="A short list of process improvements grounded in run history and telemetry.",
+                agent=process_analyst,
+                markdown=True,
+            )
+        )
+
     plan_task = Task(
         name="draft_execution_backlog",
         description=(
@@ -1679,7 +1706,7 @@ def kickoff_upgrade_plan(
         ),
         expected_output="A structured JSON upgrade plan.",
         agent=issue_drafter,
-        context=[feature_task, bug_task, test_gap_task, quality_task, process_task],
+        context=enabled_scan_tasks,
         output_json=UpgradePlan,
     )
     review_task = Task(
@@ -1695,7 +1722,7 @@ def kickoff_upgrade_plan(
         ),
         expected_output="A validated structured JSON upgrade plan ready for issue/task recording.",
         agent=review_agent,
-        context=[feature_task, bug_task, test_gap_task, quality_task, process_task, plan_task],
+        context=[*enabled_scan_tasks, plan_task],
         output_json=UpgradePlan,
     )
     qa_task = Task(
@@ -1710,13 +1737,13 @@ def kickoff_upgrade_plan(
         ),
         expected_output="A final structured JSON upgrade plan ready for runtime materialization.",
         agent=qa_agent,
-        context=[feature_task, bug_task, test_gap_task, quality_task, process_task, plan_task, review_task],
+        context=[*enabled_scan_tasks, plan_task, review_task],
         output_json=UpgradePlan,
     )
 
     crew = Crew(
-        agents=[product_manager, test_manager, test_case_gap_agent, issue_drafter, review_agent, qa_agent, process_analyst, code_quality_analyst],
-        tasks=[feature_task, bug_task, test_gap_task, quality_task, process_task, plan_task, review_task, qa_task],
+        agents=enabled_agents,
+        tasks=[*enabled_scan_tasks, plan_task, review_task, qa_task],
         process=Process.sequential,
         verbose=verbose,
     )
@@ -2673,12 +2700,39 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
 
 def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discussion_loop", verbose: bool = False) -> dict[str, Any]:
     proposals = [p for p in list_proposals() if str(p.get("lane") or "").strip().lower() in ("feature", "quality")]
-    stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0}
+    stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0, "skipped_runtime": 0}
     for proposal in proposals:
         lane = str(proposal.get("lane") or "").strip().lower() or "feature"
-        workflow = crewai_workflow_registry.workflow_for_lane(lane, project_id=str(proposal.get("project_id") or "teamos"))
+        project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
+        target_id = str(proposal.get("target_id") or "").strip()
+        workflow = crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id)
         if not workflow.enabled:
             stats["skipped_disabled"] += 1
+            continue
+        runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+            workflow=workflow,
+            target_id=target_id,
+            force=False,
+        )
+        _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
+        if not runtime_policy.allowed:
+            stats["skipped_runtime"] += 1
+            if db is not None:
+                try:
+                    db.add_event(
+                        event_type="SELF_UPGRADE_WORKFLOW_SKIPPED",
+                        actor=actor,
+                        project_id=project_id,
+                        workstream_id=str(proposal.get("workstream_id") or "general").strip() or "general",
+                        payload={
+                            "target_id": target_id,
+                            "workflow_id": workflow.workflow_id,
+                            "lane": lane,
+                            "reason": runtime_policy.reason,
+                        },
+                    )
+                except Exception:
+                    pass
             continue
         status = str(proposal.get("status") or "").strip().upper()
         if status in ("REJECTED", "MATERIALIZED"):
@@ -3581,10 +3635,51 @@ def _sync_panel(*, db, project_id: str) -> dict[str, Any]:
         return {"ok": False, "error": str(e)[:500], "project_id": project_id}
 
 
-def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str) -> dict[str, str]:
+def _enabled_planning_workflow_ids(*, project_id: str) -> set[str]:
+    enabled: set[str] = set()
+    for workflow_id in (
+        crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
+        crewai_role_registry.WORKFLOW_BUG_FIX,
+        crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
+        crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
+    ):
+        try:
+            spec = crewai_workflow_registry.workflow_spec(workflow_id, project_id=project_id)
+        except Exception:
+            continue
+        if bool(spec.enabled):
+            enabled.add(spec.workflow_id)
+    return enabled
+
+
+def _planning_role_ids(*, project_id: str) -> set[str]:
+    enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
+    roles = {
+        ROLE_ISSUE_DRAFTER,
+        ROLE_PLAN_REVIEW_AGENT,
+        ROLE_PLAN_QA_AGENT,
+    }
+    if crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT in enabled_workflows:
+        roles.update({ROLE_PRODUCT_MANAGER, ROLE_MILESTONE_MANAGER})
+    if crewai_role_registry.WORKFLOW_BUG_FIX in enabled_workflows:
+        roles.add(ROLE_TEST_MANAGER)
+    if crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT in enabled_workflows:
+        roles.update({ROLE_TEST_CASE_GAP_AGENT, ROLE_CODE_QUALITY_ANALYST})
+    if crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT in enabled_workflows:
+        roles.add(ROLE_PROCESS_OPTIMIZATION_ANALYST)
+    return roles
+
+
+def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str, role_filter: set[str] | None = None) -> dict[str, str]:
+    blueprint = crewai_role_registry.planning_team_blueprint()
+    if role_filter:
+        blueprint = crewai_role_registry.TeamBlueprint(
+            team_id=blueprint.team_id,
+            members=tuple(member for member in blueprint.members if member.role_id in role_filter),
+        )
     return crewai_role_registry.register_team_blueprint(
         db=db,
-        blueprint=crewai_role_registry.planning_team_blueprint(),
+        blueprint=blueprint,
         project_id=project_id,
         workstream_id=workstream_id,
         task_id=task_id,
@@ -3696,6 +3791,40 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     trigger = str(getattr(spec, "trigger", "") or "manual").strip() or "manual"
     max_findings = max(1, min(int(os.getenv("TEAMOS_SELF_UPGRADE_MAX_FINDINGS", "3") or "3"), 10))
     run_started_at = _utc_now_iso()
+    enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
+
+    if not enabled_workflows:
+        payload = {
+            "ok": True,
+            "skipped": True,
+            "reason": "no_enabled_workflows",
+            "run_id": run_id,
+            "target_id": target_id,
+            "repo_root": str(repo_root),
+            "repo_locator": repo_locator,
+            "project_id": project_id,
+            "trigger": trigger,
+            "crewai": crewai_info,
+        }
+        _merge_state_last_run(
+            target_id,
+            {
+                "ts": _utc_now_iso(),
+                "target_id": target_id,
+                "repo_root": str(repo_root),
+                "repo_locator": repo_locator,
+                "status": "SKIPPED",
+                "reason": "no_enabled_workflows",
+            },
+        )
+        db.add_event(
+            event_type="SELF_UPGRADE_SKIPPED",
+            actor=actor,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            payload=payload,
+        )
+        return payload
 
     should_skip, skip_reason = _should_skip(target_id=target_id, repo_root=repo_root, force=force)
     if should_skip:
@@ -3724,7 +3853,13 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         )
         return payload
 
-    agent_ids = _register_agents(db=db, project_id=project_id, workstream_id=workstream_id, task_id=str(getattr(spec, "task_id", "") or ""))
+    agent_ids = _register_agents(
+        db=db,
+        project_id=project_id,
+        workstream_id=workstream_id,
+        task_id=str(getattr(spec, "task_id", "") or ""),
+        role_filter=_planning_role_ids(project_id=project_id),
+    )
     db.add_event(
         event_type="SELF_UPGRADE_STARTED",
         actor=actor,
@@ -3835,6 +3970,27 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
                     "workflow_id": workflow.workflow_id,
                     "title": finding.title,
                     "reason": workflow.disabled_reason or "workflow_disabled",
+                },
+            )
+            continue
+        runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+            workflow=workflow,
+            target_id=target_id,
+            force=force,
+        )
+        _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
+        if not runtime_policy.allowed:
+            db.add_event(
+                event_type="SELF_UPGRADE_FINDING_SKIPPED",
+                actor=actor,
+                project_id=project_id,
+                workstream_id=finding.workstream_id or workstream_id,
+                payload={
+                    "run_id": run_id,
+                    "lane": finding.lane,
+                    "workflow_id": workflow.workflow_id,
+                    "title": finding.title,
+                    "reason": runtime_policy.reason,
                 },
             )
             continue

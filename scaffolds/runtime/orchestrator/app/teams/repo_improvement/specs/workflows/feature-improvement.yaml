@@ -9,6 +9,9 @@ materialize_requires_approval: true
 default_version_bump: minor
 max_candidates_env_var: TEAMOS_SELF_UPGRADE_FEATURE_MAX_CANDIDATES
 default_max_candidates: 5
+default_active_window_start_hour: 0
+default_active_window_end_hour: 24
+default_max_continuous_runtime_minutes: 0
 cooldown_env_var: TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS
 default_cooldown_hours: 1
 baseline_action_default: feature_followup

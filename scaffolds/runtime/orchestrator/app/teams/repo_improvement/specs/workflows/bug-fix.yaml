@@ -9,6 +9,9 @@ materialize_requires_approval: false
 default_version_bump: patch
 max_candidates_env_var: TEAMOS_SELF_UPGRADE_BUG_MAX_CANDIDATES
 default_max_candidates: 2
+default_active_window_start_hour: 0
+default_active_window_end_hour: 24
+default_max_continuous_runtime_minutes: 0
 dormant_after_zero_scans_env_var: TEAMOS_SELF_UPGRADE_BUG_DORMANT_AFTER_ZERO_SCANS
 default_dormant_after_zero_scans: 3
 default_cooldown_hours: 0

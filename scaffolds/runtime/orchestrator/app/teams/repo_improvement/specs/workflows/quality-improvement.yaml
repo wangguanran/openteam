@@ -7,6 +7,9 @@ task_source: proposal
 requires_user_confirmation: true
 materialize_requires_approval: true
 default_version_bump: none
+default_active_window_start_hour: 0
+default_active_window_end_hour: 24
+default_max_continuous_runtime_minutes: 0
 cooldown_env_var: TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS
 default_cooldown_hours: 1
 baseline_action_default: quality_improvement
