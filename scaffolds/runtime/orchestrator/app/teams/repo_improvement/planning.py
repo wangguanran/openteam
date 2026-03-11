@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import configparser
 from pathlib import Path
 from typing import Any, Optional
@@ -583,6 +584,302 @@ def _sample_files(root: Path, pattern: str, *, limit: int = 20) -> list[str]:
     return out
 
 
+def _git_ls_files(root: Path, *, limit: int = 2000) -> list[str]:
+    try:
+        p = subprocess.run(
+            ["git", "-C", str(root), "ls-files"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except Exception:
+        return []
+    if p.returncode != 0:
+        return []
+    out: list[str] = []
+    for raw in str(p.stdout or "").splitlines():
+        rel = str(raw or "").strip().replace("\\", "/")
+        if not rel:
+            continue
+        out.append(rel)
+        if len(out) >= limit:
+            break
+    return out
+
+
+_INSPECTION_TEXT_EXTENSIONS = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".rb",
+    ".php",
+    ".sh",
+    ".md",
+    ".txt",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".ini",
+    ".cfg",
+}
+_INSPECTION_PRIORITY_NAMES = (
+    "readme.md",
+    "pyproject.toml",
+    "requirements.txt",
+    "package.json",
+    "makefile",
+    "dockerfile",
+    "run_workflow.py",
+    "run_crewai.py",
+    "src/__main__.py",
+    "src/main.py",
+    "main.py",
+    "app.py",
+)
+
+
+def _classify_repo_path(rel: str) -> str:
+    path = str(rel or "").strip().replace("\\", "/").lower()
+    if not path:
+        return "other"
+    if path.startswith(".github/workflows/"):
+        return "workflow"
+    if path.startswith("tests/") or "/tests/" in path or path.startswith("test_") or "/test_" in path:
+        return "test"
+    if path.startswith("docs/") or path.startswith("readme"):
+        return "docs"
+    if path.startswith("scripts/") or path.endswith(".sh"):
+        return "script"
+    if any(path.endswith(suffix) for suffix in (".toml", ".json", ".yaml", ".yml", ".ini", ".cfg")):
+        return "config"
+    if any(path.endswith(suffix) for suffix in _SOURCE_EXTENSIONS):
+        return "source"
+    return "other"
+
+
+def _discover_test_command_candidates(root: Path, *, tracked_files: list[str]) -> list[str]:
+    candidates: list[str] = []
+    tracked = {str(x).strip() for x in (tracked_files or []) if str(x).strip()}
+
+    if "Makefile" in tracked:
+        makefile_text = _read_text(root / "Makefile", max_chars=12000)
+        if re.search(r"(?m)^test\s*:", makefile_text):
+            candidates.append("make test")
+        if re.search(r"(?m)^check\s*:", makefile_text):
+            candidates.append("make check")
+
+    if "package.json" in tracked:
+        try:
+            package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+        except Exception:
+            package = {}
+        scripts = package.get("scripts") if isinstance(package, dict) else {}
+        if isinstance(scripts, dict):
+            if str(scripts.get("test") or "").strip():
+                candidates.append("npm test")
+            if str(scripts.get("lint") or "").strip():
+                candidates.append("npm run lint")
+
+    if "pyproject.toml" in tracked or "requirements.txt" in tracked or any(_classify_repo_path(path) == "test" for path in tracked):
+        candidates.append("python -m unittest")
+        candidates.append("pytest -q")
+
+    if "go.mod" in tracked:
+        candidates.append("go test ./...")
+    if "Cargo.toml" in tracked:
+        candidates.append("cargo test")
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        cmd = str(item or "").strip()
+        if not cmd or cmd in seen:
+            continue
+        out.append(cmd)
+        seen.add(cmd)
+    return out[:12]
+
+
+def _select_baseline_commands(*, candidates: list[str]) -> list[str]:
+    priority = {
+        "make test": 0,
+        "make check": 1,
+        "python -m unittest": 2,
+        "pytest -q": 3,
+        "npm test": 4,
+        "npm run lint": 5,
+        "go test ./...": 6,
+        "cargo test": 7,
+    }
+    selected: list[str] = []
+    seen_families: set[str] = set()
+    for cmd in sorted(
+        (str(item or "").strip() for item in (candidates or [])),
+        key=lambda item: (priority.get(item, 999), item),
+    ):
+        if not cmd:
+            continue
+        family = cmd.split(" ", 1)[0]
+        if family in seen_families:
+            continue
+        selected.append(cmd)
+        seen_families.add(family)
+        if len(selected) >= 2:
+            break
+    return selected
+
+
+def _tail_text(value: str, *, max_chars: int = 1600) -> str:
+    text = str(value or "")
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def _run_repository_baseline_checks(root: Path, *, command_candidates: list[str]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for cmd in _select_baseline_commands(candidates=command_candidates):
+        started = time.time()
+        try:
+            proc = subprocess.run(
+                ["sh", "-lc", cmd],
+                cwd=str(root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            status = "passed" if int(proc.returncode) == 0 else "failed"
+            out.append(
+                {
+                    "command": cmd,
+                    "status": status,
+                    "returncode": int(proc.returncode),
+                    "duration_sec": round(max(0.0, time.time() - started), 3),
+                    "stdout_tail": _tail_text(proc.stdout),
+                    "stderr_tail": _tail_text(proc.stderr),
+                }
+            )
+        except subprocess.TimeoutExpired as exc:
+            out.append(
+                {
+                    "command": cmd,
+                    "status": "timeout",
+                    "returncode": None,
+                    "duration_sec": round(max(0.0, time.time() - started), 3),
+                    "stdout_tail": _tail_text(exc.stdout or ""),
+                    "stderr_tail": _tail_text(exc.stderr or ""),
+                }
+            )
+        except Exception as exc:
+            out.append(
+                {
+                    "command": cmd,
+                    "status": "error",
+                    "returncode": None,
+                    "duration_sec": round(max(0.0, time.time() - started), 3),
+                    "stdout_tail": "",
+                    "stderr_tail": str(exc)[:500],
+                }
+            )
+    return out
+
+
+def _focus_file_candidates(tracked_files: list[str]) -> list[str]:
+    tracked = [str(x).strip() for x in (tracked_files or []) if str(x).strip()]
+    lower_map = {path.lower(): path for path in tracked}
+    out: list[str] = []
+
+    def _add(path: str) -> None:
+        normalized = lower_map.get(str(path or "").lower())
+        if normalized and normalized not in out:
+            out.append(normalized)
+
+    for name in _INSPECTION_PRIORITY_NAMES:
+        _add(name)
+    for path in tracked:
+        rel = str(path).replace("\\", "/")
+        rel_lower = rel.lower()
+        if rel_lower.startswith(".github/workflows/"):
+            _add(rel)
+        if rel_lower.startswith("tests/") or rel_lower.startswith("src/"):
+            _add(rel)
+        if len(out) >= 24:
+            break
+    return out[:24]
+
+
+def _focus_file_excerpts(root: Path, *, tracked_files: list[str]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for rel in _focus_file_candidates(tracked_files):
+        path = root / rel
+        if path.suffix.lower() not in _INSPECTION_TEXT_EXTENSIONS and path.name.lower() not in ("makefile", "dockerfile"):
+            continue
+        excerpt = _read_text(path, max_chars=1600)
+        if not excerpt:
+            continue
+        out.append(
+            {
+                "path": rel,
+                "bytes": int(path.stat().st_size) if path.exists() else 0,
+                "excerpt": excerpt,
+            }
+        )
+        if len(out) >= 16:
+            break
+    return out
+
+
+def _repository_inspection(root: Path) -> dict[str, Any]:
+    tracked_files = _git_ls_files(root)
+    test_command_candidates = _discover_test_command_candidates(root, tracked_files=tracked_files)
+    category_counts = {
+        "source": 0,
+        "test": 0,
+        "docs": 0,
+        "config": 0,
+        "script": 0,
+        "workflow": 0,
+        "other": 0,
+    }
+    category_samples: dict[str, list[str]] = {key: [] for key in category_counts}
+    for rel in tracked_files:
+        category = _classify_repo_path(rel)
+        category_counts[category] = int(category_counts.get(category, 0)) + 1
+        bucket = category_samples.setdefault(category, [])
+        if len(bucket) < 20:
+            bucket.append(rel)
+
+    top_dirs: dict[str, int] = {}
+    for rel in tracked_files:
+        top = rel.split("/", 1)[0] if "/" in rel else "."
+        top_dirs[top] = int(top_dirs.get(top, 0)) + 1
+
+    return {
+        "tracked_file_count": len(tracked_files),
+        "tracked_file_sample": tracked_files[:160],
+        "top_level_directory_counts": [
+            {"name": name, "count": count}
+            for name, count in sorted(top_dirs.items(), key=lambda item: (-int(item[1]), str(item[0])))
+        ][:20],
+        "category_counts": category_counts,
+        "category_samples": {key: value[:20] for key, value in category_samples.items()},
+        "focus_file_excerpts": _focus_file_excerpts(root, tracked_files=tracked_files),
+        "test_command_candidates": test_command_candidates,
+        "baseline_checks": _run_repository_baseline_checks(root, command_candidates=test_command_candidates),
+    }
+
+
 _SOURCE_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".sh"}
 _SOURCE_SKIP_DIRS = {
     ".git",
@@ -1005,6 +1302,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
     except Exception:
         pass
     source_inventory = _source_inventory(repo_root)
+    repository_inspection = _repository_inspection(repo_root)
 
     return {
         "repo_root": str(repo_root),
@@ -1023,6 +1321,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
         "readme_excerpt": readme,
         "current_version": _read_current_version(repo_root),
         "recent_execution_metrics": _recent_execution_metrics(target_id=str(target_id or "").strip(), limit=8),
+        "repository_inspection": repository_inspection,
         **source_inventory,
     }
 
@@ -1670,6 +1969,9 @@ def kickoff_upgrade_plan(
                     "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
                     "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
                     "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
+                    "You must actively inspect the repository_inspection section: review the tracked file inventory, key source/test/config excerpts, and discovered test command candidates before deciding there are 0 bugs.\n"
+                    "You must inspect repository_inspection.baseline_checks and treat failed or timed-out baseline checks as primary bug evidence when they are attributable to repository code.\n"
+                    "Do not rely on recent_execution_metrics alone when the repository inspection shows real application code and tests.\n"
                     "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
                     + (
                         "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
@@ -1749,6 +2051,8 @@ def kickoff_upgrade_plan(
             "- Bugs use lane=bug, kind=BUG, no user confirmation, and use version_bump=patch.\n"
             "- It is valid for the final plan to contain 0 bug findings when there is no current, provable defect signal.\n"
             "- Never create a bug from speculation, code smell, or missing test coverage alone.\n"
+            "- Bug conclusions must consider repository_inspection, not just recent_execution_metrics. If the repository contains substantial source or test files, treat the inspection summary and file excerpts as primary evidence.\n"
+            "- If repository_inspection.baseline_checks contains a failed or timed-out repo-attributable command, include that evidence explicitly in bug findings or ci_actions.\n"
             "- Code quality improvements use lane=quality, kind=CODE_QUALITY, require user confirmation, default to version_bump=none, and focus on cleanup/refactor/reuse/deletion work.\n"
             "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
             "- Test-gap findings and work_items should carry target_paths, missing_paths, suggested_test_files, and why_not_covered so downstream issues can explain the exact uncovered path.\n"

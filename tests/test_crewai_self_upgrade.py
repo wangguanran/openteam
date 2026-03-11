@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -113,6 +114,39 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
 
             self.assertTrue(ctx["git_status_dirty"])
             self.assertEqual(ctx["git_status_sample"], [" M src/demo.py"])
+
+    def test_collect_repo_context_includes_repository_inspection(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            (repo / "README.md").write_text("# Demo\n\nruntime repo\n", encoding="utf-8")
+            (repo / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+            (repo / "src").mkdir()
+            (repo / "tests").mkdir()
+            (repo / "src" / "__main__.py").write_text("print('hello')\n", encoding="utf-8")
+            (repo / "tests" / "test_demo.py").write_text(
+                "import unittest\n\n\nclass DemoTests(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "."], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+            ctx = crewai_self_upgrade.collect_repo_context(repo_root=repo)
+
+            inspection = ctx.get("repository_inspection") or {}
+            self.assertGreaterEqual(int(inspection.get("tracked_file_count") or 0), 4)
+            self.assertIn("README.md", inspection.get("tracked_file_sample") or [])
+            self.assertIn("pytest -q", inspection.get("test_command_candidates") or [])
+            focus_paths = [str(item.get("path") or "") for item in (inspection.get("focus_file_excerpts") or []) if isinstance(item, dict)]
+            self.assertIn("README.md", focus_paths)
+            self.assertIn("src/__main__.py", focus_paths)
+            category_counts = inspection.get("category_counts") or {}
+            self.assertGreaterEqual(int(category_counts.get("source") or 0), 1)
+            self.assertGreaterEqual(int(category_counts.get("test") or 0), 1)
+            baseline_checks = inspection.get("baseline_checks") or []
+            self.assertGreaterEqual(len(baseline_checks), 1)
+            self.assertEqual(str(baseline_checks[0].get("command") or ""), "python -m unittest")
+            self.assertEqual(str(baseline_checks[0].get("status") or ""), "passed")
 
     def test_crewai_llm_matches_codex_oauth_demo_defaults(self):
         captured: dict[str, object] = {}
