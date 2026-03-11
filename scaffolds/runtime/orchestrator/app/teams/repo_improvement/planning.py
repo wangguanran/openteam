@@ -686,6 +686,190 @@ def _merge_state_last_run(target_id: str, last_run: dict[str, Any], *, backoff_u
     improvement_store.merge_target_last_run(str(target_id or "").strip(), dict(last_run or {}), backoff_until=backoff_until)
 
 
+def _lane_state(target_id: str, lane: str) -> dict[str, Any]:
+    state = _read_state(target_id)
+    lane_states = state.get("lane_states")
+    if not isinstance(lane_states, dict):
+        return {}
+    lane_doc = lane_states.get(str(lane or "").strip().lower())
+    return dict(lane_doc) if isinstance(lane_doc, dict) else {}
+
+
+def _merge_lane_state(target_id: str, lane: str, payload: dict[str, Any]) -> dict[str, Any]:
+    target_key = str(target_id or "").strip()
+    lane_key = str(lane or "").strip().lower()
+    state = _read_state(target_key)
+    lane_states = dict(state.get("lane_states") or {}) if isinstance(state.get("lane_states"), dict) else {}
+    current = dict(lane_states.get(lane_key) or {}) if isinstance(lane_states.get(lane_key), dict) else {}
+    current.update(dict(payload or {}))
+    lane_states[lane_key] = current
+    state["lane_states"] = lane_states
+    improvement_store.save_target_state(target_key, state)
+    return current
+
+
+def _bug_dormant_after_zero_scans(*, project_id: str) -> int:
+    return crewai_workflow_registry.workflow_for_lane("bug", project_id=project_id).dormant_after_zero_scans()
+
+
+def _has_unresolved_bug_tasks(*, project_id: str, target_id: str) -> bool:
+    for task in improvement_store.list_delivery_tasks(project_id=project_id, target_id=target_id):
+        su = dict(task.get("self_upgrade") or {}) if isinstance(task.get("self_upgrade"), dict) else {}
+        orchestration = dict(task.get("orchestration") or {}) if isinstance(task.get("orchestration"), dict) else {}
+        lane = str(su.get("lane") or orchestration.get("finding_lane") or "").strip().lower()
+        status = str(task.get("status") or task.get("state") or "").strip().lower()
+        if lane == "bug" and status != "closed":
+            return True
+    return False
+
+
+def _bug_scan_policy(*, target_id: str, project_id: str, repo_context: dict[str, Any], force: bool) -> dict[str, Any]:
+    threshold = _bug_dormant_after_zero_scans(project_id=project_id)
+    lane_doc = _lane_state(target_id, "bug")
+    current_head = str(repo_context.get("head_commit") or "").strip()
+    previous_head = str(lane_doc.get("head_commit") or "").strip()
+    current_status = str(lane_doc.get("status") or "active").strip().lower() or "active"
+    unresolved_bug_tasks = _has_unresolved_bug_tasks(project_id=project_id, target_id=target_id)
+    if force:
+        return {
+            "dormant": False,
+            "reason": "force",
+            "threshold": threshold,
+            "head_commit": current_head,
+            "previous_head_commit": previous_head,
+            "unresolved_bug_tasks": unresolved_bug_tasks,
+            "lane_state": lane_doc,
+            "woke": current_status == "dormant",
+        }
+    if unresolved_bug_tasks:
+        return {
+            "dormant": False,
+            "reason": "open_bug_tasks",
+            "threshold": threshold,
+            "head_commit": current_head,
+            "previous_head_commit": previous_head,
+            "unresolved_bug_tasks": True,
+            "lane_state": lane_doc,
+            "woke": current_status == "dormant",
+        }
+    if current_status == "dormant" and current_head == previous_head:
+        return {
+            "dormant": True,
+            "reason": "unchanged_head_after_zero_bug_convergence",
+            "threshold": threshold,
+            "head_commit": current_head,
+            "previous_head_commit": previous_head,
+            "unresolved_bug_tasks": False,
+            "lane_state": lane_doc,
+            "woke": False,
+        }
+    if current_status == "dormant":
+        return {
+            "dormant": False,
+            "reason": "head_changed",
+            "threshold": threshold,
+            "head_commit": current_head,
+            "previous_head_commit": previous_head,
+            "unresolved_bug_tasks": False,
+            "lane_state": lane_doc,
+            "woke": True,
+        }
+    return {
+        "dormant": False,
+        "reason": "active",
+        "threshold": threshold,
+        "head_commit": current_head,
+        "previous_head_commit": previous_head,
+        "unresolved_bug_tasks": False,
+        "lane_state": lane_doc,
+        "woke": False,
+    }
+
+
+def _update_bug_lane_state(
+    *,
+    db: Any,
+    actor: str,
+    target_id: str,
+    project_id: str,
+    workstream_id: str,
+    repo_context: dict[str, Any],
+    bug_finding_count: int,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    threshold = max(0, int(policy.get("threshold") or 0))
+    current_head = str(policy.get("head_commit") or repo_context.get("head_commit") or "").strip()
+    previous_doc = dict(policy.get("lane_state") or {})
+    previous_status = str(previous_doc.get("status") or "active").strip().lower() or "active"
+    previous_head = str(previous_doc.get("head_commit") or "").strip()
+    unresolved_bug_tasks = bool(policy.get("unresolved_bug_tasks"))
+    try:
+        previous_streak = max(0, int(previous_doc.get("zero_bug_scan_streak") or 0))
+    except Exception:
+        previous_streak = 0
+    now = _utc_now_iso()
+
+    if unresolved_bug_tasks or int(bug_finding_count) > 0:
+        zero_bug_scan_streak = 0
+        status = "active"
+        transition_reason = "open_bug_tasks" if unresolved_bug_tasks else "bug_findings_detected"
+        dormant_since = ""
+    else:
+        zero_bug_scan_streak = 1 if current_head != previous_head else previous_streak + 1
+        if threshold > 0 and zero_bug_scan_streak >= threshold:
+            status = "dormant"
+            transition_reason = "zero_bug_converged"
+            dormant_since = str(previous_doc.get("dormant_since") or now)
+        else:
+            status = "active"
+            transition_reason = "zero_bug_scan_streak"
+            dormant_since = ""
+
+    updated = _merge_lane_state(
+        target_id,
+        "bug",
+        {
+            "status": status,
+            "head_commit": current_head,
+            "zero_bug_scan_streak": zero_bug_scan_streak,
+            "dormant_after_zero_scans": threshold,
+            "last_bug_finding_count": int(bug_finding_count),
+            "unresolved_bug_tasks": bool(unresolved_bug_tasks),
+            "last_scan_at": now,
+            "last_transition_reason": transition_reason,
+            "last_transition_at": now,
+            "dormant_since": dormant_since,
+            "last_policy_reason": str(policy.get("reason") or ""),
+        },
+    )
+    if previous_status != "dormant" and status == "dormant":
+        db.add_event(
+            event_type="SELF_UPGRADE_BUG_LANE_DORMANT",
+            actor=actor,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            payload={
+                "target_id": target_id,
+                "head_commit": current_head,
+                "zero_bug_scan_streak": zero_bug_scan_streak,
+                "threshold": threshold,
+            },
+        )
+    elif previous_status == "dormant" and status != "dormant":
+        db.add_event(
+            event_type="SELF_UPGRADE_BUG_LANE_RESUMED",
+            actor=actor,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            payload={
+                "target_id": target_id,
+                "head_commit": current_head,
+                "reason": str(policy.get("reason") or transition_reason),
+            },
+        )
+    return updated
+
+
 def _should_skip(*, target_id: str, repo_root: Path, force: bool) -> tuple[bool, str]:
     if force:
         return False, ""
@@ -1368,13 +1552,21 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
     )
 
 
-def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "teamos", max_findings: int, verbose: bool = False) -> tuple[UpgradePlan, dict[str, Any]]:
+def kickoff_upgrade_plan(
+    *,
+    repo_context: dict[str, Any],
+    project_id: str = "teamos",
+    max_findings: int,
+    verbose: bool = False,
+    bug_scan_dormant: bool = False,
+) -> tuple[UpgradePlan, dict[str, Any]]:
     crewai_runtime.require_crewai_importable()
     from crewai import Crew, Process, Task
 
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
     llm = _crewai_llm()
     feature_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("feature", project_id=project_id) or int(max_findings)))
+    bug_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("bug", project_id=project_id) or int(max_findings)))
     quality_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("quality", project_id=project_id) or int(max_findings)))
     product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
     test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
@@ -1402,10 +1594,18 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
         name="qa_bug_scan",
         description=(
             "Analyze the repository context as a test manager.\n"
-            f"Return at most {int(max_findings)} bug or regression candidates.\n"
-            "Focus on reproducible defects, behavior regressions, and CI/test failures that already point to a concrete bug.\n"
-            "Use only the supplied context.\n\n"
-            f"Repository context:\n{repo_blob}"
+            f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
+            "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
+            "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
+            "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
+            "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
+            + (
+                "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
+                if bug_scan_dormant
+                else ""
+            )
+            + "Use only the supplied context.\n\n"
+            + f"Repository context:\n{repo_blob}"
         ),
         expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
         agent=test_manager,
@@ -1460,6 +1660,8 @@ def kickoff_upgrade_plan(*, repo_context: dict[str, Any], project_id: str = "tea
             "Rules:\n"
             "- Features use lane=feature, kind=FEATURE, require user confirmation, and use version_bump=major or minor.\n"
             "- Bugs use lane=bug, kind=BUG, no user confirmation, and use version_bump=patch.\n"
+            "- It is valid for the final plan to contain 0 bug findings when there is no current, provable defect signal.\n"
+            "- Never create a bug from speculation, code smell, or missing test coverage alone.\n"
             "- Code quality improvements use lane=quality, kind=CODE_QUALITY, require user confirmation, default to version_bump=none, and focus on cleanup/refactor/reuse/deletion work.\n"
             "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
             "- Test-gap findings and work_items should carry target_paths, missing_paths, suggested_test_files, and why_not_covered so downstream issues can explain the exact uncovered path.\n"
@@ -3539,13 +3741,45 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         },
     )
 
+    bug_scan_policy = _bug_scan_policy(
+        target_id=target_id,
+        project_id=project_id,
+        repo_context=repo_context,
+        force=force,
+    )
+    if bug_scan_policy.get("dormant"):
+        db.add_event(
+            event_type="SELF_UPGRADE_BUG_LANE_SKIPPED",
+            actor=actor,
+            project_id=project_id,
+            workstream_id=workstream_id,
+            payload={
+                "run_id": run_id,
+                "target_id": target_id,
+                "head_commit": str(bug_scan_policy.get("head_commit") or ""),
+                "reason": str(bug_scan_policy.get("reason") or "bug_lane_dormant"),
+                "threshold": int(bug_scan_policy.get("threshold") or 0),
+            },
+        )
+
     try:
         plan, crew_debug = kickoff_upgrade_plan(
             repo_context=repo_context,
             project_id=project_id,
             max_findings=max_findings,
             verbose=_env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0"),
+            bug_scan_dormant=bool(bug_scan_policy.get("dormant")),
         )
+        current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
+        if bug_scan_policy.get("dormant"):
+            filtered_findings = [f for f in list(plan.findings or []) if str(f.lane or "").strip().lower() != "bug"]
+            if len(filtered_findings) != len(list(plan.findings or [])):
+                plan = plan.model_copy(
+                    update={
+                        "findings": filtered_findings,
+                        "planned_version": _planned_version(current_version, filtered_findings),
+                    }
+                )
     except Exception as e:
         _finish_agents(db=db, agent_ids=agent_ids, state="FAILED", current_action="self-upgrade failed")
         backoff_until = ""
@@ -3586,6 +3820,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     records: list[dict[str, Any]] = []
     pending_proposals: list[dict[str, Any]] = []
     current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
+    bug_finding_count = len([f for f in list(plan.findings or []) if str(f.lane or "").strip().lower() == "bug"])
     for finding in plan.findings:
         workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
         if not workflow.enabled:
@@ -3719,6 +3954,16 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "crew_debug": crew_debug,
     }
     improvement_store.save_report(target_id=target_id, project_id=project_id, report=report)
+    bug_lane_state = _update_bug_lane_state(
+        db=db,
+        actor=actor,
+        target_id=target_id,
+        project_id=project_id,
+        workstream_id=workstream_id,
+        repo_context=repo_context,
+        bug_finding_count=bug_finding_count,
+        policy=bug_scan_policy,
+    )
     _merge_state_last_run(
         target_id,
         {
@@ -3730,6 +3975,8 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "project_id": project_id,
             "status": "DONE",
             "records": len(records),
+            "bug_findings": bug_finding_count,
+            "bug_lane_status": str((bug_lane_state or {}).get("status") or "active"),
             "pending_proposals": len(pending_proposals),
             "report_id": run_id,
         },
@@ -3744,6 +3991,8 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "repo_root": str(repo_root),
             "repo_locator": repo_locator,
             "records": len(records),
+            "bug_findings": bug_finding_count,
+            "bug_lane_status": str((bug_lane_state or {}).get("status") or "active"),
             "pending_proposals": len(pending_proposals),
         }
     )
@@ -3760,6 +4009,8 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "repo_locator": repo_locator,
             "project_id": project_id,
             "records": len(records),
+            "bug_findings": bug_finding_count,
+            "bug_lane_status": str((bug_lane_state or {}).get("status") or "active"),
             "pending_proposals": len(pending_proposals),
             "panel_sync": panel_sync,
             "report_id": run_id,
@@ -3777,6 +4028,8 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "notes": plan.notes,
         "current_version": current_version,
         "planned_version": plan.planned_version or _planned_version(current_version, plan.findings),
+        "bug_findings": bug_finding_count,
+        "bug_lane_status": str((bug_lane_state or {}).get("status") or "active"),
         "records": records,
         "pending_proposals": pending_proposals,
         "panel_sync": panel_sync,

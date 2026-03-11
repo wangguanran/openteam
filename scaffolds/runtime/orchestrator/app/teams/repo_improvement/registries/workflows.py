@@ -26,6 +26,8 @@ class WorkflowSpec:
     default_version_bump: str = "none"
     max_candidates_env_var: str = ""
     default_max_candidates: int = 0
+    dormant_after_zero_scans_env_var: str = ""
+    default_dormant_after_zero_scans: int = 0
     cooldown_env_var: str = ""
     default_cooldown_hours: int = 0
     baseline_action_default: str = ""
@@ -52,6 +54,15 @@ class WorkflowSpec:
             except Exception:
                 return max(0, int(self.default_max_candidates))
         return max(0, int(self.default_max_candidates))
+
+    def dormant_after_zero_scans(self) -> int:
+        if self.dormant_after_zero_scans_env_var:
+            raw = str(os.getenv(self.dormant_after_zero_scans_env_var, str(self.default_dormant_after_zero_scans)) or "").strip()
+            try:
+                return max(0, int(raw))
+            except Exception:
+                return max(0, int(self.default_dormant_after_zero_scans))
+        return max(0, int(self.default_dormant_after_zero_scans))
 
     def default_baseline_action(self, version_bump: str) -> str:
         bump = str(version_bump or "").strip().lower()
@@ -108,7 +119,10 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         requires_user_confirmation=False,
         materialize_requires_approval=False,
         default_version_bump="patch",
-        default_max_candidates=0,
+        max_candidates_env_var="TEAMOS_SELF_UPGRADE_BUG_MAX_CANDIDATES",
+        default_max_candidates=2,
+        dormant_after_zero_scans_env_var="TEAMOS_SELF_UPGRADE_BUG_DORMANT_AFTER_ZERO_SCANS",
+        default_dormant_after_zero_scans=3,
         default_cooldown_hours=0,
         baseline_action_default="patch_release",
     ),
@@ -176,6 +190,8 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
         default_version_bump=str(doc.get("default_version_bump") or "none").strip(),
         max_candidates_env_var=str(doc.get("max_candidates_env_var") or "").strip(),
         default_max_candidates=max(0, int(doc.get("default_max_candidates") or 0)),
+        dormant_after_zero_scans_env_var=str(doc.get("dormant_after_zero_scans_env_var") or "").strip(),
+        default_dormant_after_zero_scans=max(0, int(doc.get("default_dormant_after_zero_scans") or 0)),
         cooldown_env_var=str(doc.get("cooldown_env_var") or "").strip(),
         default_cooldown_hours=max(0, int(doc.get("default_cooldown_hours") or 0)),
         baseline_action_default=str(doc.get("baseline_action_default") or "").strip(),
@@ -222,11 +238,17 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
         if enabled:
             disabled_reason = ""
     max_candidates = int(spec.default_max_candidates or 0)
+    dormant_after_zero_scans = int(spec.default_dormant_after_zero_scans or 0)
     if "max_candidates" in override:
         try:
             max_candidates = max(0, int(override.get("max_candidates") or 0))
         except Exception:
             max_candidates = int(spec.default_max_candidates or 0)
+    if "dormant_after_zero_scans" in override:
+        try:
+            dormant_after_zero_scans = max(0, int(override.get("dormant_after_zero_scans") or 0))
+        except Exception:
+            dormant_after_zero_scans = int(spec.default_dormant_after_zero_scans or 0)
     elif not enabled and not disabled_reason:
         disabled_reason = "workflow_disabled"
 
@@ -242,8 +264,19 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
             max_candidates = max(0, int(override.get("max_candidates") or 0))
         except Exception:
             pass
+    if "dormant_after_zero_scans" in override:
+        try:
+            dormant_after_zero_scans = max(0, int(override.get("dormant_after_zero_scans") or 0))
+        except Exception:
+            pass
 
-    return replace(spec, enabled=enabled, disabled_reason=disabled_reason, default_max_candidates=max_candidates)
+    return replace(
+        spec,
+        enabled=enabled,
+        disabled_reason=disabled_reason,
+        default_max_candidates=max_candidates,
+        default_dormant_after_zero_scans=dormant_after_zero_scans,
+    )
 
 
 def workflow_spec(workflow_id: str, *, project_id: str = "teamos") -> WorkflowSpec:

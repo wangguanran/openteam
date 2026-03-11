@@ -39,6 +39,62 @@ class _FakeDB:
 
 
 class CrewAISelfUpgradeTests(unittest.TestCase):
+    def _make_self_upgrade_spec(self, repo: Path, *, force: bool = False, dry_run: bool = True) -> SimpleNamespace:
+        return SimpleNamespace(
+            project_id="teamos",
+            workstream_id="general",
+            repo_path=str(repo),
+            repo_locator="foo/bar",
+            force=force,
+            dry_run=dry_run,
+            trigger="test",
+            task_id="",
+        )
+
+    def _repo_context(self, repo: Path, *, head_commit: str) -> dict[str, object]:
+        return {
+            "repo_root": str(repo),
+            "repo_locator": "foo/bar",
+            "current_version": "0.1.0",
+            "default_branch": "main",
+            "head_commit": head_commit,
+            "git_status_dirty": False,
+            "repo_name": repo.name,
+        }
+
+    def _bug_plan(self, *, title: str = "Fix runtime regression") -> crewai_self_upgrade.UpgradePlan:
+        return crewai_self_upgrade.UpgradePlan(
+            summary=title,
+            findings=[
+                crewai_self_upgrade.UpgradeFinding(
+                    kind="BUG",
+                    lane="bug",
+                    title=title,
+                    summary="Current runtime path still fails under a reproducible defect signal.",
+                    workstream_id="general",
+                    version_bump="patch",
+                    target_version="0.1.1",
+                    tests=["python -m unittest tests.test_runtime_bug"],
+                    acceptance=["Runtime defect no longer reproduces"],
+                    work_items=[
+                        crewai_self_upgrade.UpgradeWorkItem(
+                            title=title,
+                            summary="Repair the current runtime regression.",
+                            owner_role=crewai_self_upgrade.ROLE_BUGFIX_CODING_AGENT,
+                            review_role=crewai_self_upgrade.ROLE_REVIEW_AGENT,
+                            qa_role=crewai_self_upgrade.ROLE_QA_AGENT,
+                            workstream_id="general",
+                            allowed_paths=["src/runtime_bug.py"],
+                            tests=["python -m unittest tests.test_runtime_bug"],
+                            acceptance=["Runtime defect no longer reproduces"],
+                            worktree_hint="/tmp/worktrees/runtime-bug",
+                            module="Runtime",
+                        )
+                    ],
+                )
+            ],
+        )
+
     def test_parse_repo_locator_supports_https_and_ssh(self):
         self.assertEqual(crewai_self_upgrade._parse_repo_locator("https://github.com/foo/bar.git"), "foo/bar")
         self.assertEqual(crewai_self_upgrade._parse_repo_locator("git@github.com:foo/bar.git"), "foo/bar")
@@ -1076,6 +1132,226 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertIn("黑盒回归", finding.why_not_covered)
         self.assertEqual(item.test_gap_type, "blackbox")
         self.assertEqual(item.suggested_test_files, ["tests/test_runtime_health.py"])
+
+    def test_bug_lane_enters_dormant_after_three_zero_bug_runs_on_same_head(self):
+        db = _FakeDB()
+        empty_plan = crewai_self_upgrade.UpgradePlan(summary="stable", findings=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+            spec = self._make_self_upgrade_spec(repo, force=False, dry_run=True)
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.collect_repo_context",
+                return_value=self._repo_context(repo, head_commit="abc123"),
+            ), mock.patch(
+                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                return_value={"ok": True, "dry_run": True, "stats": {"updated": 0}},
+            ):
+                for idx in range(3):
+                    with mock.patch(
+                        "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                        return_value=(empty_plan, {"task_outputs": [], "token_usage": {}}),
+                    ):
+                        out = crewai_self_upgrade.run_self_upgrade(
+                            db=db,
+                            spec=spec,
+                            actor="test",
+                            run_id=f"run-zero-{idx + 1}",
+                            crewai_info={"importable": True},
+                        )
+
+                state = crewai_self_upgrade._read_state(out["target_id"])
+
+        bug_lane = ((state.get("lane_states") or {}).get("bug") or {})
+        self.assertEqual(bug_lane.get("status"), "dormant")
+        self.assertEqual(bug_lane.get("zero_bug_scan_streak"), 3)
+        self.assertEqual(bug_lane.get("head_commit"), "abc123")
+        self.assertIn("SELF_UPGRADE_BUG_LANE_DORMANT", [event.get("event_type") for event in db.events])
+
+    def test_dormant_bug_lane_filters_bug_findings_until_head_changes(self):
+        db = _FakeDB()
+        empty_plan = crewai_self_upgrade.UpgradePlan(summary="stable", findings=[])
+        bug_plan = self._bug_plan()
+        kickoff_flags: list[bool] = []
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+            spec = self._make_self_upgrade_spec(repo, force=False, dry_run=True)
+            stable_context = self._repo_context(repo, head_commit="abc123")
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                return_value={"ok": True, "dry_run": True, "stats": {"updated": 0}},
+            ):
+                with mock.patch("app.crewai_self_upgrade.collect_repo_context", return_value=stable_context):
+                    for idx in range(3):
+                        with mock.patch(
+                            "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                            return_value=(empty_plan, {"task_outputs": [], "token_usage": {}}),
+                        ):
+                            crewai_self_upgrade.run_self_upgrade(
+                                db=db,
+                                spec=spec,
+                                actor="test",
+                                run_id=f"run-zero-{idx + 1}",
+                                crewai_info={"importable": True},
+                            )
+
+                def _dormant_kickoff(*, bug_scan_dormant: bool = False, **kwargs):
+                    kickoff_flags.append(bool(bug_scan_dormant))
+                    return bug_plan, {"task_outputs": [], "token_usage": {}}
+
+                with mock.patch("app.crewai_self_upgrade.collect_repo_context", return_value=stable_context), mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    side_effect=_dormant_kickoff,
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_issue_record",
+                    side_effect=AssertionError("dormant bug lane must not materialize bug records"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade._ensure_task_record",
+                    side_effect=AssertionError("dormant bug lane must not materialize bug tasks"),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-dormant-skip",
+                        crewai_info={"importable": True},
+                    )
+
+                state = crewai_self_upgrade._read_state(out["target_id"])
+
+        self.assertEqual(kickoff_flags, [True])
+        self.assertEqual(out["records"], [])
+        bug_lane = ((state.get("lane_states") or {}).get("bug") or {})
+        self.assertEqual(bug_lane.get("status"), "dormant")
+        self.assertEqual(bug_lane.get("last_bug_finding_count"), 0)
+        self.assertIn("SELF_UPGRADE_BUG_LANE_SKIPPED", [event.get("event_type") for event in db.events])
+
+    def test_head_change_resumes_dormant_bug_lane_and_allows_bug_materialization(self):
+        db = _FakeDB()
+        empty_plan = crewai_self_upgrade.UpgradePlan(summary="stable", findings=[])
+        bug_plan = self._bug_plan(title="Fix startup bug")
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+            spec = self._make_self_upgrade_spec(repo, force=False, dry_run=True)
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                return_value={"ok": True, "dry_run": True, "stats": {"updated": 0}},
+            ):
+                with mock.patch(
+                    "app.crewai_self_upgrade.collect_repo_context",
+                    return_value=self._repo_context(repo, head_commit="abc123"),
+                ):
+                    for idx in range(3):
+                        with mock.patch(
+                            "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                            return_value=(empty_plan, {"task_outputs": [], "token_usage": {}}),
+                        ):
+                            crewai_self_upgrade.run_self_upgrade(
+                                db=db,
+                                spec=spec,
+                                actor="test",
+                                run_id=f"run-zero-{idx + 1}",
+                                crewai_info={"importable": True},
+                            )
+
+                with mock.patch(
+                    "app.crewai_self_upgrade.collect_repo_context",
+                    return_value=self._repo_context(repo, head_commit="def456"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                    return_value=(bug_plan, {"task_outputs": [], "token_usage": {}}),
+                ):
+                    out = crewai_self_upgrade.run_self_upgrade(
+                        db=db,
+                        spec=spec,
+                        actor="test",
+                        run_id="run-head-change",
+                        crewai_info={"importable": True},
+                    )
+
+                state = crewai_self_upgrade._read_state(out["target_id"])
+
+        self.assertEqual(len(out["records"]), 1)
+        self.assertEqual(out["records"][0]["workflow_id"], "bug-fix")
+        bug_lane = ((state.get("lane_states") or {}).get("bug") or {})
+        self.assertEqual(bug_lane.get("status"), "active")
+        self.assertEqual(bug_lane.get("zero_bug_scan_streak"), 0)
+        self.assertEqual(bug_lane.get("head_commit"), "def456")
+        self.assertIn("SELF_UPGRADE_BUG_LANE_RESUMED", [event.get("event_type") for event in db.events])
+
+    def test_open_bug_tasks_keep_bug_lane_active_despite_zero_bug_runs(self):
+        db = _FakeDB()
+        empty_plan = crewai_self_upgrade.UpgradePlan(summary="stable", findings=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+            spec = self._make_self_upgrade_spec(repo, force=False, dry_run=True)
+            stable_context = self._repo_context(repo, head_commit="abc123")
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.collect_repo_context",
+                return_value=stable_context,
+            ), mock.patch(
+                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                return_value={"ok": True, "dry_run": True, "stats": {"updated": 0}},
+            ):
+                target = improvement_store.ensure_target(
+                    project_id="teamos",
+                    repo_path=str(repo),
+                    repo_locator="foo/bar",
+                )
+                improvement_store.upsert_delivery_task(
+                    {
+                        "id": "TASK-BUG-1",
+                        "project_id": "teamos",
+                        "title": "Existing bug task",
+                        "status": "todo",
+                        "target": {"target_id": str(target.get("target_id") or "")},
+                        "repo": {"locator": "foo/bar", "workdir": str(repo)},
+                        "orchestration": {"flow": "self_upgrade", "finding_lane": "bug"},
+                        "self_upgrade": {"lane": "bug"},
+                    }
+                )
+                for idx in range(3):
+                    with mock.patch(
+                        "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                        return_value=(empty_plan, {"task_outputs": [], "token_usage": {}}),
+                    ):
+                        out = crewai_self_upgrade.run_self_upgrade(
+                            db=db,
+                            spec=spec,
+                            actor="test",
+                            run_id=f"run-active-{idx + 1}",
+                            crewai_info={"importable": True},
+                        )
+
+                state = crewai_self_upgrade._read_state(out["target_id"])
+
+        bug_lane = ((state.get("lane_states") or {}).get("bug") or {})
+        self.assertEqual(bug_lane.get("status"), "active")
+        self.assertEqual(bug_lane.get("zero_bug_scan_streak"), 0)
+        self.assertNotIn("SELF_UPGRADE_BUG_LANE_DORMANT", [event.get("event_type") for event in db.events])
 
 
 if __name__ == "__main__":

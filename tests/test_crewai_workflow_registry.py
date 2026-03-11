@@ -35,6 +35,8 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
 
         self.assertFalse(spec.uses_proposal)
         self.assertEqual(spec.default_version_bump, "patch")
+        self.assertEqual(spec.max_candidates(), 2)
+        self.assertEqual(spec.dormant_after_zero_scans(), 3)
         self.assertEqual(spec.default_baseline_action("patch"), "patch_release")
         self.assertTrue(spec.should_materialize(status="", due=False))
 
@@ -88,6 +90,23 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             spec = crewai_workflow_registry.workflow_for_lane("feature", project_id="demo")
 
         self.assertEqual(spec.max_candidates(), 2)
+
+    def test_project_workflow_override_can_tune_bug_dormancy_threshold(self):
+        with mock.patch(
+            "app.crewai_workflow_registry.project_config_store.load_project_config",
+            return_value={
+                "repo_improvement": {
+                    "workflow_settings": {
+                        "bug-fix": {
+                            "dormant_after_zero_scans": 1,
+                        }
+                    }
+                }
+            },
+        ):
+            spec = crewai_workflow_registry.workflow_for_lane("bug", project_id="demo")
+
+        self.assertEqual(spec.dormant_after_zero_scans(), 1)
 
 
 if __name__ == "__main__":

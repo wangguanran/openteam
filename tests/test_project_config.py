@@ -124,6 +124,27 @@ class TestProjectConfig(unittest.TestCase):
             out5 = json.loads(p5.stdout)
             self.assertTrue(out5.get("changed"))
 
+            p6 = self._run(
+                [
+                    "python3",
+                    str(script),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(ws),
+                    "--project",
+                    "demo",
+                    "set",
+                    "--key",
+                    "repo_improvement.workflow_settings.bug-fix.dormant_after_zero_scans",
+                    "--value",
+                    "1",
+                ]
+            )
+            self.assertEqual(p6.returncode, 0, msg=p6.stderr)
+            out6 = json.loads(p6.stdout)
+            self.assertTrue(out6.get("changed"))
+
             pv = self._run(
                 [
                     "python3",

@@ -70,6 +70,10 @@
               "max_candidates": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "dormant_after_zero_scans": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }
