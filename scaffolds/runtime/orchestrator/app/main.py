@@ -517,25 +517,73 @@ def _repo_improvement_flow(value: Any) -> bool:
     return flow in ("repo_improvement", "self_upgrade")
 
 
+def _repo_improvement_run_id_set(*, event_limit: int = 5000) -> set[str]:
+    run_ids: set[str] = set()
+    try:
+        events = DB.list_events(limit=max(1, int(event_limit)))
+    except Exception:
+        return run_ids
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        run_id = str(payload.get("run_id") or "").strip()
+        if not run_id:
+            continue
+        event_type = str(event.event_type or "").strip().upper()
+        if event_type.startswith("REPO_IMPROVEMENT_"):
+            run_ids.add(run_id)
+            continue
+        if event_type in {"RUN_STARTED", "RUN_FAILED", "RUN_FINISHED"} and _repo_improvement_flow(payload.get("flow")):
+            run_ids.add(run_id)
+    return run_ids
+
+
+def _is_repo_improvement_run(run: Any, *, known_run_ids: set[str]) -> bool:
+    run_id = str(getattr(run, "run_id", "") or "").strip()
+    if run_id and run_id in known_run_ids:
+        return True
+    objective = str(getattr(run, "objective", "") or "").strip().lower()
+    run_id_lower = run_id.lower()
+    return (
+        "repo-improvement" in objective
+        or "repo-improvement" in run_id_lower
+        or "self-upgrade" in objective
+        or "self-upgrade" in run_id_lower
+    )
+
+
 def _cleanup_stale_repo_improvement_activity() -> None:
     ttl_sec = max(300, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", "900") or "900"))
+    known_run_ids = _repo_improvement_run_id_set()
+    fresh_agent_scopes: set[tuple[str, str]] = set()
+
+    for agent in DB.list_agents():
+        state = str(agent.state or "").strip().upper()
+        if state != "RUNNING":
+            continue
+        if _iso_age_seconds(agent.last_heartbeat) < float(ttl_sec):
+            fresh_agent_scopes.add((str(agent.project_id or "").strip(), str(agent.workstream_id or "").strip()))
 
     for run in DB.list_runs():
         if _normalize_run_state(run.state) != "RUNNING":
             continue
-        objective = str(run.objective or "").strip().lower()
-        run_id = str(run.run_id or "").strip().lower()
-        if "repo-improvement" not in objective and "repo-improvement" not in run_id and "self-upgrade" not in objective and "self-upgrade" not in run_id:
+        if not _is_repo_improvement_run(run, known_run_ids=known_run_ids):
             continue
         if _iso_age_seconds(run.last_update) < float(ttl_sec):
             continue
-        DB.upsert_run(
-            run_id=str(run.run_id),
-            project_id=str(run.project_id or "teamos"),
-            workstream_id=str(run.workstream_id or _default_workstream_id()),
-            objective=str(run.objective or "stale repo-improvement run"),
-            state="FAILED",
-        )
+        scope = (str(run.project_id or "").strip(), str(run.workstream_id or "").strip())
+        if scope in fresh_agent_scopes:
+            continue
+        DB.update_run_state(run_id=str(run.run_id), state="FAILED")
+        try:
+            DB.add_event(
+                event_type="REPO_IMPROVEMENT_STALE_RUN_CLEANED",
+                actor="control-plane.cleanup",
+                project_id=str(run.project_id or "teamos"),
+                workstream_id=str(run.workstream_id or _default_workstream_id()),
+                payload={"run_id": str(run.run_id or ""), "objective": str(run.objective or ""), "ttl_sec": ttl_sec},
+            )
+        except Exception:
+            pass
 
     for agent in DB.list_agents():
         if str(agent.state or "").strip().upper() != "RUNNING":
@@ -551,6 +599,16 @@ def _cleanup_stale_repo_improvement_activity() -> None:
                 agent_id=str(agent.agent_id),
                 state="FAILED",
                 current_action="stale repo-improvement activity cleaned on startup",
+            )
+        except Exception:
+            pass
+        try:
+            DB.add_event(
+                event_type="REPO_IMPROVEMENT_STALE_AGENT_CLEANED",
+                actor="control-plane.cleanup",
+                project_id=str(agent.project_id or "teamos"),
+                workstream_id=str(agent.workstream_id or _default_workstream_id()),
+                payload={"agent_id": str(agent.agent_id or ""), "role_id": role_id, "ttl_sec": ttl_sec},
             )
         except Exception:
             pass
@@ -951,6 +1009,21 @@ def _startup_background_threads() -> None:
         _cleanup_stale_repo_improvement_activity()
     except Exception:
         pass
+
+    def _repo_improvement_cleanup_loop() -> None:
+        interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_CLEANUP_INTERVAL_SEC", "60") or "60"))
+        try:
+            while True:
+                try:
+                    _cleanup_stale_repo_improvement_activity()
+                except Exception:
+                    pass
+                time.sleep(interval_sec)
+        except Exception:
+            pass
+
+    rct = threading.Thread(target=_repo_improvement_cleanup_loop, name="repo-improvement-cleanup-loop", daemon=True)
+    rct.start()
 
     def _self_upgrade_worktree_migration_once() -> None:
         try:
