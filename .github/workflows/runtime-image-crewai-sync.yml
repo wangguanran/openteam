@@ -1,4 +1,4 @@
-name: Runtime Image CrewAI Sync
+name: Runtime Image Dependency Sync
 
 on:
   schedule:
@@ -14,7 +14,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Check crewAI main vs latest runtime image
+      - name: Check crewAI main and openclaw latest vs latest runtime image
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
@@ -24,7 +24,7 @@ jobs:
           import json
           import os
           import subprocess
-          import sys
+          import urllib.request
           from datetime import datetime, timezone
 
           owner = os.environ["OWNER"]
@@ -54,6 +54,11 @@ jobs:
           crew_sha = str(crew.get("sha") or "").strip()
           crew_ts = parse_ts(((crew.get("commit") or {}).get("committer") or {}).get("date"))
 
+          with urllib.request.urlopen("https://registry.npmjs.org/openclaw", timeout=30) as resp:
+              npm_pkg = json.load(resp)
+          openclaw_latest = str(((npm_pkg.get("dist-tags") or {}).get("latest")) or "").strip()
+          openclaw_ts = parse_ts(str(((npm_pkg.get("time") or {}).get(openclaw_latest)) or "").strip())
+
           versions = gh_api(
               f"/users/{owner}/packages/container/teamos-control-plane/versions?per_page=100",
               allow_failure=True,
@@ -73,12 +78,18 @@ jobs:
           lines = [
               f"crewAI main sha: `{crew_sha}`",
               f"crewAI main ts: `{crew_ts.isoformat() if crew_ts else ''}`",
+              f"openclaw latest: `{openclaw_latest}`",
+              f"openclaw latest ts: `{openclaw_ts.isoformat() if openclaw_ts else ''}`",
               f"latest image ts: `{image_ts.isoformat() if image_ts else ''}`",
               f"in-progress runtime-image runs: `{len(in_progress)}`",
           ]
 
           should_dispatch = False
-          if crew_ts is not None and (image_ts is None or crew_ts > image_ts) and not in_progress:
+          dep_newer = (
+              (crew_ts is not None and (image_ts is None or crew_ts > image_ts)) or
+              (openclaw_ts is not None and (image_ts is None or openclaw_ts > image_ts))
+          )
+          if dep_newer and not in_progress:
               should_dispatch = True
               subprocess.check_call(
                   [
@@ -97,9 +108,18 @@ jobs:
 
           if summary:
               with open(summary, "a", encoding="utf-8") as fp:
-                  fp.write("## CrewAI sync check\n")
+                  fp.write("## Runtime dependency sync check\n")
                   for line in lines:
                       fp.write(f"- {line}\n")
 
-          print(json.dumps({"crewai_sha": crew_sha, "should_dispatch": should_dispatch}, ensure_ascii=False))
+          print(
+              json.dumps(
+                  {
+                      "crewai_sha": crew_sha,
+                      "openclaw_latest": openclaw_latest,
+                      "should_dispatch": should_dispatch,
+                  },
+                  ensure_ascii=False,
+              )
+          )
           PY

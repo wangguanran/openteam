@@ -37,6 +37,24 @@ jobs:
           test -n "${SHA}"
           echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve latest openclaw version
+        id: openclaw
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          with urllib.request.urlopen("https://registry.npmjs.org/openclaw", timeout=30) as resp:
+              payload = json.load(resp)
+          latest = str(((payload.get("dist-tags") or {}).get("latest")) or "").strip()
+          if not latest:
+              raise SystemExit("failed to resolve openclaw latest version")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fp:
+              fp.write(f"version={latest}\n")
+          print(latest)
+          PY
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -61,6 +79,7 @@ jobs:
             type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
           labels: |
             org.opencontainers.image.teamos-crewai-sha=${{ steps.crewai.outputs.sha }}
+            org.opencontainers.image.teamos-openclaw-version=${{ steps.openclaw.outputs.version }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
 
       - name: Build and push runtime image
@@ -78,6 +97,7 @@ jobs:
             TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
             TEAMOS_CREWAI_GIT_REF=main
             TEAMOS_CREWAI_GIT_SHA=${{ steps.crewai.outputs.sha }}
+            TEAMOS_OPENCLAW_VERSION=${{ steps.openclaw.outputs.version }}
             TEAMOS_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
             TEAMOS_NPM_REGISTRY=https://registry.npmmirror.com
             TEAMOS_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
