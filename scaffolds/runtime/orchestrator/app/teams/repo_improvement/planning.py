@@ -979,7 +979,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
 
 
 def _codex_structured_model() -> str:
-    return str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.3-codex").strip()
+    return str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.4").strip()
 
 
 def _codex_structured(prompt: str, *, schema_model: type[BaseModel], timeout_sec: int = 120) -> BaseModel:
@@ -1374,7 +1374,7 @@ def _crewai_llm():
     crewai_runtime.require_crewai_importable(refresh=True)
     from crewai.llm import LLM
 
-    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.3-codex").strip()
+    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.4").strip()
     base_url = str(os.getenv("TEAMOS_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
     api_key = str(os.getenv("TEAMOS_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
     auth_mode = str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower()
@@ -1396,16 +1396,14 @@ def _crewai_llm():
     elif (not auth_mode) and ("codex" in model.lower()) and (not api_key):
         os.environ["CREWAI_OPENAI_AUTH_MODE"] = "oauth_codex"
 
-    reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "high").strip().lower()
+    reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "xhigh").strip().lower()
     reasoning_effort_aliases = {
-        "highest": "high",
-        "max": "high",
-        "xhigh": "high",
-        "minimal": "low",
+        "highest": "xhigh",
+        "max": "xhigh",
     }
     reasoning_effort = reasoning_effort_aliases.get(reasoning_effort, reasoning_effort)
-    if reasoning_effort not in {"none", "low", "medium", "high"}:
-        reasoning_effort = "high"
+    if reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+        reasoning_effort = "xhigh"
 
     kwargs: dict[str, Any] = {
         "model": model,

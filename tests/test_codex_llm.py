@@ -40,7 +40,7 @@ class CodexLLMTests(unittest.TestCase):
 
         captured: dict[str, str] = {}
 
-        def _fake_exec_json(*, prompt: str, schema_path: str, timeout_sec: int = 90, model: str | None = None):
+        def _fake_exec_json(*, prompt: str, schema_path: str, timeout_sec: int = 90, model=None):
             captured["prompt"] = prompt
             captured["schema_path"] = schema_path
             captured["model"] = model or ""
@@ -49,11 +49,11 @@ class CodexLLMTests(unittest.TestCase):
             return codex_llm.CodexResult(data={"ok": True}, raw_text='{"ok":true}')
 
         with mock.patch("app.codex_llm.codex_exec_json", side_effect=_fake_exec_json):
-            out = codex_llm.codex_exec_structured(prompt="demo", schema=DemoSchema.model_json_schema(), model="openai-codex/gpt-5.3-codex")
+            out = codex_llm.codex_exec_structured(prompt="demo", schema=DemoSchema.model_json_schema(), model="openai-codex/gpt-5.4")
 
         self.assertEqual(out.data, {"ok": True})
         self.assertEqual(captured["prompt"], "demo")
-        self.assertEqual(captured["model"], "openai-codex/gpt-5.3-codex")
+        self.assertEqual(captured["model"], "openai-codex/gpt-5.4")
 
 
 if __name__ == "__main__":

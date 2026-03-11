@@ -21,7 +21,7 @@ cd team-os
 # 二选一：
 # 1. Codex OAuth（推荐，和 ~/Codes/crewAI 的 demo 脚本一致）
 codex login
-export TEAMOS_CREWAI_MODEL="openai-codex/gpt-5.3-codex"
+export TEAMOS_CREWAI_MODEL="openai-codex/gpt-5.4"
 
 # 2. 平台 API Key
 export TEAMOS_LLM_BASE_URL="https://api.openai.com/v1"

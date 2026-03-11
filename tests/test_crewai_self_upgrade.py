@@ -142,11 +142,11 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         ):
             crewai_self_upgrade._crewai_llm()
 
-        self.assertEqual(captured["model"], "openai-codex/gpt-5.3-codex")
+        self.assertEqual(captured["model"], "openai-codex/gpt-5.4")
         self.assertEqual(captured["api"], "responses")
         self.assertEqual(captured["is_litellm"], False)
         self.assertEqual(captured["max_tokens"], 4000)
-        self.assertEqual(captured["reasoning_effort"], "high")
+        self.assertEqual(captured["reasoning_effort"], "xhigh")
         self.assertNotIn("api_key", captured)
         self.assertNotIn("base_url", captured)
 

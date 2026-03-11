@@ -66,7 +66,7 @@ class BootstrapAndRunTests(unittest.TestCase):
     def test_llm_config_accepts_codex_oauth_without_api_key(self):
         with mock.patch.object(self.mod, "_codex_login_status", return_value=(True, "Logged in using ChatGPT")), mock.patch.dict(
             os.environ,
-            {"TEAMOS_CREWAI_MODEL": "openai-codex/gpt-5.3-codex"},
+            {"TEAMOS_CREWAI_MODEL": "openai-codex/gpt-5.4"},
             clear=True,
         ):
             cfg = self.mod._llm_config()
@@ -74,7 +74,7 @@ class BootstrapAndRunTests(unittest.TestCase):
         self.assertTrue(bool(cfg.get("ok")))
         self.assertTrue(bool(cfg.get("codex_oauth_ready")))
         self.assertEqual(cfg.get("auth_strategy"), "codex_oauth")
-        self.assertEqual(cfg.get("model"), "openai-codex/gpt-5.3-codex")
+        self.assertEqual(cfg.get("model"), "openai-codex/gpt-5.4")
 
     def test_crewai_pip_spec_prefers_archive_url(self):
         with mock.patch.dict(

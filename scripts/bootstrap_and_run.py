@@ -417,7 +417,7 @@ def _llm_config() -> dict[str, Any]:
         or os.getenv("OPENAI_API_KEY")
         or ""
     ).strip()
-    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.3-codex").strip()
+    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.4").strip()
     needs_codex = "codex" in model.lower()
     codex_logged_in, codex_login_message = _codex_login_status()
     codex_oauth_ready = bool(needs_codex and codex_logged_in)
