@@ -1963,23 +1963,68 @@ def cmd_repo_improvement_logs(args: argparse.Namespace) -> None:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
     run = out.get("run") or {}
-    print(f"run_id={run.get('run_id','')}")
-    print(f"state={run.get('state','')}")
-    print(f"project_id={run.get('project_id','')}")
-    print(f"workstream_id={run.get('workstream_id','')}")
-    print(f"objective={run.get('objective','')}")
-    print(f"report_available={bool(out.get('report_available'))}")
+    saved_logs = out.get("saved_logs") if isinstance(out.get("saved_logs"), dict) else {}
+    print("Repo Improvement Run")
+    print("====================")
+    print(f"run_id: {run.get('run_id','')}")
+    print(f"state: {run.get('state','')}")
+    print(f"project_id: {run.get('project_id','')}")
+    print(f"workstream_id: {run.get('workstream_id','')}")
+    print(f"objective: {run.get('objective','')}")
+    print(f"report_available: {bool(out.get('report_available'))}")
+    print(f"planning_agent_logs: {len(list(out.get('planning_agent_logs') or []))}")
+    print(f"events: {len(list(out.get('events') or []))}")
     if out.get("summary"):
-        print(f"summary={out.get('summary')}")
-    print(f"planning_agent_logs={len(list(out.get('planning_agent_logs') or []))}")
-    print(f"events={len(list(out.get('events') or []))}")
-    for item in list(out.get("planning_agent_logs") or []):
-        task_name = str(item.get("task_name") or "").strip()
-        agent = str(item.get("agent") or "").strip()
+        print(f"summary: {out.get('summary')}")
+    if saved_logs:
         print()
-        print(f"[planning] {agent} :: {task_name}")
-        raw = str(item.get("raw") or "").strip()
-        print(raw if raw else "(empty)")
+        print("Saved Logs")
+        print("----------")
+        if saved_logs.get("markdown_path"):
+            print(f"markdown: {saved_logs.get('markdown_path')}")
+        if saved_logs.get("json_path"):
+            print(f"json: {saved_logs.get('json_path')}")
+    print()
+    print("Planning Agent Logs")
+    print("-------------------")
+    planning_logs = list(out.get("planning_agent_logs") or [])
+    if not planning_logs:
+        print("(none)")
+    for idx, item in enumerate(planning_logs, start=1):
+        task_name = str(item.get("task_name") or "").strip() or "task"
+        agent = str(item.get("agent") or "").strip() or "agent"
+        raw = str(item.get("raw") or "").strip() or "(empty)"
+        print()
+        print(f"{idx}. {agent} :: {task_name}")
+        print("-" * 72)
+        print(textwrap.indent(raw, "  "))
+    print()
+    print("Event Timeline")
+    print("--------------")
+    events = list(out.get("events") or [])
+    if not events:
+        print("(none)")
+    for item in events:
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        detail_parts = []
+        for key in ("stage", "reason", "lane", "workflow_id", "title", "status", "records", "bug_findings", "proposal_id", "target_id"):
+            value = payload.get(key)
+            if value in ("", None, [], {}):
+                continue
+            detail_parts.append(f"{key}={value}")
+        detail = "; ".join(detail_parts)
+        if not detail and payload:
+            raw_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            detail = raw_payload if len(raw_payload) <= 220 else raw_payload[:217] + "..."
+        ts = str(item.get("ts") or "")
+        event_type = str(item.get("event_type") or "").replace("SELF_UPGRADE", "REPO_IMPROVEMENT")
+        actor = str(item.get("actor") or "")
+        line = f"- {ts} {event_type}"
+        if actor:
+            line += f" actor={actor}"
+        if detail:
+            line += f" :: {detail}"
+        print(line)
 
 
 def cmd_improvement_targets(args: argparse.Namespace) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import configparser
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -462,3 +463,214 @@ def list_reports(*, target_id: str = "", project_id: str = "", limit: int = 100)
         limit=max(1, min(int(limit or 100), 1000)),
     )
     return sorted(items, key=lambda x: str(x.get("ts") or x.get("run_id") or ""), reverse=True)
+
+
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return dict(row)
+    if hasattr(row, "__dict__"):
+        return dict(getattr(row, "__dict__") or {})
+    out: dict[str, Any] = {}
+    for key in (
+        "run_id",
+        "project_id",
+        "workstream_id",
+        "objective",
+        "state",
+        "created_at",
+        "updated_at",
+    ):
+        if hasattr(row, key):
+            out[key] = getattr(row, key)
+    return out
+
+
+def _serialize_event_row(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(getattr(row, "id", 0) or 0),
+        "ts": str(getattr(row, "ts", "") or ""),
+        "event_type": str(getattr(row, "event_type", "") or ""),
+        "actor": str(getattr(row, "actor", "") or ""),
+        "project_id": str(getattr(row, "project_id", "") or ""),
+        "workstream_id": str(getattr(row, "workstream_id", "") or ""),
+        "payload": dict(getattr(row, "payload", {}) or {}),
+    }
+
+
+def _events_for_run(db: Any, run_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
+    target_run_id = str(run_id or "").strip()
+    if not target_run_id:
+        return []
+    rows: list[dict[str, Any]] = []
+    after_id = 0
+    max_rows = max(1, min(int(limit or 200), 1000))
+    while len(rows) < max_rows:
+        batch = db.list_events(after_id=after_id, limit=1000)
+        if not batch:
+            break
+        for item in batch:
+            after_id = max(after_id, int(getattr(item, "id", 0) or 0))
+            payload = getattr(item, "payload", {}) if isinstance(getattr(item, "payload", {}), dict) else {}
+            if str(payload.get("run_id") or "").strip() != target_run_id:
+                continue
+            rows.append(_serialize_event_row(item))
+            if len(rows) >= max_rows:
+                break
+        if len(batch) < 1000:
+            break
+    return rows[-max_rows:]
+
+
+def repo_improvement_logs_dir(project_id: str) -> Path:
+    workspace_store.ensure_project_scaffold(str(project_id or "teamos"))
+    root = workspace_store.logs_repo_improvement_dir(str(project_id or "teamos"))
+    runs = root / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    return runs
+
+
+def repo_improvement_run_log_paths(*, project_id: str, run_id: str) -> dict[str, str]:
+    base = repo_improvement_logs_dir(project_id)
+    safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(run_id or "").strip()) or "run"
+    return {
+        "json_path": str((base / f"{safe_run_id}.json").resolve()),
+        "markdown_path": str((base / f"{safe_run_id}.md").resolve()),
+    }
+
+
+def build_repo_improvement_run_logs_payload(*, db: Any, run_id: str, limit: int = 200) -> dict[str, Any]:
+    row = db.get_run(run_id)
+    if not row:
+        raise KeyError(f"run_not_found:{run_id}")
+    run = _row_to_dict(row)
+    report = get_report(run_id) or {}
+    crew_debug = report.get("crew_debug") if isinstance(report.get("crew_debug"), dict) else {}
+    agent_logs = []
+    for item in list(crew_debug.get("task_outputs") or []):
+        if not isinstance(item, dict):
+            continue
+        agent_logs.append(
+            {
+                "stage": "planning",
+                "task_name": str(item.get("name") or "").strip(),
+                "agent": str(item.get("agent") or "").strip(),
+                "raw": str(item.get("raw") or ""),
+            }
+        )
+    plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
+    project_id = str(run.get("project_id") or report.get("project_id") or "teamos").strip() or "teamos"
+    payload = {
+        "run": run,
+        "report_available": bool(report),
+        "summary": str(report.get("summary") or plan.get("summary") or ""),
+        "target_id": str(report.get("target_id") or ""),
+        "bug_findings": int(report.get("bug_findings") or 0),
+        "records": list(report.get("records") or []),
+        "pending_proposals": list(report.get("pending_proposals") or []),
+        "planning_agent_logs": agent_logs,
+        "events": _events_for_run(db, run_id, limit=limit),
+        "saved_logs": repo_improvement_run_log_paths(project_id=project_id, run_id=run_id),
+    }
+    return payload
+
+
+def _compact_value(value: Any, *, max_len: int = 160) -> str:
+    if isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    else:
+        text = str(value or "")
+    text = " ".join(text.split())
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
+
+def _event_summary(payload: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("stage", "reason", "lane", "workflow_id", "title", "status", "records", "bug_findings", "proposal_id", "target_id"):
+        value = payload.get(key)
+        if value in ("", None, [], {}):
+            continue
+        parts.append(f"{key}={_compact_value(value)}")
+    if not parts and payload:
+        parts.append(_compact_value(payload))
+    return "; ".join(parts)
+
+
+def _display_event_type(event_type: Any) -> str:
+    return str(event_type or "").strip().replace("SELF_UPGRADE", "REPO_IMPROVEMENT")
+
+
+def render_repo_improvement_run_logs_markdown(payload: dict[str, Any]) -> str:
+    run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+    saved_logs = payload.get("saved_logs") if isinstance(payload.get("saved_logs"), dict) else {}
+    lines: list[str] = [
+        f"# Repo Improvement Run `{run.get('run_id', '')}`",
+        "",
+        "## Summary",
+        "",
+        f"- state: `{run.get('state', '')}`",
+        f"- project_id: `{run.get('project_id', '')}`",
+        f"- workstream_id: `{run.get('workstream_id', '')}`",
+        f"- objective: `{run.get('objective', '')}`",
+        f"- report_available: `{bool(payload.get('report_available'))}`",
+        f"- bug_findings: `{int(payload.get('bug_findings') or 0)}`",
+        f"- records: `{len(list(payload.get('records') or []))}`",
+        f"- pending_proposals: `{len(list(payload.get('pending_proposals') or []))}`",
+    ]
+    summary = str(payload.get("summary") or "").strip()
+    if summary:
+        lines.extend(["", f"> {summary}"])
+    if saved_logs:
+        lines.extend(
+            [
+                "",
+                "## Saved Artifacts",
+                "",
+                f"- markdown: `{saved_logs.get('markdown_path', '')}`",
+                f"- json: `{saved_logs.get('json_path', '')}`",
+            ]
+        )
+    lines.extend(["", "## Planning Agent Logs", ""])
+    agent_logs = list(payload.get("planning_agent_logs") or [])
+    if not agent_logs:
+        lines.append("_No planning agent logs captured._")
+    else:
+        for idx, item in enumerate(agent_logs, start=1):
+            agent = str(item.get("agent") or "").strip() or "agent"
+            task_name = str(item.get("task_name") or "").strip() or "task"
+            raw = str(item.get("raw") or "").rstrip() or "(empty)"
+            lines.extend(
+                [
+                    f"### {idx}. {agent} :: {task_name}",
+                    "",
+                    "```text",
+                    raw,
+                    "```",
+                    "",
+                ]
+            )
+    lines.extend(["## Events", "", "| ts | event | actor | details |", "| --- | --- | --- | --- |"])
+    events = list(payload.get("events") or [])
+    if not events:
+        lines.append("| - | - | - | No runtime events captured |")
+    else:
+        for item in events:
+            event_payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            details = _event_summary(event_payload).replace("|", "\\|")
+            ts = str(item.get("ts") or "").replace("|", "\\|")
+            event_type = _display_event_type(item.get("event_type")).replace("|", "\\|")
+            actor = str(item.get("actor") or "").replace("|", "\\|")
+            lines.append(f"| {ts} | {event_type} | {actor} | {details or '-'} |")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def persist_repo_improvement_run_logs(*, db: Any, run_id: str, limit: int = 200) -> dict[str, Any]:
+    payload = build_repo_improvement_run_logs_payload(db=db, run_id=run_id, limit=limit)
+    saved_logs = payload.get("saved_logs") if isinstance(payload.get("saved_logs"), dict) else {}
+    json_path = Path(str(saved_logs.get("json_path") or "")).resolve()
+    markdown_path = Path(str(saved_logs.get("markdown_path") or "")).resolve()
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    markdown_path.write_text(render_repo_improvement_run_logs_markdown(payload), encoding="utf-8")
+    return payload

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _add_template_app_to_syspath() -> None:
@@ -123,6 +124,74 @@ class ImprovementStoreTests(unittest.TestCase):
             self.assertEqual(report["run_id"], "run-1")
             self.assertEqual(improvement_store.get_report("run-1")["run_id"], "run-1")
             self.assertEqual(len(improvement_store.list_reports(target_id="demo-target", project_id="demo")), 1)
+
+    def test_repo_improvement_run_logs_are_persisted_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self._configure_runtime(td)
+
+            improvement_store.save_report(
+                target_id="demo-target",
+                project_id="demo",
+                report={
+                    "run_id": "run-1",
+                    "summary": "no provable defect signal found this round",
+                    "bug_findings": 0,
+                    "crew_debug": {
+                        "task_outputs": [
+                            {
+                                "name": "bug_scan",
+                                "agent": "Test-Manager",
+                                "raw": "0 bug findings",
+                            }
+                        ]
+                    },
+                },
+            )
+
+            class _FakeDB:
+                def get_run(self, run_id: str):
+                    if run_id != "run-1":
+                        return None
+                    return SimpleNamespace(
+                        run_id="run-1",
+                        project_id="demo",
+                        workstream_id="general",
+                        objective="repo-improvement dry run",
+                        state="DONE",
+                    )
+
+                def list_events(self, after_id: int = 0, limit: int = 1000):
+                    items = [
+                        SimpleNamespace(
+                            id=1,
+                            ts="2026-03-11T04:00:00Z",
+                            event_type="RUN_STARTED",
+                            actor="test",
+                            project_id="demo",
+                            workstream_id="general",
+                            payload={"run_id": "run-1"},
+                        ),
+                        SimpleNamespace(
+                            id=2,
+                            ts="2026-03-11T04:00:05Z",
+                            event_type="RUN_FINISHED",
+                            actor="test",
+                            project_id="demo",
+                            workstream_id="general",
+                            payload={"run_id": "run-1", "bug_findings": 0},
+                        ),
+                    ]
+                    return [item for item in items if item.id > after_id][:limit]
+
+            payload = improvement_store.persist_repo_improvement_run_logs(db=_FakeDB(), run_id="run-1", limit=50)
+            saved_logs = payload["saved_logs"]
+            md_path = Path(saved_logs["markdown_path"])
+            json_path = Path(saved_logs["json_path"])
+
+            self.assertTrue(md_path.exists())
+            self.assertTrue(json_path.exists())
+            self.assertIn("Repo Improvement Run `run-1`", md_path.read_text(encoding="utf-8"))
+            self.assertIn('"run_id": "run-1"', json_path.read_text(encoding="utf-8"))
 
     def test_materialize_target_repo_clones_remote_repo(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -117,6 +117,10 @@ class TeamosReplTests(unittest.TestCase):
                     },
                     "report_available": True,
                     "summary": "no provable defect signal found this round",
+                    "saved_logs": {
+                        "markdown_path": "/tmp/repo-improvement/run-123.md",
+                        "json_path": "/tmp/repo-improvement/run-123.json",
+                    },
                     "planning_agent_logs": [
                         {
                             "stage": "planning",
@@ -137,10 +141,12 @@ class TeamosReplTests(unittest.TestCase):
             self.teamos.cmd_repo_improvement_logs(args)
 
         out = stdout.getvalue()
-        self.assertIn("run_id=run-123", out)
-        self.assertIn("planning_agent_logs=1", out)
-        self.assertIn("[planning] Test-Manager :: bug_scan", out)
+        self.assertIn("Repo Improvement Run", out)
+        self.assertIn("run_id: run-123", out)
+        self.assertIn("Planning Agent Logs", out)
+        self.assertIn("1. Test-Manager :: bug_scan", out)
         self.assertIn("0 bug findings", out)
+        self.assertIn("/tmp/repo-improvement/run-123.md", out)
 
 
 if __name__ == "__main__":

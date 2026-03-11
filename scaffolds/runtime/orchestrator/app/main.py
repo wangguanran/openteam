@@ -1455,72 +1455,11 @@ def v1_run_get(run_id: str):
     return {"run": row.__dict__}
 
 
-def _serialize_event_row(row: Any) -> dict[str, Any]:
-    return {
-        "id": int(row.id),
-        "ts": str(row.ts),
-        "event_type": str(row.event_type),
-        "actor": str(row.actor),
-        "project_id": str(row.project_id),
-        "workstream_id": str(row.workstream_id),
-        "payload": dict(row.payload or {}),
-    }
-
-
-def _events_for_run(run_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
-    target_run_id = str(run_id or "").strip()
-    if not target_run_id:
-        return []
-    rows: list[dict[str, Any]] = []
-    after_id = 0
-    max_rows = max(1, min(int(limit or 200), 1000))
-    while len(rows) < max_rows:
-        batch = DB.list_events(after_id=after_id, limit=1000)
-        if not batch:
-            break
-        for item in batch:
-            after_id = max(after_id, int(item.id))
-            payload = item.payload if isinstance(item.payload, dict) else {}
-            if str(payload.get("run_id") or "").strip() != target_run_id:
-                continue
-            rows.append(_serialize_event_row(item))
-            if len(rows) >= max_rows:
-                break
-        if len(batch) < 1000:
-            break
-    return rows[-max_rows:]
-
-
 def _repo_improvement_run_logs_payload(run_id: str, *, limit: int = 200) -> dict[str, Any]:
-    row = DB.get_run(run_id)
-    if not row:
-        raise HTTPException(status_code=404, detail={"error": "run_not_found", "run_id": run_id})
-    report = improvement_store.get_report(run_id) or {}
-    crew_debug = report.get("crew_debug") if isinstance(report.get("crew_debug"), dict) else {}
-    agent_logs = []
-    for item in list(crew_debug.get("task_outputs") or []):
-        if not isinstance(item, dict):
-            continue
-        agent_logs.append(
-            {
-                "stage": "planning",
-                "task_name": str(item.get("name") or "").strip(),
-                "agent": str(item.get("agent") or "").strip(),
-                "raw": str(item.get("raw") or ""),
-            }
-        )
-    plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
-    return {
-        "run": row.__dict__,
-        "report_available": bool(report),
-        "summary": str(report.get("summary") or plan.get("summary") or ""),
-        "target_id": str(report.get("target_id") or ""),
-        "bug_findings": int(report.get("bug_findings") or 0),
-        "records": list(report.get("records") or []),
-        "pending_proposals": list(report.get("pending_proposals") or []),
-        "planning_agent_logs": agent_logs,
-        "events": _events_for_run(run_id, limit=limit),
-    }
+    try:
+        return improvement_store.persist_repo_improvement_run_logs(db=DB, run_id=run_id, limit=limit)
+    except KeyError:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found", "run_id": run_id}) from None
 
 
 @app.get("/v1/repo_improvement/runs/{run_id}/logs")
