@@ -138,7 +138,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             default_active_window_end_hour=18,
         )
         policy = spec.evaluate_run_policy(
-            now=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+            now=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone.utc),
         )
 
         self.assertFalse(policy.allowed)
@@ -154,7 +154,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         )
         policy = spec.evaluate_run_policy(
             state={"active_since": "2026-03-11T09:00:00+08:00"},
-            now=dt.datetime(2026, 3, 11, 10, 5, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+            now=dt.datetime(2026, 3, 11, 10, 5, tzinfo=dt.timezone.utc),
         )
 
         self.assertFalse(policy.allowed)

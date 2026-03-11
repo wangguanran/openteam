@@ -1474,7 +1474,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                     },
                 ), mock.patch(
                     "app.crewai_self_upgrade_delivery.crewai_workflow_registry._workflow_now_local",
-                    return_value=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+                    return_value=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone.utc),
                 ), mock.patch(
                     "app.crewai_self_upgrade_delivery.execute_task_delivery",
                     side_effect=AssertionError("outside active window must not execute delivery"),

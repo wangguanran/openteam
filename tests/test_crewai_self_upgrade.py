@@ -703,7 +703,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                     },
                 ), mock.patch(
                     "app.crewai_self_upgrade.crewai_workflow_registry._workflow_now_local",
-                    return_value=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))),
+                    return_value=dt.datetime(2026, 3, 11, 20, 0, tzinfo=dt.timezone.utc),
                 ), mock.patch(
                     "app.crewai_self_upgrade._ensure_issue_record",
                     side_effect=AssertionError("outside active window must not materialize issues"),
