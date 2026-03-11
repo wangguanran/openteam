@@ -554,14 +554,6 @@ def _is_repo_improvement_run(run: Any, *, known_run_ids: set[str]) -> bool:
 def _cleanup_stale_repo_improvement_activity() -> None:
     ttl_sec = max(300, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", "900") or "900"))
     known_run_ids = _repo_improvement_run_id_set()
-    fresh_agent_scopes: set[tuple[str, str]] = set()
-
-    for agent in DB.list_agents():
-        state = str(agent.state or "").strip().upper()
-        if state != "RUNNING":
-            continue
-        if _iso_age_seconds(agent.last_heartbeat) < float(ttl_sec):
-            fresh_agent_scopes.add((str(agent.project_id or "").strip(), str(agent.workstream_id or "").strip()))
 
     for run in DB.list_runs():
         if _normalize_run_state(run.state) != "RUNNING":
@@ -569,9 +561,6 @@ def _cleanup_stale_repo_improvement_activity() -> None:
         if not _is_repo_improvement_run(run, known_run_ids=known_run_ids):
             continue
         if _iso_age_seconds(run.last_update) < float(ttl_sec):
-            continue
-        scope = (str(run.project_id or "").strip(), str(run.workstream_id or "").strip())
-        if scope in fresh_agent_scopes:
             continue
         DB.update_run_state(run_id=str(run.run_id), state="FAILED")
         try:
