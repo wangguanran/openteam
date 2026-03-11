@@ -61,7 +61,7 @@ _SAFE_TEST_PREFIXES = (
     "cargo test",
 )
 
-_DELIVERY_LEASE_SCOPE = "self_upgrade_delivery"
+_DELIVERY_LEASE_SCOPE = "repo_improvement_delivery"
 
 
 def _utc_now_iso() -> str:
@@ -114,6 +114,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
+    payload = planning._mirror_repo_improvement_sections(dict(payload or {}))
     if str((payload or {}).get("id") or (payload or {}).get("task_id") or "").strip():
         try:
             improvement_store.upsert_delivery_task(dict(payload or {}))
@@ -158,7 +159,7 @@ def _is_self_upgrade_task(doc: dict[str, Any]) -> bool:
         return False
     return (
         str(orchestration.get("engine") or "").strip().lower() == "crewai"
-        and str(orchestration.get("flow") or "").strip().lower() == "self_upgrade"
+        and planning._is_repo_improvement_flow(orchestration.get("flow"))
     )
 
 
@@ -170,9 +171,11 @@ def _source_repo_root(doc: dict[str, Any]) -> Path:
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
         repo = {}
-    exec_state = doc.get("self_upgrade_execution") or {}
-    if not isinstance(exec_state, dict):
-        exec_state = {}
+    exec_state = planning._repo_improvement_section(
+        doc,
+        new_key="repo_improvement_execution",
+        legacy_key="self_upgrade_execution",
+    )
     for raw in (
         exec_state.get("source_repo_root"),
         repo.get("source_workdir"),
@@ -196,8 +199,11 @@ def _worktree_repo_root(doc: dict[str, Any]) -> Optional[Path]:
 
 
 def _execution_state(doc: dict[str, Any]) -> dict[str, Any]:
-    raw = doc.get("self_upgrade_execution")
-    return dict(raw) if isinstance(raw, dict) else {}
+    return planning._repo_improvement_section(
+        doc,
+        new_key="repo_improvement_execution",
+        legacy_key="self_upgrade_execution",
+    )
 
 
 def _delivery_lease_key(*, project_id: str, task_id: str) -> str:
@@ -2038,7 +2044,7 @@ def _close_bug_task(
     )
     _append_metric(
         logs_dir,
-        event_type="SELF_UPGRADE_BUG_VALIDATION_CLOSED",
+        event_type="REPO_IMPROVEMENT_BUG_VALIDATION_CLOSED",
         actor=actor,
         task_id=task_id,
         project_id=project_id,
@@ -2048,7 +2054,7 @@ def _close_bug_task(
     )
     _emit_event(
         db,
-        event_type="SELF_UPGRADE_TASK_BUG_VALIDATION_CLOSED",
+        event_type="REPO_IMPROVEMENT_TASK_BUG_VALIDATION_CLOSED",
         actor=actor,
         task_doc=doc,
         payload={"task_id": task_id, "reason": close_reason, "feedback": feedback, "summary": summary},
@@ -2102,9 +2108,9 @@ def execute_task_delivery(
     review_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
     qa_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
     documentation_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("documentation_role")) or planning.ROLE_DOCUMENTATION_AGENT)
-    verbose = _env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0")
-    max_attempts = max(1, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS", "2") or "2"))
-    ship_enabled = _env_truthy("TEAMOS_SELF_UPGRADE_SHIP_ENABLED", "1")
+    verbose = _env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0")
+    max_attempts = max(1, int(os.getenv("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_ATTEMPTS", "2") or "2"))
+    ship_enabled = _env_truthy("TEAMOS_REPO_IMPROVEMENT_SHIP_ENABLED", "1")
     lease_guard: Optional[_DeliveryLeaseGuard] = None
     agent_ids: dict[str, str] = {}
     if lease:
@@ -2122,8 +2128,8 @@ def execute_task_delivery(
         agent_ids = _register_delivery_agents(db=db, task_doc=doc)
         prior_status = status
         _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
-        _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
-        _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
+        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
+        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
         audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
         if force or str(audit_doc.get("status") or "").strip().lower() != "approved":
             doc = _update_task_state(
@@ -2197,8 +2203,8 @@ def execute_task_delivery(
                         *_validation_evidence_lines(list(audit_result.reproduction_evidence or [])),
                     ],
                 )
-                _append_metric(logs_dir, event_type="SELF_UPGRADE_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
-                _emit_event(db, event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
+                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
+                _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
             else:
                 if lane == "bug":
                     close_reason = "bug_rejected_by_audit"
@@ -2249,7 +2255,7 @@ def execute_task_delivery(
                 )
                 _append_metric(
                     logs_dir,
-                    event_type="SELF_UPGRADE_ISSUE_AUDIT_BLOCKED",
+                    event_type="REPO_IMPROVEMENT_ISSUE_AUDIT_BLOCKED",
                     actor=actor,
                     task_id=task_id,
                     project_id=project_id,
@@ -2260,7 +2266,7 @@ def execute_task_delivery(
                 )
                 _emit_event(
                     db,
-                    event_type="SELF_UPGRADE_TASK_ISSUE_AUDIT_BLOCKED",
+                    event_type="REPO_IMPROVEMENT_TASK_ISSUE_AUDIT_BLOCKED",
                     actor=actor,
                     task_doc=doc,
                     payload={"task_id": task_id, **audit_result.model_dump()},
@@ -2322,7 +2328,7 @@ def execute_task_delivery(
                 )
                 _append_metric(
                     logs_dir,
-                    event_type="SELF_UPGRADE_BUG_TESTCASE_BOOTSTRAPPED",
+                    event_type="REPO_IMPROVEMENT_BUG_TESTCASE_BOOTSTRAPPED",
                     actor=actor,
                     task_id=task_id,
                     project_id=project_id,
@@ -2332,7 +2338,7 @@ def execute_task_delivery(
                 )
                 _emit_event(
                     db,
-                    event_type="SELF_UPGRADE_TASK_BUG_TESTCASE_BOOTSTRAPPED",
+                    event_type="REPO_IMPROVEMENT_TASK_BUG_TESTCASE_BOOTSTRAPPED",
                     actor=actor,
                     task_doc=doc,
                     payload={"task_id": task_id, **bug_testcase_result.model_dump()},
@@ -2408,7 +2414,7 @@ def execute_task_delivery(
             )
             _append_metric(
                 logs_dir,
-                event_type="SELF_UPGRADE_BUG_REPRO_CONFIRMED",
+                event_type="REPO_IMPROVEMENT_BUG_REPRO_CONFIRMED",
                 actor=actor,
                 task_id=task_id,
                 project_id=project_id,
@@ -2418,7 +2424,7 @@ def execute_task_delivery(
             )
             _emit_event(
                 db,
-                event_type="SELF_UPGRADE_TASK_BUG_REPRO_CONFIRMED",
+                event_type="REPO_IMPROVEMENT_TASK_BUG_REPRO_CONFIRMED",
                 actor=actor,
                 task_doc=doc,
                 payload={"task_id": task_id, **bug_repro_result.model_dump()},
@@ -2436,7 +2442,7 @@ def execute_task_delivery(
             _append_markdown(logs_dir, "03_work.md", "Merge Conflict Recovery", ["Scheduler-Agent reassigned the task back to coding after a release-time merge conflict."])
             _append_metric(
                 logs_dir,
-                event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
+                event_type="REPO_IMPROVEMENT_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
                 actor=actor,
                 task_id=task_id,
                 project_id=project_id,
@@ -2446,7 +2452,7 @@ def execute_task_delivery(
             )
             _emit_event(
                 db,
-                event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
+                event_type="REPO_IMPROVEMENT_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
                 actor=actor,
                 task_doc=doc,
                 payload={"task_id": task_id, "worktree": str(worktree_root)},
@@ -2500,12 +2506,12 @@ def execute_task_delivery(
                 doc = _load_yaml(ledger_path)
                 doc = _persist_validation_evidence(ledger_path, doc, stage="coding", evidence=coding_evidence)
                 _append_markdown(logs_dir, "03_work.md", f"Coding Attempt {attempt}", [impl.summary or "(no summary)", *[f"changed_file: {p}" for p in impl.changed_files], *[f"unresolved: {u}" for u in impl.unresolved]])
-                _append_metric(logs_dir, event_type="SELF_UPGRADE_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
+                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
                 if coding_evidence:
                     _append_markdown(logs_dir, "04_test.md", f"Coding Validation Evidence {attempt}", _validation_evidence_lines(coding_evidence))
                     _append_metric(
                         logs_dir,
-                        event_type="SELF_UPGRADE_CODING_VALIDATION_EVIDENCE",
+                        event_type="REPO_IMPROVEMENT_CODING_VALIDATION_EVIDENCE",
                         actor=actor,
                         task_id=task_id,
                         project_id=project_id,
@@ -2564,7 +2570,7 @@ def execute_task_delivery(
                         extra_execution={"active_role": documentation_role, "last_feedback": list(last_docs.followups or []), "last_error": "" if last_docs.approved else str(last_docs.summary or "documentation update blocked")},
                     )
                     _append_markdown(logs_dir, "05_release.md", f"Documentation Attempt {attempt}.{docs_round}", [last_docs.summary or "(no summary)", *[f"changed_file: {x}" for x in last_docs.changed_files], *[f"followup: {x}" for x in last_docs.followups]])
-                    _append_metric(logs_dir, event_type="SELF_UPGRADE_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}.{docs_round}", payload=last_docs.model_dump())
+                    _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}.{docs_round}", payload=last_docs.model_dump())
                     _set_agent_state(db, agent_ids, documentation_role, state="DONE" if last_docs.approved else "FAILED", action=f"documentation attempt {attempt}.{docs_round} {'approved' if last_docs.approved else 'blocked'}")
                     if not last_docs.approved:
                         feedback = list(last_docs.followups or ([last_docs.summary] if last_docs.summary else ["documentation update blocked"]))
@@ -2600,7 +2606,7 @@ def execute_task_delivery(
                         *[f"feedback: {x}" for x in last_review.feedback],
                     ],
                 )
-                _append_metric(logs_dir, event_type="SELF_UPGRADE_REVIEW_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"review attempt {attempt}.{max(1, docs_round)}", payload=last_review.model_dump())
+                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_REVIEW_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"review attempt {attempt}.{max(1, docs_round)}", payload=last_review.model_dump())
                 _set_agent_state(db, agent_ids, review_role, state="DONE" if last_review.approved else "FAILED", action=f"review attempt {attempt}.{max(1, docs_round)} {'approved' if last_review.approved else 'rejected'}")
                 if not bool(last_review.code_approved):
                     feedback = list(last_review.code_feedback or last_review.feedback or ([last_review.summary] if last_review.summary else ["review rejected the code changes"]))
@@ -2645,7 +2651,7 @@ def execute_task_delivery(
                         *_validation_evidence_lines(qa_evidence),
                     ],
                 )
-                _append_metric(logs_dir, event_type="SELF_UPGRADE_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
+                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
                 _set_agent_state(db, agent_ids, qa_role, state="DONE" if last_qa.approved else "FAILED", action=f"qa attempt {attempt} {'approved' if last_qa.approved else 'rejected'}")
                 if not last_qa.approved:
                     feedback = list(last_qa.failures or ([last_qa.summary] if last_qa.summary else ["qa rejected the task"]))
@@ -2667,7 +2673,7 @@ def execute_task_delivery(
                     _append_markdown(logs_dir, "05_release.md", f"Release Scope Violation Attempt {attempt}", feedback)
                     _append_metric(
                         logs_dir,
-                        event_type="SELF_UPGRADE_RELEASE_SCOPE_VIOLATION",
+                        event_type="REPO_IMPROVEMENT_RELEASE_SCOPE_VIOLATION",
                         actor=actor,
                         task_id=task_id,
                         project_id=project_id,
@@ -2678,7 +2684,7 @@ def execute_task_delivery(
                     )
                     _emit_event(
                         db,
-                        event_type="SELF_UPGRADE_TASK_DELIVERY_RELEASE_SCOPE_VIOLATION",
+                        event_type="REPO_IMPROVEMENT_TASK_DELIVERY_RELEASE_SCOPE_VIOLATION",
                         actor=actor,
                         task_doc=doc,
                         payload={
@@ -2720,7 +2726,7 @@ def execute_task_delivery(
                         _append_markdown(logs_dir, "05_release.md", f"Merge Conflict Attempt {attempt}", [conflict_error])
                         _append_metric(
                             logs_dir,
-                            event_type="SELF_UPGRADE_DELIVERY_MERGE_CONFLICT",
+                            event_type="REPO_IMPROVEMENT_DELIVERY_MERGE_CONFLICT",
                             actor=actor,
                             task_id=task_id,
                             project_id=project_id,
@@ -2731,7 +2737,7 @@ def execute_task_delivery(
                         )
                         _emit_event(
                             db,
-                            event_type="SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT",
+                            event_type="REPO_IMPROVEMENT_TASK_DELIVERY_MERGE_CONFLICT",
                             actor=actor,
                             task_doc=doc,
                             payload={"task_id": task_id, "error": conflict_error, "attempt": attempt, "owner_role": owner_role},
@@ -2775,8 +2781,8 @@ def execute_task_delivery(
                 _set_agent_state(db, agent_ids, "Release-Agent", state="DONE", action="task released")
                 _finish_delivery_agents(db, agent_ids, state="DONE", action="delivery finished")
                 _append_markdown(logs_dir, "05_release.md", "Release", [f"branch: {release_result.get('branch') or ''}", f"commit_sha: {release_result.get('commit_sha') or ''}", f"pull_request_url: {release_result.get('pull_request_url') or ''}"])
-                _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_FINISHED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery finished", payload=release_result)
-                _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_FINISHED", actor=actor, task_doc=doc, payload={"task_id": task_id, "release": release_result})
+                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_FINISHED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery finished", payload=release_result)
+                _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_FINISHED", actor=actor, task_doc=doc, payload={"task_id": task_id, "release": release_result})
                 return {"ok": True, "task_id": task_id, "status": "closed", "attempt_count": attempt, "release": release_result, "worktree": str(worktree_root), "project_id": project_id}
 
             if docs_retry_exhausted:
@@ -2787,16 +2793,16 @@ def execute_task_delivery(
         doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": blocked_reason})
         _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery blocked")
         _append_markdown(logs_dir, "07_retro.md", "Delivery Blocked", [blocked_reason, *[f"feedback: {x}" for x in feedback]])
-        _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_BLOCKED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery blocked", payload={"feedback": feedback, "audit": last_audit.model_dump(), "review": last_review.model_dump(), "qa": last_qa.model_dump(), "documentation": last_docs.model_dump()}, severity="ERROR")
-        _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_BLOCKED", actor=actor, task_doc=doc, payload={"task_id": task_id, "feedback": feedback})
+        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_BLOCKED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery blocked", payload={"feedback": feedback, "audit": last_audit.model_dump(), "review": last_review.model_dump(), "qa": last_qa.model_dump(), "documentation": last_docs.model_dump()}, severity="ERROR")
+        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_BLOCKED", actor=actor, task_doc=doc, payload={"task_id": task_id, "feedback": feedback})
         return {"ok": False, "task_id": task_id, "status": "blocked", "feedback": feedback, "worktree": str(worktree_root), "project_id": project_id}
     except Exception as e:
         doc = _load_yaml(ledger_path)
         doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_error": str(e)[:500]})
         _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery failed")
         _append_markdown(logs_dir, "07_retro.md", "Delivery Failed", [str(e)[:800]])
-        _append_metric(logs_dir, event_type="SELF_UPGRADE_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": str(e)[:800]}, severity="ERROR")
-        _emit_event(db, event_type="SELF_UPGRADE_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": str(e)[:500]})
+        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": str(e)[:800]}, severity="ERROR")
+        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": str(e)[:500]})
         raise
     finally:
         if lease_guard is not None:
@@ -2970,7 +2976,7 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
     out: list[dict[str, Any]] = []
     scanned = 0
     processed = 0
-    limit = max(1, int(max_tasks or os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
+    limit = max(1, int(max_tasks or os.getenv("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
     for task in candidates:
         if wanted_task_id and str(task.get("task_id") or "") != wanted_task_id:
             continue

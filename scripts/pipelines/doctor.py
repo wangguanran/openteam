@@ -35,7 +35,10 @@ def _load_base_url(*, profile: str = "") -> str:
     if not cfg.exists():
         return "http://127.0.0.1:8787"
     try:
-        import tomli  # type: ignore
+        try:
+            import tomllib as tomli  # type: ignore
+        except Exception:
+            import tomli  # type: ignore
 
         doc = tomli.loads(cfg.read_text(encoding="utf-8"))
     except Exception:
@@ -108,9 +111,9 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
             pass
 
 
-def _self_upgrade_check(repo_root: Path) -> dict[str, Any]:
+def _repo_improvement_check(repo_root: Path) -> dict[str, Any]:
     """
-    Best-effort runtime-state check for self-upgrade.
+    Best-effort runtime-state check for repo-improvement.
     Persistent state now lives in the runtime DB / control-plane status, not local JSON files.
     """
     runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
@@ -211,8 +214,8 @@ def main(argv: list[str] | None = None) -> int:
     if not bool(db.get("ok")):
         ok = False
 
-    # Runtime-managed self-upgrade status (informational).
-    report["self_upgrade"] = _self_upgrade_check(repo)
+    # Runtime-managed repo-improvement status (informational).
+    report["repo_improvement"] = _repo_improvement_check(repo)
 
     # Control plane health + API coverage (best-effort; should pass when runtime matches repo template).
     base = str(args.base_url or "").strip().rstrip("/") or _load_base_url(profile=str(args.profile or ""))
@@ -221,9 +224,10 @@ def main(argv: list[str] | None = None) -> int:
         hz = _http_json(base + "/healthz", timeout_sec=5)
         st = _http_json(base + "/v1/status", timeout_sec=5)
         report["control_plane"].update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
-        if isinstance(st.get("self_upgrade"), dict):
-            report["self_upgrade"]["last_run"] = dict((st.get("self_upgrade") or {}).get("last_run") or {})
-            report["self_upgrade"]["control_plane_summary"] = st.get("self_upgrade") or {}
+        repo_improvement = st.get("repo_improvement") if isinstance(st.get("repo_improvement"), dict) else st.get("self_upgrade")
+        if isinstance(repo_improvement, dict):
+            report["repo_improvement"]["last_run"] = dict((repo_improvement or {}).get("last_run") or {})
+            report["repo_improvement"]["control_plane_summary"] = repo_improvement or {}
         trs = st.get("task_run_sync")
         if isinstance(trs, dict):
             report["control_plane"]["task_run_sync"] = trs
@@ -259,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
             "/v1/tasks/new",
             "/v1/recovery/scan",
             "/v1/recovery/resume",
-            "/v1/self_upgrade/run",
+            "/v1/repo_improvement/run",
         ]
         missing = [p for p in required if p not in paths]
         report["control_plane"]["api_coverage"] = {"ok": not missing, "missing_paths": missing[:50]}
@@ -303,12 +307,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gh: {'OK' if gh_ok else 'FAIL'} {gh_msg}")
         dbs = report.get("postgres_db") or {}
         print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
-        su = report.get("self_upgrade") or {}
-        if isinstance(su, dict):
-            last = su.get("last_run") if isinstance(su.get("last_run"), dict) else {}
+        repo_improvement = report.get("repo_improvement") or {}
+        if isinstance(repo_improvement, dict):
+            last = repo_improvement.get("last_run") if isinstance(repo_improvement.get("last_run"), dict) else {}
             print(
-                "self_upgrade: "
-                f"backend={str(su.get('state_backend') or '').strip() or 'unknown'} "
+                "repo_improvement: "
+                f"backend={str(repo_improvement.get('state_backend') or '').strip() or 'unknown'} "
                 f"status={str(last.get('status') or '').strip() or 'UNKNOWN'} "
                 f"ts={str(last.get('ts') or '').strip()}"
             )

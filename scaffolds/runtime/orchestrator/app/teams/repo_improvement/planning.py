@@ -126,8 +126,9 @@ ROLE_CODE_QUALITY_AGENT = crewai_role_registry.ROLE_CODE_QUALITY_AGENT
 
 MODULE_ALIASES = {
     "runtime": "Runtime",
-    "self-upgrade": "Self-Upgrade",
-    "self-upgrade-runtime": "Self-Upgrade",
+    "self-upgrade": "Repo-Improvement",
+    "self-upgrade-runtime": "Repo-Improvement",
+    "repo-improvement": "Repo-Improvement",
     "ci": "CI",
     "doctor": "Doctor",
     "bootstrap": "Bootstrap",
@@ -159,7 +160,7 @@ MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
     (("requirements", "raw_inputs", "requirement"), "Requirements"),
     (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
     (("security", "auth", "oauth", "token"), "Security"),
-    (("crewai_self_upgrade", "self_upgrade", "self-upgrade"), "Self-Upgrade"),
+    (("crewai_self_upgrade", "self_upgrade", "self-upgrade", "repo_improvement", "repo-improvement"), "Repo-Improvement"),
     (("control-plane", "orchestrator", "main.py", "runtime"), "Runtime"),
 ]
 
@@ -198,7 +199,10 @@ class LocalizedTaskText(BaseModel):
 
 
 def _env_truthy(name: str, default: str = "0") -> bool:
-    return str(os.getenv(name, default) or "").strip().lower() not in ("", "0", "false", "no", "off")
+    raw = os.getenv(name)
+    if (raw is None or not str(raw).strip()) and str(name).startswith("TEAMOS_REPO_IMPROVEMENT_"):
+        raw = os.getenv(name.replace("TEAMOS_REPO_IMPROVEMENT_", "TEAMOS_SELF_UPGRADE_"))
+    return str(raw if raw is not None else default).strip().lower() not in ("", "0", "false", "no", "off")
 
 
 def _utc_now_iso() -> str:
@@ -222,7 +226,49 @@ role_display_zh = crewai_role_registry.role_display_zh
 
 
 def _module_slug(module: str) -> str:
-    return _slug(module, default="self-upgrade")
+    return _slug(module, default="repo-improvement")
+
+
+def _is_repo_improvement_flow(flow: Any) -> bool:
+    return str(flow or "").strip().lower() in ("repo_improvement", "self_upgrade")
+
+
+def _repo_improvement_section(doc: dict[str, Any], *, new_key: str, legacy_key: str) -> dict[str, Any]:
+    value = doc.get(new_key)
+    if not isinstance(value, dict):
+        value = doc.get(legacy_key)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _mirror_repo_improvement_sections(payload: dict[str, Any]) -> dict[str, Any]:
+    doc = dict(payload or {})
+    for new_key, legacy_key in (
+        ("repo_improvement", "self_upgrade"),
+        ("repo_improvement_execution", "self_upgrade_execution"),
+        ("repo_improvement_audit", "self_upgrade_audit"),
+        ("repo_improvement_milestone", "self_upgrade_milestone"),
+    ):
+        new_value = doc.get(new_key)
+        legacy_value = doc.get(legacy_key)
+        if isinstance(new_value, dict) and not isinstance(legacy_value, dict):
+            doc[legacy_key] = dict(new_value)
+        elif isinstance(legacy_value, dict) and not isinstance(new_value, dict):
+            doc[new_key] = dict(legacy_value)
+        elif isinstance(new_value, dict) and isinstance(legacy_value, dict):
+            doc[new_key] = dict(new_value)
+            doc[legacy_key] = dict(new_value)
+    orchestration = doc.get("orchestration")
+    if isinstance(orchestration, dict) and _is_repo_improvement_flow(orchestration.get("flow")):
+        orchestration_out = dict(orchestration)
+        orchestration_out["flow"] = "repo_improvement"
+        doc["orchestration"] = orchestration_out
+    workflows = doc.get("workflows")
+    if isinstance(workflows, list):
+        doc["workflows"] = [
+            "RepoImprovement" if str(item or "").strip() in ("SelfUpgrade", "self_upgrade", "repo_improvement") else item
+            for item in workflows
+        ]
+    return doc
 
 
 def _normalize_module_name(
@@ -252,10 +298,10 @@ def _normalize_module_name(
             return module
 
     if raw_slug and raw_slug not in ("item", "general"):
-        return "-".join([part.capitalize() for part in raw_slug.split("-") if part]) or "Self-Upgrade"
+        return "-".join([part.capitalize() for part in raw_slug.split("-") if part]) or "Repo-Improvement"
     if str(lane or "").strip().lower() == "bug":
         return "Runtime"
-    return "Self-Upgrade"
+    return "Repo-Improvement"
 
 
 def _normalize_repo_doc_path(path: str) -> str:
@@ -412,7 +458,7 @@ def _proposal_issue_marker(doc: dict[str, Any]) -> str:
 
 def _task_issue_marker(*, repo_locator: str, repo_root: Path, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> str:
     fingerprint = _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding) + "-" + _slug(work_item.title, default="work")
-    return f"<!-- teamos:self_upgrade:{fingerprint} -->"
+    return f"<!-- teamos:repo_improvement:{fingerprint} -->"
 
 
 def _normalize_owner_role(role_id: str, lane: str) -> str:
@@ -451,7 +497,7 @@ def _normalize_issue_text(text: str, *, empty_fallback: str = "(空)") -> str:
 
 
 def _zh_localization_enabled() -> bool:
-    return _env_truthy("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "1")
+    return _env_truthy("TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH", "1")
 
 
 def _git_dir(repo_root: Path) -> Optional[Path]:
@@ -847,7 +893,7 @@ def _update_bug_lane_state(
     )
     if previous_status != "dormant" and status == "dormant":
         db.add_event(
-            event_type="SELF_UPGRADE_BUG_LANE_DORMANT",
+            event_type="REPO_IMPROVEMENT_BUG_LANE_DORMANT",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -860,7 +906,7 @@ def _update_bug_lane_state(
         )
     elif previous_status == "dormant" and status != "dormant":
         db.add_event(
-            event_type="SELF_UPGRADE_BUG_LANE_RESUMED",
+            event_type="REPO_IMPROVEMENT_BUG_LANE_RESUMED",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -1798,7 +1844,7 @@ def _compat_file_mirror_enabled() -> bool:
 
 def _is_self_upgrade_task_doc(doc: dict[str, Any]) -> bool:
     orchestration = doc.get("orchestration") or {}
-    return isinstance(orchestration, dict) and str(orchestration.get("flow") or "").strip().lower() == "self_upgrade"
+    return isinstance(orchestration, dict) and _is_repo_improvement_flow(orchestration.get("flow"))
 
 
 def _iter_self_upgrade_task_docs(*, project_id: str, target_id: str = "") -> list[dict[str, Any]]:
@@ -1857,6 +1903,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
+    payload = _mirror_repo_improvement_sections(dict(payload or {}))
     if _is_self_upgrade_task_doc(payload or {}):
         try:
             improvement_store.upsert_delivery_task(dict(payload or {}))
@@ -1953,7 +2000,7 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
     module = _proposal_module(doc)
     labels = [
         "teamos",
-        "source:self-upgrade",
+        "source:repo-improvement",
         f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'feature'}",
         f"module:{_module_slug(module)}",
         "stage:proposal",
@@ -1967,7 +2014,7 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
 
 
 def _task_issue_stage_label(doc: dict[str, Any]) -> str:
-    execution = doc.get("self_upgrade_execution") or {}
+    execution = _repo_improvement_section(doc, new_key="repo_improvement_execution", legacy_key="self_upgrade_execution")
     stage = str((execution if isinstance(execution, dict) else {}).get("stage") or "").strip().lower()
     status = str(doc.get("status") or "").strip().lower()
     if status in ("needs_clarification",):
@@ -2001,13 +2048,13 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
     lane = str(finding.lane or "bug").strip().lower() or "bug"
     labels = [
         "teamos",
-        "source:self-upgrade",
+        "source:repo-improvement",
         f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'bug'}",
         f"module:{_module_slug(module)}",
         _task_issue_stage_label(doc),
         _version_label(str(finding.version_bump or "")),
     ]
-    milestone_doc = doc.get("self_upgrade_milestone") or {}
+    milestone_doc = _repo_improvement_section(doc, new_key="repo_improvement_milestone", legacy_key="self_upgrade_milestone")
     if not isinstance(milestone_doc, dict):
         milestone_doc = {}
     milestone_title = ""
@@ -2022,7 +2069,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
 
 
 def _task_issue_audit_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
-    audit = doc.get("self_upgrade_audit") or {}
+    audit = _repo_improvement_section(doc, new_key="repo_improvement_audit", legacy_key="self_upgrade_audit")
     if not isinstance(audit, dict):
         audit = {}
     lane = str(audit.get("classification") or finding.lane or "").strip().lower() or str(finding.lane or "bug").strip().lower() or "bug"
@@ -2116,9 +2163,9 @@ def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Op
         if not isinstance(doc, dict):
             return
         orchestration = doc.get("orchestration") or {}
-        if not isinstance(orchestration, dict) or str(orchestration.get("flow") or "").strip().lower() != "self_upgrade":
+        if not isinstance(orchestration, dict) or not _is_repo_improvement_flow(orchestration.get("flow")):
             return
-        milestone = doc.get("self_upgrade_milestone") or {}
+        milestone = _repo_improvement_section(doc, new_key="repo_improvement_milestone", legacy_key="self_upgrade_milestone")
         if not isinstance(milestone, dict) or str(milestone.get("milestone_id") or "").strip() != milestone_id:
             return
         total_items += 1
@@ -2314,7 +2361,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             done_items=int(milestone.get("done_items") or 0),
         )
     if repo_locator:
-        description = f"Team OS self-upgrade release milestone for {str(milestone.get('title') or '').strip()}."
+        description = f"Team OS repo-improvement release milestone for {str(milestone.get('title') or '').strip()}."
         try:
             milestone_number = ensure_milestone(
                 repo_locator,
@@ -2331,7 +2378,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         labels = sorted(
             {
                 "teamos",
-                "source:self-upgrade",
+                "source:repo-improvement",
                 "type:process",
                 "module:release",
                 "stage:release",
@@ -2379,7 +2426,7 @@ def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, 
     milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
     if lane not in ("feature", "bug") or not milestone_title or not repo_locator:
         return None
-    description = f"Team OS self-upgrade release milestone for {milestone_title}."
+    description = f"Team OS repo-improvement release milestone for {milestone_title}."
     try:
         return ensure_milestone(repo_locator, title=milestone_title, description=description)
     except (GitHubAuthError, GitHubIssuesBusError):
@@ -2734,7 +2781,7 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
             if db is not None:
                 try:
                     db.add_event(
-                        event_type="SELF_UPGRADE_WORKFLOW_SKIPPED",
+                        event_type="REPO_IMPROVEMENT_WORKFLOW_SKIPPED",
                         actor=actor,
                         project_id=project_id,
                         workstream_id=str(proposal.get("workstream_id") or "general").strip() or "general",
@@ -2816,7 +2863,7 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
             if db is not None:
                 try:
                     db.add_event(
-                        event_type="SELF_UPGRADE_PROPOSAL_DISCUSSION_UPDATED",
+                        event_type="REPO_IMPROVEMENT_PROPOSAL_DISCUSSION_UPDATED",
                         actor=actor,
                         project_id=str(proposal.get("project_id") or "teamos"),
                         workstream_id=str(proposal.get("workstream_id") or "general"),
@@ -2834,7 +2881,7 @@ def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discuss
             if db is not None:
                 try:
                     db.add_event(
-                        event_type="SELF_UPGRADE_PROPOSAL_DISCUSSION_FAILED",
+                        event_type="REPO_IMPROVEMENT_PROPOSAL_DISCUSSION_FAILED",
                         actor=actor,
                         project_id=str(proposal.get("project_id") or "teamos"),
                         workstream_id=str(proposal.get("workstream_id") or "general"),
@@ -3184,15 +3231,15 @@ def _ensure_task_record(
     doc["need_pm_decision"] = False
     doc["orchestration"] = {
         "engine": "crewai",
-        "flow": "self_upgrade",
+        "flow": "repo_improvement",
         "finding_kind": finding.kind,
         "finding_lane": finding.lane,
         "finding_fingerprint": _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding),
         "work_item_key": work_item_key,
         "proposal_id": proposal_id,
     }
-    doc["workflows"] = ["SelfUpgrade"]
-    doc["self_upgrade"] = {
+    doc["workflows"] = ["RepoImprovement"]
+    repo_improvement_doc = {
         "kind": finding.kind,
         "lane": finding.lane,
         "module": finding.module,
@@ -3217,7 +3264,9 @@ def _ensure_task_record(
             "reopen_on_failed_review_or_qa": True,
         },
     }
-    doc["self_upgrade_execution"] = {
+    doc["self_upgrade"] = dict(repo_improvement_doc)
+    doc["repo_improvement"] = dict(repo_improvement_doc)
+    repo_improvement_execution = {
         "stage": str(existing_execution.get("stage") or "queued"),
         "attempt_count": int(existing_execution.get("attempt_count") or 0),
         "last_run_at": str(existing_execution.get("last_run_at") or ""),
@@ -3231,8 +3280,12 @@ def _ensure_task_record(
         "commit_sha": str(existing_execution.get("commit_sha") or ""),
         "closed_at": str(existing_execution.get("closed_at") or ""),
     }
-    doc["self_upgrade_audit"] = audit_doc
-    doc["self_upgrade_milestone"] = milestone_doc
+    doc["self_upgrade_execution"] = dict(repo_improvement_execution)
+    doc["repo_improvement_execution"] = dict(repo_improvement_execution)
+    doc["self_upgrade_audit"] = dict(audit_doc)
+    doc["repo_improvement_audit"] = dict(audit_doc)
+    doc["self_upgrade_milestone"] = dict(milestone_doc)
+    doc["repo_improvement_milestone"] = dict(milestone_doc)
     doc["documentation_policy"] = documentation_policy
     doc["execution_policy"] = {
         "issue_only_scope": True,
@@ -3284,10 +3337,10 @@ def _issue_body(
         summary=str(work_item.summary or finding.summary or ""),
         lane=str(finding.lane or ""),
     )
-    issue_marker = str(marker or "").strip() or f"<!-- teamos:self_upgrade:{fingerprint} -->"
+    issue_marker = str(marker or "").strip() or f"<!-- teamos:repo_improvement:{fingerprint} -->"
     lines = [
         issue_marker,
-        "# 自升级任务",
+        "# 仓库改进任务",
         "",
         f"- 类型: {_issue_type_token(finding.lane)}",
         f"- Module: {module}",
@@ -3803,7 +3856,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     force = bool(getattr(spec, "force", False))
     dry_run = bool(getattr(spec, "dry_run", False))
     trigger = str(getattr(spec, "trigger", "") or "manual").strip() or "manual"
-    max_findings = max(1, min(int(os.getenv("TEAMOS_SELF_UPGRADE_MAX_FINDINGS", "3") or "3"), 10))
+    max_findings = max(1, min(int(os.getenv("TEAMOS_REPO_IMPROVEMENT_MAX_FINDINGS", "3") or "3"), 10))
     run_started_at = _utc_now_iso()
     enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
 
@@ -3832,7 +3885,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             },
         )
         db.add_event(
-            event_type="SELF_UPGRADE_SKIPPED",
+            event_type="REPO_IMPROVEMENT_SKIPPED",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -3859,7 +3912,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             {"ts": _utc_now_iso(), "target_id": target_id, "repo_root": str(repo_root), "repo_locator": repo_locator, "status": "SKIPPED", "reason": skip_reason},
         )
         db.add_event(
-            event_type="SELF_UPGRADE_SKIPPED",
+            event_type="REPO_IMPROVEMENT_SKIPPED",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -3875,7 +3928,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         role_filter=_planning_role_ids(project_id=project_id),
     )
     db.add_event(
-        event_type="SELF_UPGRADE_STARTED",
+        event_type="REPO_IMPROVEMENT_STARTED",
         actor=actor,
         project_id=project_id,
         workstream_id=workstream_id,
@@ -3898,7 +3951,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     )
     if bug_scan_policy.get("dormant"):
         db.add_event(
-            event_type="SELF_UPGRADE_BUG_LANE_SKIPPED",
+            event_type="REPO_IMPROVEMENT_BUG_LANE_SKIPPED",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -3916,7 +3969,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             repo_context=repo_context,
             project_id=project_id,
             max_findings=max_findings,
-            verbose=_env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0"),
+            verbose=_env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0"),
             bug_scan_dormant=bool(bug_scan_policy.get("dormant")),
         )
         current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
@@ -3936,7 +3989,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         if any(x in err_text.lower() for x in ("insufficient_quota", "429", "rate limit")):
             import datetime as _dt
 
-            backoff_hours = max(1, int(os.getenv("TEAMOS_SELF_UPGRADE_FAILURE_BACKOFF_HOURS", "1") or "1"))
+            backoff_hours = max(1, int(os.getenv("TEAMOS_REPO_IMPROVEMENT_FAILURE_BACKOFF_HOURS", "1") or "1"))
             backoff_until = (
                 _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=backoff_hours)
             ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -3974,7 +4027,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
         if not workflow.enabled:
             db.add_event(
-                event_type="SELF_UPGRADE_FINDING_SKIPPED",
+                event_type="REPO_IMPROVEMENT_FINDING_SKIPPED",
                 actor=actor,
                 project_id=project_id,
                 workstream_id=finding.workstream_id or workstream_id,
@@ -3995,7 +4048,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
         if not runtime_policy.allowed:
             db.add_event(
-                event_type="SELF_UPGRADE_FINDING_SKIPPED",
+                event_type="REPO_IMPROVEMENT_FINDING_SKIPPED",
                 actor=actor,
                 project_id=project_id,
                 workstream_id=finding.workstream_id or workstream_id,
@@ -4024,7 +4077,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
                 )
                 records.append(record)
                 db.add_event(
-                    event_type="SELF_UPGRADE_RECORD_CREATED",
+                    event_type="REPO_IMPROVEMENT_RECORD_CREATED",
                     actor=actor,
                     project_id=project_id,
                     workstream_id=work_item.workstream_id or finding.workstream_id or workstream_id,
@@ -4061,7 +4114,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
                 )
                 records.append(record)
                 db.add_event(
-                    event_type="SELF_UPGRADE_RECORD_CREATED",
+                    event_type="REPO_IMPROVEMENT_RECORD_CREATED",
                     actor=actor,
                     project_id=project_id,
                     workstream_id=work_item.workstream_id or finding.workstream_id or workstream_id,
@@ -4070,7 +4123,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             if not dry_run:
                 _mark_proposal_materialized(proposal_id)
             db.add_event(
-                event_type="SELF_UPGRADE_PROPOSAL_MATERIALIZED",
+                event_type="REPO_IMPROVEMENT_PROPOSAL_MATERIALIZED",
                 actor=actor,
                 project_id=project_id,
                 workstream_id=finding.workstream_id or workstream_id,
@@ -4093,7 +4146,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         }
         pending_proposals.append(pending_doc)
         db.add_event(
-            event_type="SELF_UPGRADE_PROPOSAL_PENDING",
+            event_type="REPO_IMPROVEMENT_PROPOSAL_PENDING",
             actor=actor,
             project_id=project_id,
             workstream_id=finding.workstream_id or workstream_id,
@@ -4168,7 +4221,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     )
     _finish_agents(db=db, agent_ids=agent_ids, state="DONE", current_action="repo-improvement recorded")
     db.add_event(
-        event_type="SELF_UPGRADE_FINISHED",
+        event_type="REPO_IMPROVEMENT_FINISHED",
         actor=actor,
         project_id=project_id,
         workstream_id=workstream_id,

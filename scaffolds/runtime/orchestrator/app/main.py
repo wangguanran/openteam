@@ -317,9 +317,9 @@ DB = _db()
 # --- Panel sync scheduling (best-effort; GitHub Projects is view-layer) ---
 _PANEL_DIRTY: set[str] = set()
 _PANEL_LOCK = threading.Lock()
-_SELF_UPGRADE_LOCK = threading.Lock()
-_SELF_UPGRADE_DELIVERY_LOCK = threading.Lock()
-_SELF_UPGRADE_STALE_AGENT_ROLES = frozenset(
+_REPO_IMPROVEMENT_LOCK = threading.Lock()
+_REPO_IMPROVEMENT_DELIVERY_LOCK = threading.Lock()
+_REPO_IMPROVEMENT_STALE_AGENT_ROLES = frozenset(
     {
         crewai_self_upgrade.ROLE_PRODUCT_MANAGER,
         crewai_self_upgrade.ROLE_TEST_MANAGER,
@@ -474,15 +474,37 @@ def _iso_age_seconds(ts: Any) -> float:
         return 0.0
 
 
-def _cleanup_stale_self_upgrade_activity() -> None:
-    ttl_sec = max(300, int(os.getenv("TEAMOS_SELF_UPGRADE_STALE_TTL_SEC", "900") or "900"))
+def _repo_improvement_env(name: str, default: str = "", *, legacy_name: str = "") -> str:
+    raw = os.getenv(name)
+    if raw is not None:
+        return raw
+    legacy = legacy_name.strip() or name.replace("TEAMOS_REPO_IMPROVEMENT_", "TEAMOS_SELF_UPGRADE_")
+    if legacy and legacy != name:
+        legacy_raw = os.getenv(legacy)
+        if legacy_raw is not None:
+            return legacy_raw
+    return default
+
+
+def _env_truthy(name: str, default: str = "1") -> bool:
+    v = _repo_improvement_env(name, default).strip().lower()
+    return v not in ("0", "false", "no", "off", "")
+
+
+def _repo_improvement_flow(value: Any) -> bool:
+    flow = str(value or "").strip().lower()
+    return flow in ("repo_improvement", "self_upgrade")
+
+
+def _cleanup_stale_repo_improvement_activity() -> None:
+    ttl_sec = max(300, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", "900") or "900"))
 
     for run in DB.list_runs():
         if _normalize_run_state(run.state) != "RUNNING":
             continue
         objective = str(run.objective or "").strip().lower()
         run_id = str(run.run_id or "").strip().lower()
-        if "self-upgrade" not in objective and "self-upgrade" not in run_id:
+        if "repo-improvement" not in objective and "repo-improvement" not in run_id and "self-upgrade" not in objective and "self-upgrade" not in run_id:
             continue
         if _iso_age_seconds(run.last_update) < float(ttl_sec):
             continue
@@ -490,7 +512,7 @@ def _cleanup_stale_self_upgrade_activity() -> None:
             run_id=str(run.run_id),
             project_id=str(run.project_id or "teamos"),
             workstream_id=str(run.workstream_id or _default_workstream_id()),
-            objective=str(run.objective or "stale self-upgrade run"),
+            objective=str(run.objective or "stale repo-improvement run"),
             state="FAILED",
         )
 
@@ -499,7 +521,7 @@ def _cleanup_stale_self_upgrade_activity() -> None:
             continue
         role_id = str(agent.role_id or "").strip()
         current_action = str(agent.current_action or "").strip().lower()
-        if role_id not in _SELF_UPGRADE_STALE_AGENT_ROLES and "self-upgrade" not in current_action:
+        if role_id not in _REPO_IMPROVEMENT_STALE_AGENT_ROLES and "repo-improvement" not in current_action and "self-upgrade" not in current_action:
             continue
         if _iso_age_seconds(agent.last_heartbeat) < float(ttl_sec):
             continue
@@ -507,7 +529,7 @@ def _cleanup_stale_self_upgrade_activity() -> None:
             DB.update_assignment(
                 agent_id=str(agent.agent_id),
                 state="FAILED",
-                current_action="stale self-upgrade activity cleaned on startup",
+                current_action="stale repo-improvement activity cleaned on startup",
             )
         except Exception:
             pass
@@ -561,11 +583,6 @@ def _active_projects_summary() -> list[dict[str, Any]]:
             continue
         out.append({"project_id": pid, "name": pid, "workstreams": []})
     return out
-
-
-def _env_truthy(name: str, default: str = "1") -> bool:
-    v = os.getenv(name, default).strip().lower()
-    return v not in ("0", "false", "no", "off", "")
 
 
 def _panel_github_writes_enabled() -> bool:
@@ -631,18 +648,18 @@ def _run_self_upgrade_iteration(
     force: bool = False,
     trigger: str = "api",
 ) -> dict[str, Any]:
-    if not _SELF_UPGRADE_LOCK.acquire(blocking=False):
+    if not _REPO_IMPROVEMENT_LOCK.acquire(blocking=False):
         payload = {
             "ok": True,
             "skipped": True,
-            "reason": "self_upgrade_already_running",
+            "reason": "repo_improvement_already_running",
             "project_id": project_id,
             "workstream_id": workstream_id,
             "trigger": trigger,
         }
         try:
             DB.add_event(
-                event_type="SELF_UPGRADE_ALREADY_RUNNING",
+                event_type="REPO_IMPROVEMENT_ALREADY_RUNNING",
                 actor=actor,
                 project_id=project_id,
                 workstream_id=workstream_id,
@@ -656,8 +673,8 @@ def _run_self_upgrade_iteration(
         spec = crewai_orchestrator.RunSpec(
             project_id=project_id,
             workstream_id=workstream_id,
-            objective=objective or "Run CrewAI self-upgrade for the target repository",
-            flow="self_upgrade",
+            objective=objective or "Run CrewAI repo-improvement for the target repository",
+            flow="repo_improvement",
             target_id=target_id,
             repo_path=repo_path,
             repo_url=repo_url,
@@ -670,14 +687,14 @@ def _run_self_upgrade_iteration(
         _mark_panel_dirty(project_id)
         return out
     finally:
-        _SELF_UPGRADE_LOCK.release()
+        _REPO_IMPROVEMENT_LOCK.release()
 
 
 def _run_self_upgrade_discussion_sync(*, actor: str) -> dict[str, Any]:
     out = crewai_self_upgrade.reconcile_feature_discussions(
         db=DB,
         actor=actor,
-        verbose=_env_truthy("TEAMOS_SELF_UPGRADE_VERBOSE", "0"),
+        verbose=_env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0"),
     )
     _mark_panel_dirty("teamos")
     return out
@@ -694,17 +711,17 @@ def _run_self_upgrade_delivery_iteration(
     max_tasks: Optional[int] = None,
 ) -> dict[str, Any]:
     current_project_id = str(project_id or "teamos").strip() or "teamos"
-    if not _SELF_UPGRADE_DELIVERY_LOCK.acquire(blocking=False):
+    if not _REPO_IMPROVEMENT_DELIVERY_LOCK.acquire(blocking=False):
         payload = {
             "ok": True,
             "skipped": True,
-            "reason": "self_upgrade_delivery_already_running",
+            "reason": "repo_improvement_delivery_already_running",
             "project_id": current_project_id,
             "task_id": str(task_id or "").strip(),
         }
         try:
             DB.add_event(
-                event_type="SELF_UPGRADE_DELIVERY_ALREADY_RUNNING",
+                event_type="REPO_IMPROVEMENT_DELIVERY_ALREADY_RUNNING",
                 actor=actor,
                 project_id=current_project_id,
                 workstream_id=_default_workstream_id(),
@@ -715,11 +732,11 @@ def _run_self_upgrade_delivery_iteration(
         return payload
 
     run_key = str(task_id or current_project_id or "teamos").strip() or "teamos"
-    run_id = f"run-{run_key}::self-upgrade-delivery"
+    run_id = f"run-{run_key}::repo-improvement-delivery"
     objective = (
-        f"Resume self-upgrade delivery for task {task_id}"
+        f"Resume repo-improvement delivery for task {task_id}"
         if str(task_id or "").strip()
-        else f"Run self-upgrade delivery sweep for project {current_project_id}"
+        else f"Run repo-improvement delivery sweep for project {current_project_id}"
     )
     DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state="RUNNING")
     try:
@@ -741,7 +758,7 @@ def _run_self_upgrade_delivery_iteration(
         DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state="FAILED")
         try:
             DB.add_event(
-                event_type="SELF_UPGRADE_DELIVERY_SWEEP_FAILED",
+                event_type="REPO_IMPROVEMENT_DELIVERY_SWEEP_FAILED",
                 actor=actor,
                 project_id=current_project_id,
                 workstream_id=_default_workstream_id(),
@@ -751,7 +768,7 @@ def _run_self_upgrade_delivery_iteration(
             pass
         raise
     finally:
-        _SELF_UPGRADE_DELIVERY_LOCK.release()
+        _REPO_IMPROVEMENT_DELIVERY_LOCK.release()
 
 
 def _panel_auto_sync_loop() -> None:
@@ -856,7 +873,7 @@ def _panel_auto_sync_loop() -> None:
 @app.on_event("startup")
 def _startup_background_threads() -> None:
     try:
-        _cleanup_stale_self_upgrade_activity()
+        _cleanup_stale_repo_improvement_activity()
     except Exception:
         pass
 
@@ -868,7 +885,7 @@ def _startup_background_threads() -> None:
             out = crewai_self_upgrade_delivery.migrate_legacy_worktrees(project_id="teamos")
             if int(out.get("updated") or 0) > 0 or int(out.get("moved") or 0) > 0:
                 DB.add_event(
-                    event_type="SELF_UPGRADE_WORKTREE_MIGRATED",
+                    event_type="REPO_IMPROVEMENT_WORKTREE_MIGRATED",
                     actor="control-plane.startup",
                     project_id="teamos",
                     workstream_id=_default_workstream_id(),
@@ -877,7 +894,7 @@ def _startup_background_threads() -> None:
         except Exception as e:
             try:
                 DB.add_event(
-                    event_type="SELF_UPGRADE_WORKTREE_MIGRATION_FAILED",
+                    event_type="REPO_IMPROVEMENT_WORKTREE_MIGRATION_FAILED",
                     actor="control-plane.startup",
                     project_id="teamos",
                     workstream_id=_default_workstream_id(),
@@ -909,7 +926,7 @@ def _startup_background_threads() -> None:
     rt.start()
 
     def _self_upgrade_auto_once() -> None:
-        if not _env_truthy("TEAMOS_SELF_UPGRADE_AUTO", "1"):
+        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_AUTO", "1"):
             return
         try:
             time.sleep(4)
@@ -931,7 +948,7 @@ def _startup_background_threads() -> None:
         except Exception as e:
             try:
                 DB.add_event(
-                    event_type="SELF_UPGRADE_AUTO_FAILED",
+                    event_type="REPO_IMPROVEMENT_AUTO_FAILED",
                     actor="control-plane.startup",
                     project_id="teamos",
                     workstream_id=_default_workstream_id(),
@@ -944,10 +961,10 @@ def _startup_background_threads() -> None:
     sut.start()
 
     def _self_upgrade_continuous_loop() -> None:
-        if not _env_truthy("TEAMOS_SELF_UPGRADE_CONTINUOUS", "1"):
+        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_CONTINUOUS", "1"):
             return
-        interval_sec = max(60, int(os.getenv("TEAMOS_SELF_UPGRADE_LOOP_INTERVAL_SEC", "300") or "300"))
-        initial_delay_sec = max(10, int(os.getenv("TEAMOS_SELF_UPGRADE_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
+        interval_sec = max(60, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INTERVAL_SEC", "300") or "300"))
+        initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
         try:
             time.sleep(initial_delay_sec)
             while True:
@@ -971,7 +988,7 @@ def _startup_background_threads() -> None:
                 except Exception as e:
                     try:
                         DB.add_event(
-                            event_type="SELF_UPGRADE_LOOP_FAILED",
+                            event_type="REPO_IMPROVEMENT_LOOP_FAILED",
                             actor="control-plane.loop",
                             project_id="teamos",
                             workstream_id=_default_workstream_id(),
@@ -987,10 +1004,10 @@ def _startup_background_threads() -> None:
     clt.start()
 
     def _self_upgrade_discussion_loop() -> None:
-        if not _env_truthy("TEAMOS_SELF_UPGRADE_DISCUSSION_AUTO", "1"):
+        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_AUTO", "1"):
             return
-        interval_sec = max(30, int(os.getenv("TEAMOS_SELF_UPGRADE_DISCUSSION_INTERVAL_SEC", "90") or "90"))
-        initial_delay_sec = max(10, int(os.getenv("TEAMOS_SELF_UPGRADE_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
+        interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INTERVAL_SEC", "90") or "90"))
+        initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
         try:
             time.sleep(initial_delay_sec)
             while True:
@@ -1002,7 +1019,7 @@ def _startup_background_threads() -> None:
                 except Exception as e:
                     try:
                         DB.add_event(
-                            event_type="SELF_UPGRADE_DISCUSSION_LOOP_FAILED",
+                            event_type="REPO_IMPROVEMENT_DISCUSSION_LOOP_FAILED",
                             actor="control-plane.discussion-loop",
                             project_id="teamos",
                             workstream_id=_default_workstream_id(),
@@ -1018,11 +1035,11 @@ def _startup_background_threads() -> None:
     dlt.start()
 
     def _self_upgrade_delivery_loop() -> None:
-        if not _env_truthy("TEAMOS_SELF_UPGRADE_DELIVERY_AUTO", "1"):
+        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DELIVERY_AUTO", "1"):
             return
-        interval_sec = max(30, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_INTERVAL_SEC", "180") or "180"))
-        initial_delay_sec = max(10, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_INITIAL_DELAY_SEC", "45") or "45"))
-        max_tasks = max(1, int(os.getenv("TEAMOS_SELF_UPGRADE_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
+        interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INTERVAL_SEC", "180") or "180"))
+        initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INITIAL_DELAY_SEC", "45") or "45"))
+        max_tasks = max(1, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
         try:
             time.sleep(initial_delay_sec)
             while True:
@@ -1042,7 +1059,7 @@ def _startup_background_threads() -> None:
                 except Exception as e:
                     try:
                         DB.add_event(
-                            event_type="SELF_UPGRADE_DELIVERY_LOOP_FAILED",
+                            event_type="REPO_IMPROVEMENT_DELIVERY_LOOP_FAILED",
                             actor="control-plane.delivery-loop",
                             project_id="teamos",
                             workstream_id=_default_workstream_id(),
@@ -1430,7 +1447,6 @@ def v1_status():
         "improvement_targets": targets,
         "improvement_target_summaries": target_summaries,
         "repo_improvement": repo_improvement_payload,
-        "self_upgrade": repo_improvement_payload,
         "openclaw": openclaw_status,
         "pending_decisions": pending,
         "redis_bus": redis_bus.describe(),
@@ -2377,7 +2393,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
         if (
             isinstance(orchestration, dict)
             and str(orchestration.get("engine") or "").strip().lower() == "crewai"
-            and str(orchestration.get("flow") or "").strip().lower() == "self_upgrade"
+            and _repo_improvement_flow(orchestration.get("flow"))
         ):
             delivery = _run_self_upgrade_delivery_iteration(
                 actor="control-plane.recovery",
@@ -2391,7 +2407,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
             resumed_details.append(
                 {
                     "task_id": str(t.get("task_id") or ""),
-                    "mode": "self_upgrade_delivery",
+                    "mode": "repo_improvement_delivery",
                     "result": delivery,
                 }
             )
@@ -2488,7 +2504,7 @@ def v1_repo_improvement_proposals_decide(payload: SelfUpgradeProposalDecisionIn)
     project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
     workstream_id = str(proposal.get("workstream_id") or "general").strip() or "general"
     DB.add_event(
-        event_type="SELF_UPGRADE_PROPOSAL_DECIDED",
+        event_type="REPO_IMPROVEMENT_PROPOSAL_DECIDED",
         actor="repo_improvement_api",
         project_id=project_id,
         workstream_id=workstream_id,
@@ -2895,7 +2911,7 @@ def _pending_decisions() -> list[dict[str, Any]]:
                 continue
             decisions.append(
                 {
-                    "type": "SELF_UPGRADE_PROPOSAL_DECISION",
+                    "type": "REPO_IMPROVEMENT_PROPOSAL_DECISION",
                     "project_id": str(p.get("project_id") or "teamos"),
                     "proposal_id": p.get("proposal_id"),
                     "title": p.get("title"),

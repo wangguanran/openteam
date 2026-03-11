@@ -16,9 +16,12 @@ from typing import Any, Optional
 
 
 try:
-    import tomli  # type: ignore
+    import tomllib as tomli  # type: ignore
 except Exception:  # pragma: no cover
-    tomli = None
+    try:
+        import tomli  # type: ignore
+    except Exception:  # pragma: no cover
+        tomli = None
 
 
 CONFIG_DIR = Path.home() / ".teamos"
@@ -83,7 +86,7 @@ def _load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         return {}
     if tomli is None:
-        raise RuntimeError("Missing dependency: tomli (install: python3 -m pip install --user tomli)")
+        raise RuntimeError("Missing dependency: tomllib/tomli (install: python3 -m pip install --user tomli)")
     with CONFIG_PATH.open("rb") as f:
         return tomli.load(f) or {}
 
@@ -2219,7 +2222,7 @@ def cmd_daemon_status(args: argparse.Namespace) -> None:
     payload = {
         "legacy_self_improve_daemon": "removed",
         "runtime_state_root": str(_runtime_root_for_repo(repo_root) / "state"),
-        "last_self_upgrade": last,
+        "last_repo_improvement": last,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

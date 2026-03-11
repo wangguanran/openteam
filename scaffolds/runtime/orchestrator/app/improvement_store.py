@@ -360,9 +360,11 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
     orchestration = doc.get("orchestration") or {}
     if not isinstance(orchestration, dict):
         orchestration = {}
-    su = doc.get("self_upgrade") or {}
-    if not isinstance(su, dict):
-        su = {}
+    repo_improvement = doc.get("repo_improvement")
+    if not isinstance(repo_improvement, dict):
+        repo_improvement = doc.get("self_upgrade")
+    if not isinstance(repo_improvement, dict):
+        repo_improvement = {}
     target_id = str((doc.get("target") or {}).get("target_id") if isinstance(doc.get("target"), dict) else "").strip() or str(doc.get("target_id") or "").strip()
     if not target_id:
         target_id = _target_id_for(
@@ -379,7 +381,7 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
         project_id=str(doc.get("project_id") or "teamos"),
         scope_id=target_id,
         state=str(doc.get("status") or doc.get("state") or "").strip(),
-        category=str(su.get("lane") or orchestration.get("finding_lane") or "").strip(),
+        category=str(repo_improvement.get("lane") or orchestration.get("finding_lane") or "").strip(),
         value=payload,
     )
     return payload

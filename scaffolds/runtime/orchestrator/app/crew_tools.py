@@ -12,10 +12,11 @@ class CrewToolsError(ValueError):
 
 
 _FLOW_ALIASES: dict[str, str] = {
-    "self_improve": "self_upgrade",
+    "self_improve": "repo_improvement",
+    "self_upgrade": "repo_improvement",
 }
 
-_NATIVE_CREWAI_FLOWS = frozenset({"self_upgrade"})
+_NATIVE_CREWAI_FLOWS = frozenset({"repo_improvement"})
 
 # CrewAI flow aliases route to supported runtime pipelines only.
 _FLOW_PIPELINES: dict[str, list[str]] = {

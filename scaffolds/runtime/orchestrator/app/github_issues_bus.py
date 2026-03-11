@@ -57,7 +57,7 @@ _UNSET = object()
 
 _LABEL_DEFAULTS: dict[str, tuple[str, str]] = {
     "teamos": ("1d76db", "Team OS managed issue"),
-    "source:self-upgrade": ("0e8a16", "Created or updated by Team OS self-upgrade"),
+    "source:repo-improvement": ("0e8a16", "Created or updated by Team OS repo-improvement"),
     "type:feature": ("1d76db", "Feature work item"),
     "type:bug": ("d73a4a", "Bug fix work item"),
     "type:process": ("6f42c1", "Process improvement item"),

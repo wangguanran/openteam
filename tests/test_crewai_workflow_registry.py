@@ -51,7 +51,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertFalse(spec.should_materialize(status="APPROVED", due=False))
 
     def test_quality_workflow_uses_env_override_for_cooldown(self):
-        with mock.patch.dict(os.environ, {"TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS": "6"}, clear=False):
+        with mock.patch.dict(os.environ, {"TEAMOS_REPO_IMPROVEMENT_QUALITY_COOLDOWN_HOURS": "6"}, clear=False):
             spec = crewai_workflow_registry.workflow_for_lane("quality")
             self.assertEqual(spec.cooldown_hours(), 6)
 

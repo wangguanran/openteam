@@ -2,7 +2,7 @@ task_name: document_self_upgrade_task
 expected_output: A structured JSON documentation decision.
 output_model: DeliveryDocumentationResult
 description_template: |
-  Update documentation for this self-upgrade task.
+  Update documentation for this repo-improvement task.
   Rules:
   - Edit only documentation paths listed in documentation_policy.allowed_paths.
   - Keep user-facing natural language in 简体中文.

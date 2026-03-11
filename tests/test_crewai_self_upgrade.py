@@ -17,7 +17,7 @@ def _add_template_app_to_syspath() -> None:
 
 
 _add_template_app_to_syspath()
-os.environ.setdefault("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "0")
+os.environ.setdefault("TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH", "0")
 
 from app import crewai_self_upgrade, improvement_store, plan_store  # noqa: E402
 
@@ -594,7 +594,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertEqual(out["records"], [])
             self.assertEqual(out["pending_proposals"], [])
             self.assertEqual(improvement_store.list_proposals(target_id=out["target_id"]), [])
-            skipped = [event for event in db.events if event.get("event_type") == "SELF_UPGRADE_FINDING_SKIPPED"]
+            skipped = [event for event in db.events if event.get("event_type") == "REPO_IMPROVEMENT_FINDING_SKIPPED"]
             self.assertEqual(len(skipped), 1)
             self.assertEqual(skipped[0]["payload"]["workflow_id"], "feature-improvement")
             self.assertEqual(skipped[0]["payload"]["reason"], "disabled_for_repo")
@@ -665,7 +665,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertTrue(out["ok"])
             self.assertTrue(out["skipped"])
             self.assertEqual(out["reason"], "no_enabled_workflows")
-            skipped = [event for event in db.events if event.get("event_type") == "SELF_UPGRADE_SKIPPED"]
+            skipped = [event for event in db.events if event.get("event_type") == "REPO_IMPROVEMENT_SKIPPED"]
             self.assertEqual(len(skipped), 1)
             self.assertEqual(skipped[0]["payload"]["reason"], "no_enabled_workflows")
 
@@ -721,7 +721,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
 
             self.assertTrue(out["ok"])
             self.assertEqual(out["records"], [])
-            skipped = [event for event in db.events if event.get("event_type") == "SELF_UPGRADE_FINDING_SKIPPED"]
+            skipped = [event for event in db.events if event.get("event_type") == "REPO_IMPROVEMENT_FINDING_SKIPPED"]
             self.assertEqual(len(skipped), 1)
             self.assertEqual(skipped[0]["payload"]["workflow_id"], "bug-fix")
             self.assertEqual(skipped[0]["payload"]["reason"], "outside_active_window")
@@ -1300,7 +1300,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertEqual(bug_lane.get("status"), "dormant")
         self.assertEqual(bug_lane.get("zero_bug_scan_streak"), 3)
         self.assertEqual(bug_lane.get("head_commit"), "abc123")
-        self.assertIn("SELF_UPGRADE_BUG_LANE_DORMANT", [event.get("event_type") for event in db.events])
+        self.assertIn("REPO_IMPROVEMENT_BUG_LANE_DORMANT", [event.get("event_type") for event in db.events])
 
     def test_dormant_bug_lane_filters_bug_findings_until_head_changes(self):
         db = _FakeDB()
@@ -1364,7 +1364,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         bug_lane = ((state.get("lane_states") or {}).get("bug") or {})
         self.assertEqual(bug_lane.get("status"), "dormant")
         self.assertEqual(bug_lane.get("last_bug_finding_count"), 0)
-        self.assertIn("SELF_UPGRADE_BUG_LANE_SKIPPED", [event.get("event_type") for event in db.events])
+        self.assertIn("REPO_IMPROVEMENT_BUG_LANE_SKIPPED", [event.get("event_type") for event in db.events])
 
     def test_head_change_resumes_dormant_bug_lane_and_allows_bug_materialization(self):
         db = _FakeDB()
@@ -1423,7 +1423,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertEqual(bug_lane.get("status"), "active")
         self.assertEqual(bug_lane.get("zero_bug_scan_streak"), 0)
         self.assertEqual(bug_lane.get("head_commit"), "def456")
-        self.assertIn("SELF_UPGRADE_BUG_LANE_RESUMED", [event.get("event_type") for event in db.events])
+        self.assertIn("REPO_IMPROVEMENT_BUG_LANE_RESUMED", [event.get("event_type") for event in db.events])
 
     def test_open_bug_tasks_keep_bug_lane_active_despite_zero_bug_runs(self):
         db = _FakeDB()
@@ -1480,7 +1480,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         bug_lane = ((state.get("lane_states") or {}).get("bug") or {})
         self.assertEqual(bug_lane.get("status"), "active")
         self.assertEqual(bug_lane.get("zero_bug_scan_streak"), 0)
-        self.assertNotIn("SELF_UPGRADE_BUG_LANE_DORMANT", [event.get("event_type") for event in db.events])
+        self.assertNotIn("REPO_IMPROVEMENT_BUG_LANE_DORMANT", [event.get("event_type") for event in db.events])
 
 
 if __name__ == "__main__":

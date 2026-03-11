@@ -160,7 +160,7 @@ def _load_requirements(project_id: str) -> list[dict[str, Any]]:
     return list(data.get("requirements") or [])
 
 
-def _load_self_upgrade_feature_proposals(project_id: str) -> list[dict[str, Any]]:
+def _load_repo_improvement_feature_proposals(project_id: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for doc in improvement_store.list_proposals(project_id=str(project_id or "")):
         if not isinstance(doc, dict):
@@ -220,11 +220,16 @@ def _desired_items(
     # Tasks
     for t in _load_tasks(project_id):
         tid = str(t.get("id") or "").strip()
+        repo_improvement = t.get("repo_improvement")
+        if not isinstance(repo_improvement, dict):
+            repo_improvement = t.get("self_upgrade")
+        if not isinstance(repo_improvement, dict):
+            repo_improvement = {}
         title = _panel_item_title(
             str(t.get("title") or "").strip(),
-            kind=str((((t.get("self_upgrade") or {}) if isinstance(t.get("self_upgrade"), dict) else {}).get("kind")) or ""),
-            lane=str((((t.get("self_upgrade") or {}) if isinstance(t.get("self_upgrade"), dict) else {}).get("lane")) or ""),
-            module=str((((t.get("self_upgrade") or {}) if isinstance(t.get("self_upgrade"), dict) else {}).get("module")) or (((t.get("execution_policy") or {}) if isinstance(t.get("execution_policy"), dict) else {}).get("module")) or ""),
+            kind=str((repo_improvement or {}).get("kind") or ""),
+            lane=str((repo_improvement or {}).get("lane") or ""),
+            module=str((repo_improvement or {}).get("module") or (((t.get("execution_policy") or {}) if isinstance(t.get("execution_policy"), dict) else {}).get("module")) or ""),
         )
         state = str(t.get("status") or t.get("state") or "").strip()
         wsid = str(t.get("workstream_id") or "general").strip()
@@ -362,7 +367,7 @@ def _desired_items(
         )
 
     # Self-upgrade proposals waiting for discussion / confirmation.
-    for p in _load_self_upgrade_feature_proposals(project_id):
+    for p in _load_repo_improvement_feature_proposals(project_id):
         proposal_id = str(p.get("proposal_id") or "").strip()
         status = str(p.get("status") or "").strip().upper()
         panel_title = _panel_item_title(

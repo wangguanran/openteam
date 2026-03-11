@@ -16,6 +16,13 @@ def _workflow_now_local() -> _dt.datetime:
     return _dt.datetime.now().astimezone()
 
 
+def _workflow_env(name: str, default: str = "") -> str:
+    raw = os.getenv(name)
+    if (raw is None or not str(raw).strip()) and str(name).startswith("TEAMOS_REPO_IMPROVEMENT_"):
+        raw = os.getenv(name.replace("TEAMOS_REPO_IMPROVEMENT_", "TEAMOS_SELF_UPGRADE_"))
+    return str(raw if raw is not None else default or "").strip()
+
+
 @dataclass(frozen=True)
 class WorkflowRunPolicy:
     allowed: bool
@@ -63,7 +70,7 @@ class WorkflowSpec:
 
     def cooldown_hours(self) -> int:
         if self.cooldown_env_var:
-            raw = str(os.getenv(self.cooldown_env_var, str(self.default_cooldown_hours)) or "").strip()
+            raw = _workflow_env(self.cooldown_env_var, str(self.default_cooldown_hours))
             try:
                 return max(0, int(raw))
             except Exception:
@@ -72,7 +79,7 @@ class WorkflowSpec:
 
     def max_candidates(self) -> int:
         if self.max_candidates_env_var:
-            raw = str(os.getenv(self.max_candidates_env_var, str(self.default_max_candidates)) or "").strip()
+            raw = _workflow_env(self.max_candidates_env_var, str(self.default_max_candidates))
             try:
                 return max(0, int(raw))
             except Exception:
@@ -81,7 +88,7 @@ class WorkflowSpec:
 
     def active_window_start_hour(self) -> int:
         if self.active_window_start_hour_env_var:
-            raw = str(os.getenv(self.active_window_start_hour_env_var, str(self.default_active_window_start_hour)) or "").strip()
+            raw = _workflow_env(self.active_window_start_hour_env_var, str(self.default_active_window_start_hour))
             try:
                 return min(23, max(0, int(raw)))
             except Exception:
@@ -90,7 +97,7 @@ class WorkflowSpec:
 
     def active_window_end_hour(self) -> int:
         if self.active_window_end_hour_env_var:
-            raw = str(os.getenv(self.active_window_end_hour_env_var, str(self.default_active_window_end_hour)) or "").strip()
+            raw = _workflow_env(self.active_window_end_hour_env_var, str(self.default_active_window_end_hour))
             try:
                 return min(24, max(0, int(raw)))
             except Exception:
@@ -99,7 +106,7 @@ class WorkflowSpec:
 
     def max_continuous_runtime_minutes(self) -> int:
         if self.max_continuous_runtime_minutes_env_var:
-            raw = str(os.getenv(self.max_continuous_runtime_minutes_env_var, str(self.default_max_continuous_runtime_minutes)) or "").strip()
+            raw = _workflow_env(self.max_continuous_runtime_minutes_env_var, str(self.default_max_continuous_runtime_minutes))
             try:
                 return max(0, int(raw))
             except Exception:
@@ -108,7 +115,7 @@ class WorkflowSpec:
 
     def dormant_after_zero_scans(self) -> int:
         if self.dormant_after_zero_scans_env_var:
-            raw = str(os.getenv(self.dormant_after_zero_scans_env_var, str(self.default_dormant_after_zero_scans)) or "").strip()
+            raw = _workflow_env(self.dormant_after_zero_scans_env_var, str(self.default_dormant_after_zero_scans))
             try:
                 return max(0, int(raw))
             except Exception:
@@ -153,27 +160,6 @@ class WorkflowSpec:
                 now_iso=now_iso,
             )
 
-        start_hour = self.active_window_start_hour()
-        end_hour = self.active_window_end_hour()
-        current_hour = int(current.hour)
-        if start_hour == end_hour:
-            in_window = True
-        elif start_hour < end_hour:
-            in_window = start_hour <= current_hour < end_hour
-        else:
-            in_window = current_hour >= start_hour or current_hour < end_hour
-        if not in_window:
-            return WorkflowRunPolicy(
-                allowed=False,
-                reason="outside_active_window",
-                active_window_start_hour=start_hour,
-                active_window_end_hour=end_hour,
-                max_continuous_runtime_minutes=self.max_continuous_runtime_minutes(),
-                current_local_hour=current_hour,
-                active_since="",
-                now_iso=now_iso,
-            )
-
         state_doc = dict(state or {})
         active_since = str(state_doc.get("active_since") or "").strip()
         active_since_dt: _dt.datetime | None = None
@@ -194,13 +180,34 @@ class WorkflowSpec:
                 return WorkflowRunPolicy(
                     allowed=False,
                     reason="max_continuous_runtime_exceeded",
-                    active_window_start_hour=start_hour,
-                    active_window_end_hour=end_hour,
+                    active_window_start_hour=self.active_window_start_hour(),
+                    active_window_end_hour=self.active_window_end_hour(),
                     max_continuous_runtime_minutes=max_minutes,
-                    current_local_hour=current_hour,
+                    current_local_hour=int(current.hour),
                     active_since=active_since,
                     now_iso=now_iso,
                 )
+
+        start_hour = self.active_window_start_hour()
+        end_hour = self.active_window_end_hour()
+        current_hour = int(current.hour)
+        if start_hour == end_hour:
+            in_window = True
+        elif start_hour < end_hour:
+            in_window = start_hour <= current_hour < end_hour
+        else:
+            in_window = current_hour >= start_hour or current_hour < end_hour
+        if not in_window:
+            return WorkflowRunPolicy(
+                allowed=False,
+                reason="outside_active_window",
+                active_window_start_hour=start_hour,
+                active_window_end_hour=end_hour,
+                max_continuous_runtime_minutes=self.max_continuous_runtime_minutes(),
+                current_local_hour=current_hour,
+                active_since="",
+                now_iso=now_iso,
+            )
 
         return WorkflowRunPolicy(
             allowed=True,
@@ -230,12 +237,12 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         requires_user_confirmation=True,
         materialize_requires_approval=True,
         default_version_bump="minor",
-        max_candidates_env_var="TEAMOS_SELF_UPGRADE_FEATURE_MAX_CANDIDATES",
+        max_candidates_env_var="TEAMOS_REPO_IMPROVEMENT_FEATURE_MAX_CANDIDATES",
         default_max_candidates=5,
         default_active_window_start_hour=0,
         default_active_window_end_hour=24,
         default_max_continuous_runtime_minutes=0,
-        cooldown_env_var="TEAMOS_SELF_UPGRADE_FEATURE_COOLDOWN_HOURS",
+        cooldown_env_var="TEAMOS_REPO_IMPROVEMENT_FEATURE_COOLDOWN_HOURS",
         default_cooldown_hours=1,
         baseline_action_default="feature_followup",
         baseline_action_by_bump=(("major", "new_baseline"), ("minor", "new_baseline")),
@@ -254,12 +261,12 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         requires_user_confirmation=False,
         materialize_requires_approval=False,
         default_version_bump="patch",
-        max_candidates_env_var="TEAMOS_SELF_UPGRADE_BUG_MAX_CANDIDATES",
+        max_candidates_env_var="TEAMOS_REPO_IMPROVEMENT_BUG_MAX_CANDIDATES",
         default_max_candidates=2,
         default_active_window_start_hour=0,
         default_active_window_end_hour=24,
         default_max_continuous_runtime_minutes=0,
-        dormant_after_zero_scans_env_var="TEAMOS_SELF_UPGRADE_BUG_DORMANT_AFTER_ZERO_SCANS",
+        dormant_after_zero_scans_env_var="TEAMOS_REPO_IMPROVEMENT_BUG_DORMANT_AFTER_ZERO_SCANS",
         default_dormant_after_zero_scans=3,
         default_cooldown_hours=0,
         baseline_action_default="patch_release",
@@ -283,7 +290,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         default_active_window_start_hour=0,
         default_active_window_end_hour=24,
         default_max_continuous_runtime_minutes=0,
-        cooldown_env_var="TEAMOS_SELF_UPGRADE_QUALITY_COOLDOWN_HOURS",
+        cooldown_env_var="TEAMOS_REPO_IMPROVEMENT_QUALITY_COOLDOWN_HOURS",
         default_cooldown_hours=1,
         baseline_action_default="quality_improvement",
     ),
@@ -306,7 +313,7 @@ FALLBACK_WORKFLOW_SPECS: dict[str, WorkflowSpec] = {
         default_active_window_start_hour=0,
         default_active_window_end_hour=24,
         default_max_continuous_runtime_minutes=0,
-        cooldown_env_var="TEAMOS_SELF_UPGRADE_PROCESS_COOLDOWN_HOURS",
+        cooldown_env_var="TEAMOS_REPO_IMPROVEMENT_PROCESS_COOLDOWN_HOURS",
         default_cooldown_hours=24,
         baseline_action_default="process_improvement",
     ),

@@ -64,7 +64,7 @@ FALLBACK_TASK_SPECS["review_self_upgrade_task"] = CrewTaskSpec(
     task_name="review_self_upgrade_task",
     expected_output="A structured JSON review decision.",
     description_template=(
-        "Review the current repository diff for this self-upgrade task.\n"
+        "Review the current repository diff for this repo-improvement task.\n"
         "Return a structured review decision with separate code_approved and docs_approved fields.\n"
         "Rules:\n"
         "- Review both code changes and documentation changes under allowed_paths.\n"
@@ -97,7 +97,7 @@ FALLBACK_TASK_SPECS["audit_self_upgrade_issue"] = CrewTaskSpec(
     task_name="audit_self_upgrade_issue",
     expected_output="A structured JSON audit decision.",
     description_template=(
-        "Audit this self-upgrade execution issue before scheduling.\n"
+        "Audit this repo-improvement execution issue before scheduling.\n"
         "Rules:\n"
         "- Confirm whether the issue is really a bug, feature, quality, or process item.\n"
         "- Confirm whether the issue description is closed-loop enough to execute now.\n"
@@ -152,7 +152,7 @@ FALLBACK_TASK_SPECS["document_self_upgrade_task"] = CrewTaskSpec(
     task_name="document_self_upgrade_task",
     expected_output="A structured JSON documentation decision.",
     description_template=(
-        "Update documentation for this self-upgrade task.\n"
+        "Update documentation for this repo-improvement task.\n"
         "Rules:\n"
         "- Edit only documentation paths listed in documentation_policy.allowed_paths.\n"
         "- Keep user-facing natural language in 简体中文.\n"

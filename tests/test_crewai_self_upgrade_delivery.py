@@ -18,7 +18,7 @@ def _add_template_app_to_syspath() -> None:
 
 
 _add_template_app_to_syspath()
-os.environ.setdefault("TEAMOS_SELF_UPGRADE_LOCALIZE_ZH", "0")
+os.environ.setdefault("TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH", "0")
 
 from app import crewai_self_upgrade_delivery  # noqa: E402
 from app.runtime_db import RuntimeDB  # noqa: E402
@@ -716,7 +716,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 {
                     "TEAMOS_RUNTIME_ROOT": str(runtime_root),
                     "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
-                    "TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS": "2",
+                    "TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_ATTEMPTS": "2",
                 },
                 clear=False,
             ):
@@ -800,7 +800,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 {
                     "TEAMOS_RUNTIME_ROOT": str(runtime_root),
                     "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
-                    "TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS": "2",
+                    "TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_ATTEMPTS": "2",
                 },
                 clear=False,
             ):
@@ -879,7 +879,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             history = list(execution.get("history") or [])
             self.assertIn("merge_conflict", [str(x.get("stage") or "") for x in history])
             self.assertIn(
-                "SELF_UPGRADE_TASK_DELIVERY_MERGE_CONFLICT",
+                "REPO_IMPROVEMENT_TASK_DELIVERY_MERGE_CONFLICT",
                 [str(e.get("event_type") or "") for e in db.events],
             )
 
@@ -1243,7 +1243,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                 {
                     "TEAMOS_RUNTIME_ROOT": str(runtime_root),
                     "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
-                    "TEAMOS_SELF_UPGRADE_DELIVERY_MAX_ATTEMPTS": "2",
+                    "TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_ATTEMPTS": "2",
                 },
                 clear=False,
             ):

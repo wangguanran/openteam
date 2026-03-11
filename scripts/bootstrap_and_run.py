@@ -534,7 +534,7 @@ def _start_control_plane(
     env["TEAMOS_BASE_URL"] = base_url
     env["CONTROL_PLANE_BASE_URL"] = base_url
     env["TEAMOS_PIPELINE_PYTHON"] = str(sys.executable)
-    env["TEAMOS_SELF_UPGRADE_AUTO"] = "0"
+    env["TEAMOS_REPO_IMPROVEMENT_AUTO"] = "0"
     env.setdefault("CREWAI_TRACING_ENABLED", "false")
     py_path = str(orch_dir)
     if str(env.get("PYTHONPATH") or "").strip():
@@ -573,11 +573,15 @@ def _ensure_crewai_ready(base_url: str) -> dict[str, Any]:
     }
 
 
+def _repo_improvement_state_path(runtime_root: Path) -> Path:
+    return runtime_root / "state" / "deprecated-repo_improvement_state.json"
+
+
 def _self_upgrade_state_path(runtime_root: Path) -> Path:
-    return runtime_root / "state" / "deprecated-self_upgrade_state.json"
+    return _repo_improvement_state_path(runtime_root)
 
 
-def _read_self_upgrade_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
+def _read_repo_improvement_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
     _ = runtime_root
     url = str(base_url or "").strip().rstrip("/")
     if not url:
@@ -586,19 +590,26 @@ def _read_self_upgrade_state(runtime_root: Path, *, base_url: str = "") -> dict[
         status = _http_json("GET", url + "/v1/status", None, timeout_sec=5)
     except Exception:
         return {}
-    su = status.get("self_upgrade") if isinstance(status, dict) else {}
-    return dict(su) if isinstance(su, dict) else {}
+    repo_improvement = status.get("repo_improvement") if isinstance(status, dict) else {}
+    if isinstance(repo_improvement, dict):
+        return dict(repo_improvement)
+    legacy = status.get("self_upgrade") if isinstance(status, dict) else {}
+    return dict(legacy) if isinstance(legacy, dict) else {}
 
 
-def _run_self_upgrade_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
+def _read_self_upgrade_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
+    return _read_repo_improvement_state(runtime_root, base_url=base_url)
+
+
+def _run_repo_improvement_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
     out = _http_json(
         "POST",
-        base_url + "/v1/self_upgrade/run",
+        base_url + "/v1/repo_improvement/run",
         {
             "project_id": "teamos",
             "workstream_id": "general",
             "repo_path": str(repo),
-            "objective": "Bootstrap self-upgrade for current repository",
+            "objective": "Bootstrap repo-improvement for current repository",
             "dry_run": False,
             "force": True,
             "trigger": "bootstrap",
@@ -606,8 +617,12 @@ def _run_self_upgrade_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
         timeout_sec=900,
     )
     if not bool(out.get("ok")):
-        raise BootstrapError(f"self-upgrade bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
+        raise BootstrapError(f"repo-improvement bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
     return out
+
+
+def _run_self_upgrade_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
+    return _run_repo_improvement_bootstrap(repo, base_url)
 
 
 def _resume_tasks(base_url: str) -> dict[str, Any]:
@@ -651,8 +666,12 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
     except Exception as e:
         hub_status = {"ok": False, "error": str(e)[:300]}
 
-    su_state = _read_self_upgrade_state(runtime_root, base_url=base_url)
-    su_last = (su_state.get("last_run") or {}) if isinstance(su_state.get("last_run"), dict) else {}
+    repo_improvement_state = _read_repo_improvement_state(runtime_root, base_url=base_url)
+    repo_improvement_last = (
+        (repo_improvement_state.get("last_run") or {})
+        if isinstance(repo_improvement_state.get("last_run"), dict)
+        else {}
+    )
 
     return {
         "ok": True,
@@ -662,8 +681,8 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "llm": _llm_config(),
         "hub": hub_status,
         "control_plane": control,
-        "self_upgrade": {
-            "last_run": su_last,
+        "repo_improvement": {
+            "last_run": repo_improvement_last,
             "state_backend": "control_plane_status",
         },
     }
@@ -732,15 +751,15 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     crew_ready = _ensure_crewai_ready(base_url)
     _append_audit(runtime_root, "crewai orchestrator readiness check passed")
 
-    # 9) force one bootstrap self-upgrade run (must actually execute)
-    su_bootstrap = _run_self_upgrade_bootstrap(repo, base_url)
-    _append_audit(runtime_root, "self-upgrade bootstrap run executed")
+    # 9) force one bootstrap repo-improvement run (must actually execute)
+    repo_improvement_bootstrap = _run_self_upgrade_bootstrap(repo, base_url)
+    _append_audit(runtime_root, "repo-improvement bootstrap run executed")
 
     # hard check: last_run must exist after bootstrap
     st = _read_self_upgrade_state(runtime_root, base_url=base_url)
     last_run = (st.get("last_run") or {}) if isinstance(st, dict) else {}
     if not str(last_run.get("ts") or "").strip():
-        raise BootstrapError("self-upgrade bootstrap not persisted: missing last_run.ts")
+        raise BootstrapError("repo-improvement bootstrap not persisted: missing last_run.ts")
 
     # 10) resume unfinished tasks
     recovered = _resume_tasks(base_url)
@@ -760,7 +779,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
                 "python_dependencies": python_deps,
                 "control_plane": control_plane,
                 "crewai_ready": crew_ready,
-                "self_upgrade_bootstrap": su_bootstrap,
+                "repo_improvement_bootstrap": repo_improvement_bootstrap,
                 "recovery": recovered,
             }
         }
@@ -782,7 +801,7 @@ def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, keep_hub
             hub_down = {"ok": False, "error": str(e)[:300]}
 
     _append_audit(runtime_root, "stop completed")
-    return {"ok": True, "self_upgrade": {"ok": True, "mode": "no_daemon"}, "control_plane": cp_stop, "hub": hub_down}
+    return {"ok": True, "repo_improvement": {"ok": True, "mode": "no_daemon"}, "control_plane": cp_stop, "hub": hub_down}
 
 
 def _doctor(repo: Path, workspace_root: Path) -> dict[str, Any]:

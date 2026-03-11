@@ -2,7 +2,7 @@ task_name: review_self_upgrade_task
 expected_output: A structured JSON review decision.
 output_model: DeliveryReviewResult
 description_template: |
-  Review the current repository diff for this self-upgrade task.
+  Review the current repository diff for this repo-improvement task.
   Return a structured review decision with separate code_approved and docs_approved fields.
   Rules:
   - Review both code changes and documentation changes under allowed_paths.
