@@ -13,6 +13,7 @@ ARG TEAMOS_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
 ARG TEAMOS_APT_SECURITY_MIRROR_URL=https://mirrors.ustc.edu.cn/debian-security
 ARG TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
 ARG TEAMOS_CREWAI_GIT_REF=main
+ARG TEAMOS_CREWAI_GIT_SHA=
 ARG TEAMOS_NODE_VERSION=24.12.0
 ARG TEAMOS_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
 ARG TEAMOS_OPENCLAW_VERSION=2026.3.2
@@ -82,13 +83,22 @@ RUN pip install --no-cache-dir -r /tmp/requirements-base.txt \
          git -c http.version=HTTP/1.1 \
              -c http.lowSpeedLimit=1024 \
              -c http.lowSpeedTime=30 \
-             clone --filter=blob:none --sparse --depth 1 --single-branch --branch "${TEAMOS_CREWAI_GIT_REF}" "${TEAMOS_CREWAI_GIT_URL}" /tmp/crewai-src \
+             clone --filter=blob:none --sparse --no-checkout "${TEAMOS_CREWAI_GIT_URL}" /tmp/crewai-src \
+         && git -C /tmp/crewai-src sparse-checkout init --cone \
          && git -C /tmp/crewai-src sparse-checkout set lib/crewai \
+         && if [ -n "${TEAMOS_CREWAI_GIT_SHA}" ]; then \
+              git -C /tmp/crewai-src fetch --depth 1 origin "${TEAMOS_CREWAI_GIT_SHA}" \
+              && git -C /tmp/crewai-src checkout --detach FETCH_HEAD; \
+            else \
+              git -C /tmp/crewai-src fetch --depth 1 origin "${TEAMOS_CREWAI_GIT_REF}" \
+              && git -C /tmp/crewai-src checkout --detach FETCH_HEAD; \
+            fi \
          && success=1 && break; \
          echo "CrewAI clone attempt ${attempt} failed; retrying in 3s"; \
          sleep 3; \
        done \
     && [ "${success}" = "1" ] \
+    && echo "${TEAMOS_CREWAI_GIT_SHA:-${TEAMOS_CREWAI_GIT_REF}}" > /tmp/crewai-src/.teamos_crewai_revision \
     && pip install --no-cache-dir /tmp/crewai-src/lib/crewai \
     && rm -rf /tmp/crewai-src
 

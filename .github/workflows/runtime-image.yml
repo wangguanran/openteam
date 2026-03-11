@@ -29,6 +29,14 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Resolve crewAI main SHA
+        id: crewai
+        run: |
+          set -euo pipefail
+          SHA="$(git ls-remote https://github.com/wangguanran/crewAI.git refs/heads/main | awk '{print $1}')"
+          test -n "${SHA}"
+          echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -51,6 +59,9 @@ jobs:
           tags: |
             type=raw,value=main
             type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
+          labels: |
+            org.opencontainers.image.teamos-crewai-sha=${{ steps.crewai.outputs.sha }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
 
       - name: Build and push runtime image
         uses: docker/build-push-action@v6
@@ -66,6 +77,7 @@ jobs:
           build-args: |
             TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
             TEAMOS_CREWAI_GIT_REF=main
+            TEAMOS_CREWAI_GIT_SHA=${{ steps.crewai.outputs.sha }}
             TEAMOS_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
             TEAMOS_NPM_REGISTRY=https://registry.npmmirror.com
             TEAMOS_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
