@@ -62,7 +62,7 @@ jobs:
           latest_version = max(versions, key=lambda item: str(item.get("updated_at") or "")) if versions else {}
           image_ts = parse_ts(str(latest_version.get("updated_at") or "").strip())
 
-          runs = gh_api(f"repos/{owner}/{repo}/actions/workflows/runtime-image.yml/runs?per_page=20")
+          runs = gh_api(f"repos/{owner}/{repo}/actions/workflows/runtime-ci.yml/runs?per_page=20")
           runs = (runs or {}).get("workflow_runs") or []
           in_progress = [
               run for run in runs
@@ -84,7 +84,7 @@ jobs:
                   [
                       "gh",
                       "api",
-                      f"repos/{owner}/{repo}/actions/workflows/runtime-image.yml/dispatches",
+                      f"repos/{owner}/{repo}/actions/workflows/runtime-ci.yml/dispatches",
                       "-X",
                       "POST",
                       "-f",

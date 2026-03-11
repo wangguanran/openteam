@@ -1,35 +1,11 @@
 name: Runtime Image
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
-    paths:
-      - ".github/workflows/runtime-image.yml"
-      - ".dockerignore"
-      - "tooling/**"
-      - "scaffolds/runtime/**"
-      - "specs/**"
-      - "templates/**"
-      - "scripts/**"
-      - "teamos"
-      - "AGENTS.md"
-      - "README.md"
-  pull_request:
-    paths:
-      - ".github/workflows/runtime-image.yml"
-      - ".dockerignore"
-      - "tooling/**"
-      - "scaffolds/runtime/**"
-      - "specs/**"
-      - "templates/**"
-      - "scripts/**"
-      - "teamos"
-      - "AGENTS.md"
-      - "README.md"
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Runtime CI
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -39,44 +15,19 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/teamos-control-plane
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install runtime dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r scaffolds/runtime/orchestrator/requirements.txt
-
-      - name: Run runtime unit tests
-        env:
-          TEAMOS_REPO_IMPROVEMENT_AUTO: "0"
-        run: |
-          python -m unittest \
-            tests.test_crewai_runtime \
-            tests.test_crewai_orchestrator \
-            tests.test_crewai_self_upgrade \
-            tests.test_panel_github_sync \
-            tests.test_improvement_store \
-            tests.test_openclaw_reporter \
-            tests.test_bootstrap_and_run
-
   build:
-    needs: test
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -98,11 +49,8 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=sha-
-            type=ref,event=branch
-            type=ref,event=tag
-            type=raw,value=main,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=main
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
 
       - name: Build and push runtime image
         uses: docker/build-push-action@v6
@@ -110,7 +58,7 @@ jobs:
           context: .
           file: tooling/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
