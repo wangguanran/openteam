@@ -269,19 +269,39 @@ def _tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:
 
 def _team_os_checks(team_os_path: str) -> dict[str, Any]:
     p = Path(team_os_path)
-    workflows_dir = p / "workflows"
-    roles_dir = p / "roles"
+    specs_workflows_dir = p / "specs" / "workflows"
+    specs_roles_dir = p / "specs" / "roles"
     state_dir = runtime_state_root()
-    crewai_orchestrator_file = p / "templates" / "runtime" / "orchestrator" / "app" / "crewai_orchestrator.py"
+    runtime_app_dir = p / "scaffolds" / "runtime" / "orchestrator" / "app"
+    crewai_orchestrator_file = runtime_app_dir / "crewai_orchestrator.py"
+    runtime_role_library_dir = runtime_app_dir / "role_library" / "specs"
+    repo_improvement_team_file = runtime_app_dir / "teams" / "repo_improvement" / "specs" / "team.yaml"
+    workflow_files: list[str] = []
+    if specs_workflows_dir.exists():
+        workflow_files = sorted(x.name for x in specs_workflows_dir.glob("*.yaml"))
+    role_files: list[str] = []
+    if specs_roles_dir.exists():
+        role_files = sorted(
+            {
+                x.name
+                for pattern in ("*.md", "*.yaml", "*.yml")
+                for x in specs_roles_dir.glob(pattern)
+            }
+        )
     return {
         "team_os_path": str(p),
         "exists": p.exists(),
-        "workflows_dir_exists": workflows_dir.exists(),
-        "roles_dir_exists": roles_dir.exists(),
+        "specs_workflows_dir_exists": specs_workflows_dir.exists(),
+        "specs_roles_dir_exists": specs_roles_dir.exists(),
         "state_dir_exists": state_dir.exists(),
         "crewai_orchestrator_exists": crewai_orchestrator_file.exists(),
-        "workflow_files": sorted([x.name for x in workflows_dir.glob("*.yaml")]) if workflows_dir.exists() else [],
-        "role_files": sorted([x.name for x in roles_dir.glob("*.md")]) if roles_dir.exists() else [],
+        "runtime_role_library_exists": runtime_role_library_dir.exists(),
+        "repo_improvement_team_spec_exists": repo_improvement_team_file.exists(),
+        # Backward-compatible aliases for older callers.
+        "workflows_dir_exists": specs_workflows_dir.exists(),
+        "roles_dir_exists": specs_roles_dir.exists(),
+        "workflow_files": workflow_files,
+        "role_files": role_files,
     }
 
 
@@ -1292,7 +1312,15 @@ def healthz(response: Response):
     team_os_path = os.getenv("TEAM_OS_REPO_PATH", "/team-os")
     checks = _team_os_checks(team_os_path)
     crewai_info = crewai_runtime.probe_crewai()
-    ok = checks["exists"] and checks["roles_dir_exists"] and checks["crewai_orchestrator_exists"] and bool(crewai_info.get("importable"))
+    ok = (
+        checks["exists"]
+        and checks["specs_workflows_dir_exists"]
+        and checks["specs_roles_dir_exists"]
+        and checks["runtime_role_library_exists"]
+        and checks["repo_improvement_team_spec_exists"]
+        and checks["crewai_orchestrator_exists"]
+        and bool(crewai_info.get("importable"))
+    )
     db = {"backend": ("postgres" if (os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
     try:
         # Minimal DB probe (no side effects).

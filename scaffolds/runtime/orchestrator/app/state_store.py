@@ -67,7 +67,7 @@ def logs_tasks_dir() -> Path:
 def teamos_requirements_dir() -> Path:
     # Team OS self requirements truth source (scope=teamos).
     # Project requirements must live in Workspace.
-    return team_os_root() / "docs" / "teamos" / "requirements"
+    return team_os_root() / "docs" / "product" / "teamos" / "requirements"
 
 
 def teamos_plan_dir() -> Path:
