@@ -1,6 +1,5 @@
 services:
   postgres:
-    profiles: ["localdb"]
     image: postgres:${POSTGRESQL_VERSION:-16}
     restart: unless-stopped
     environment:
@@ -63,7 +62,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-        required: false
       openhands-agent-server:
         condition: service_healthy
     environment:

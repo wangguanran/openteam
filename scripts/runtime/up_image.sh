@@ -17,7 +17,7 @@ Defaults:
   --path  ../team-os-runtime-image
   --image ghcr.io/wangguanran/teamos-control-plane:main
   --port  8787
-  --db-url unset (auto-start local postgres container)
+  --db-url unset (control-plane uses local postgres)
 EOF
 }
 
@@ -100,9 +100,9 @@ upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
 (
   cd "$target"
   if [[ "$skip_pull" -ne 1 ]]; then
-    bash ./scripts/compose.sh pull
+    docker compose pull
   fi
-  bash ./scripts/compose.sh up -d --no-build
+  docker compose up -d --no-build
 )
 
 echo
@@ -116,5 +116,5 @@ else
 fi
 echo "base_url=http://127.0.0.1:${port}"
 echo "next:"
-echo "  cd \"$target\" && bash ./scripts/compose.sh ps"
+echo "  cd \"$target\" && docker compose ps"
 echo "  curl -fsS http://127.0.0.1:${port}/healthz"

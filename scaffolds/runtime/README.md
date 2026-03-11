@@ -61,8 +61,9 @@ make down
 
 - `make up-build`：使用本地 `team-os` 源码通过统一 Dockerfile 构建并启动
 - `make up`：直接使用本地已有或预先 `pull` 下来的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动
-- 当 `TEAMOS_DB_URL` 为空时，运行脚本会自动启用本地 `postgres` 容器
-- 当 `TEAMOS_DB_URL` 非空时，运行脚本会直连外部数据库，不启动本地 `postgres`
+- `docker-compose.yml` 默认总会启动本地 `postgres` 容器
+- 当 `TEAMOS_DB_URL` 为空时，control-plane 连接本地 `postgres`
+- 当 `TEAMOS_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
 
 ## 镜像化启动（推荐给新机器）
 
@@ -84,8 +85,8 @@ cd ../team-os
 
 数据库模式：
 
-- 传入 `--db-url`：写入 `TEAMOS_DB_URL`，直连外部数据库
-- 不传 `--db-url`：保持 `TEAMOS_DB_URL` 为空，并自动创建本地 `postgres` 容器
+- 传入 `--db-url`：写入 `TEAMOS_DB_URL`，control-plane 直连外部数据库
+- 不传 `--db-url`：保持 `TEAMOS_DB_URL` 为空，control-plane 使用本地 `postgres`
 
 构建期和运行期网络是分离的：
 
