@@ -121,6 +121,8 @@ class ImprovementStoreTests(unittest.TestCase):
 
             report = improvement_store.save_report(target_id="demo-target", project_id="demo", report={"run_id": "run-1", "ok": True})
             self.assertEqual(report["run_id"], "run-1")
+            self.assertEqual(improvement_store.get_report("run-1")["run_id"], "run-1")
+            self.assertEqual(len(improvement_store.list_reports(target_id="demo-target", project_id="demo")), 1)
 
     def test_materialize_target_repo_clones_remote_repo(self) -> None:
         with tempfile.TemporaryDirectory() as td:

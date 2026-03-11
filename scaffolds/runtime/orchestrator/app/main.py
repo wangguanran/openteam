@@ -1321,7 +1321,7 @@ def v1_status():
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = crewai_runtime.probe_crewai()
-    self_upgrade_state = crewai_self_upgrade._read_state(default_target_id) if default_target_id else {}
+    repo_improvement_state = crewai_self_upgrade._read_state(default_target_id) if default_target_id else {}
     proposals = crewai_self_upgrade.list_proposals()
     delivery_tasks = crewai_self_upgrade_delivery.list_delivery_tasks()
     delivery_summary = crewai_self_upgrade_delivery.delivery_summary()
@@ -1331,20 +1331,22 @@ def v1_status():
         tid = str(target.get("target_id") or "").strip()
         if not tid:
             continue
-        target_proposals = crewai_self_upgrade.list_proposals(target_id=tid, project_id=str(target.get("project_id") or ""))
-        target_tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=str(target.get("project_id") or ""), target_id=tid)
+        target_project_id = str(target.get("project_id") or "")
+        target_state = crewai_self_upgrade._read_state(tid)
+        target_proposals = crewai_self_upgrade.list_proposals(target_id=tid, project_id=target_project_id)
+        target_tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=target_project_id, target_id=tid)
         target_summaries.append(
             {
                 "target_id": tid,
-                "project_id": str(target.get("project_id") or ""),
+                "project_id": target_project_id,
                 "display_name": str(target.get("display_name") or ""),
                 "repo_locator": str(target.get("repo_locator") or ""),
-                "last_run": crewai_self_upgrade._read_state(tid).get("last_run") if isinstance(crewai_self_upgrade._read_state(tid).get("last_run"), dict) else {},
+                "last_run": target_state.get("last_run") if isinstance(target_state.get("last_run"), dict) else {},
                 "proposal_counts": {
                     "total": len(target_proposals),
                     "pending": len([p for p in target_proposals if str(p.get("status") or "").strip().upper() not in ("REJECTED", "MATERIALIZED")]),
                 },
-                "delivery_counts": crewai_self_upgrade_delivery.delivery_summary(project_id=str(target.get("project_id") or ""), target_id=tid),
+                "delivery_counts": crewai_self_upgrade_delivery.delivery_summary(project_id=target_project_id, target_id=tid),
                 "milestones": len([m for m in milestones if str(m.get("target_id") or "").strip() == tid]),
                 "active_tasks": len([t for t in target_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release", "merge_conflict")]),
             }
@@ -1359,6 +1361,33 @@ def v1_status():
 
     pending = _pending_decisions()
 
+    repo_improvement_payload = {
+        "default_target_id": default_target_id,
+        "last_run": repo_improvement_state.get("last_run") if isinstance(repo_improvement_state.get("last_run"), dict) else {},
+        "backoff_until": str(repo_improvement_state.get("backoff_until") or ""),
+        "proposal_counts": {
+            "total": len(proposals),
+            "pending": len(pending_proposals),
+            "feature": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "feature"]),
+            "bug": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "bug"]),
+            "process": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "process"]),
+            "quality": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "quality"]),
+        },
+        "pending_proposals": pending_proposals[:20],
+        "delivery": {
+            "summary": delivery_summary,
+            "active_tasks": [t for t in delivery_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release")][:20],
+            "blocked_tasks": [t for t in delivery_tasks if str(t.get("status") or "") == "blocked"][:20],
+        },
+        "milestones": {
+            "total": len(milestones),
+            "active": len([m for m in milestones if str(m.get("state") or "") == "active"]),
+            "blocked": len([m for m in milestones if str(m.get("state") or "") == "blocked"]),
+            "release_candidate": len([m for m in milestones if str(m.get("state") or "") == "release-candidate"]),
+            "items": milestones[:20],
+        },
+    }
+
     return {
         "instance_id": instance_id,
         "workspace_root": ws_root,
@@ -1372,32 +1401,8 @@ def v1_status():
         "crewai": crewai_info,
         "improvement_targets": targets,
         "improvement_target_summaries": target_summaries,
-        "self_upgrade": {
-            "default_target_id": default_target_id,
-            "last_run": self_upgrade_state.get("last_run") if isinstance(self_upgrade_state.get("last_run"), dict) else {},
-            "backoff_until": str(self_upgrade_state.get("backoff_until") or ""),
-            "proposal_counts": {
-                "total": len(proposals),
-                "pending": len(pending_proposals),
-                "feature": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "feature"]),
-                "bug": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "bug"]),
-                "process": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "process"]),
-                "quality": len([p for p in proposals if str(p.get("lane") or "").strip().lower() == "quality"]),
-            },
-            "pending_proposals": pending_proposals[:20],
-            "delivery": {
-                "summary": delivery_summary,
-                "active_tasks": [t for t in delivery_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release")][:20],
-                "blocked_tasks": [t for t in delivery_tasks if str(t.get("status") or "") == "blocked"][:20],
-            },
-            "milestones": {
-                "total": len(milestones),
-                "active": len([m for m in milestones if str(m.get("state") or "") == "active"]),
-                "blocked": len([m for m in milestones if str(m.get("state") or "") == "blocked"]),
-                "release_candidate": len([m for m in milestones if str(m.get("state") or "") == "release-candidate"]),
-                "items": milestones[:20],
-            },
-        },
+        "repo_improvement": repo_improvement_payload,
+        "self_upgrade": repo_improvement_payload,
         "openclaw": openclaw_status,
         "pending_decisions": pending,
         "redis_bus": redis_bus.describe(),
@@ -1448,6 +1453,80 @@ def v1_run_get(run_id: str):
     if not row:
         raise HTTPException(status_code=404, detail={"error": "run_not_found", "run_id": run_id})
     return {"run": row.__dict__}
+
+
+def _serialize_event_row(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row.id),
+        "ts": str(row.ts),
+        "event_type": str(row.event_type),
+        "actor": str(row.actor),
+        "project_id": str(row.project_id),
+        "workstream_id": str(row.workstream_id),
+        "payload": dict(row.payload or {}),
+    }
+
+
+def _events_for_run(run_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
+    target_run_id = str(run_id or "").strip()
+    if not target_run_id:
+        return []
+    rows: list[dict[str, Any]] = []
+    after_id = 0
+    max_rows = max(1, min(int(limit or 200), 1000))
+    while len(rows) < max_rows:
+        batch = DB.list_events(after_id=after_id, limit=1000)
+        if not batch:
+            break
+        for item in batch:
+            after_id = max(after_id, int(item.id))
+            payload = item.payload if isinstance(item.payload, dict) else {}
+            if str(payload.get("run_id") or "").strip() != target_run_id:
+                continue
+            rows.append(_serialize_event_row(item))
+            if len(rows) >= max_rows:
+                break
+        if len(batch) < 1000:
+            break
+    return rows[-max_rows:]
+
+
+def _repo_improvement_run_logs_payload(run_id: str, *, limit: int = 200) -> dict[str, Any]:
+    row = DB.get_run(run_id)
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found", "run_id": run_id})
+    report = improvement_store.get_report(run_id) or {}
+    crew_debug = report.get("crew_debug") if isinstance(report.get("crew_debug"), dict) else {}
+    agent_logs = []
+    for item in list(crew_debug.get("task_outputs") or []):
+        if not isinstance(item, dict):
+            continue
+        agent_logs.append(
+            {
+                "stage": "planning",
+                "task_name": str(item.get("name") or "").strip(),
+                "agent": str(item.get("agent") or "").strip(),
+                "raw": str(item.get("raw") or ""),
+            }
+        )
+    plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
+    return {
+        "run": row.__dict__,
+        "report_available": bool(report),
+        "summary": str(report.get("summary") or plan.get("summary") or ""),
+        "target_id": str(report.get("target_id") or ""),
+        "bug_findings": int(report.get("bug_findings") or 0),
+        "records": list(report.get("records") or []),
+        "pending_proposals": list(report.get("pending_proposals") or []),
+        "planning_agent_logs": agent_logs,
+        "events": _events_for_run(run_id, limit=limit),
+    }
+
+
+@app.get("/v1/repo_improvement/runs/{run_id}/logs")
+@app.get("/v1/runs/{run_id}/logs")
+def v1_run_logs(run_id: str, limit: int = Query(default=200, ge=1, le=1000)):
+    return _repo_improvement_run_logs_payload(run_id, limit=limit)
 
 
 @app.post("/v1/runs/start")
@@ -2372,16 +2451,17 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
     return {"ok": True, "resumed": resumed, "resumed_details": resumed_details, "skipped": skipped}
 
 
+@app.post("/v1/repo_improvement/run")
 @app.post("/v1/self_upgrade/run")
-def v1_self_upgrade_run(payload: SelfUpgradeIn):
+def v1_repo_improvement_run(payload: SelfUpgradeIn):
     _require_leader_write()
     project_id = str(payload.project_id or "teamos").strip() or "teamos"
     workstream_id = str(payload.workstream_id or "general").strip() or "general"
     return _run_self_upgrade_iteration(
-        actor="self_upgrade_api",
+        actor="repo_improvement_api",
         project_id=project_id,
         workstream_id=workstream_id,
-        objective=str(payload.objective or "Run CrewAI self-upgrade for the target repository").strip(),
+        objective=str(payload.objective or "Run CrewAI repo-improvement for the target repository").strip(),
         target_id=str(payload.target_id or "").strip(),
         repo_path=str(payload.repo_path or "").strip(),
         repo_url=str(payload.repo_url or "").strip(),
@@ -2412,8 +2492,9 @@ def v1_improvement_targets_upsert(payload: ImprovementTargetIn):
     return {"ok": True, "target": target}
 
 
+@app.get("/v1/repo_improvement/proposals")
 @app.get("/v1/self_upgrade/proposals")
-def v1_self_upgrade_proposals(
+def v1_repo_improvement_proposals(
     target_id: str = Query(default=""),
     project_id: str = Query(default=""),
     lane: str = Query(default=""),
@@ -2423,8 +2504,9 @@ def v1_self_upgrade_proposals(
     return {"total": len(proposals), "proposals": proposals}
 
 
+@app.post("/v1/repo_improvement/proposals/decide")
 @app.post("/v1/self_upgrade/proposals/decide")
-def v1_self_upgrade_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
+def v1_repo_improvement_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
     _require_leader_write()
     try:
         proposal = crewai_self_upgrade.decide_proposal(
@@ -2435,12 +2517,12 @@ def v1_self_upgrade_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
             version_bump=str(payload.version_bump or "").strip(),
         )
     except crewai_self_upgrade.SelfUpgradeError as e:
-        raise HTTPException(status_code=400, detail={"error": "self_upgrade_proposal_decision_failed", "message": str(e)})
+        raise HTTPException(status_code=400, detail={"error": "repo_improvement_proposal_decision_failed", "message": str(e)})
     project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
     workstream_id = str(proposal.get("workstream_id") or "general").strip() or "general"
     DB.add_event(
         event_type="SELF_UPGRADE_PROPOSAL_DECIDED",
-        actor="self_upgrade_api",
+        actor="repo_improvement_api",
         project_id=project_id,
         workstream_id=workstream_id,
         payload={"proposal": proposal},
@@ -2449,15 +2531,17 @@ def v1_self_upgrade_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
     return {"ok": True, "proposal": proposal}
 
 
+@app.post("/v1/repo_improvement/discussions/sync")
 @app.post("/v1/self_upgrade/discussions/sync")
-def v1_self_upgrade_discussions_sync():
+def v1_repo_improvement_discussions_sync():
     _require_leader_write()
-    out = _run_self_upgrade_discussion_sync(actor="self_upgrade_discussion_api")
+    out = _run_self_upgrade_discussion_sync(actor="repo_improvement_discussion_api")
     return {"ok": True, **out}
 
 
+@app.get("/v1/repo_improvement/milestones")
 @app.get("/v1/self_upgrade/milestones")
-def v1_self_upgrade_milestones(
+def v1_repo_improvement_milestones(
     project_id: str = Query(default="teamos"),
     target_id: str = Query(default=""),
     state: str = Query(default=""),
@@ -2517,8 +2601,9 @@ def v1_openclaw_sweep(payload: OpenClawSweepIn):
     return openclaw_reporter.sweep_events(db=DB, dry_run=bool(payload.dry_run), limit=int(payload.limit or 100))
 
 
+@app.get("/v1/repo_improvement/delivery/tasks")
 @app.get("/v1/self_upgrade/delivery/tasks")
-def v1_self_upgrade_delivery_tasks(
+def v1_repo_improvement_delivery_tasks(
     project_id: str = Query(default=""),
     target_id: str = Query(default=""),
     status: str = Query(default=""),
@@ -2531,11 +2616,12 @@ def v1_self_upgrade_delivery_tasks(
     }
 
 
+@app.post("/v1/repo_improvement/delivery/run")
 @app.post("/v1/self_upgrade/delivery/run")
-def v1_self_upgrade_delivery_run(payload: SelfUpgradeDeliveryIn):
+def v1_repo_improvement_delivery_run(payload: SelfUpgradeDeliveryIn):
     _require_leader_write()
     out = _run_self_upgrade_delivery_iteration(
-        actor="self_upgrade_delivery_api",
+        actor="repo_improvement_delivery_api",
         project_id=str(payload.project_id or "teamos").strip() or "teamos",
         target_id=str(payload.target_id or "").strip(),
         task_id=str(payload.task_id or "").strip(),
@@ -2548,10 +2634,10 @@ def v1_self_upgrade_delivery_run(payload: SelfUpgradeDeliveryIn):
 
 @app.post("/v1/self_improve/run")
 def v1_self_improve_run(payload: SelfUpgradeIn):
-    out = v1_self_upgrade_run(payload)
+    out = v1_repo_improvement_run(payload)
     try:
         emit_n8n_event(
-            "SELF_UPGRADE_RUN",
+            "REPO_IMPROVEMENT_RUN",
             project_id=str(out.get("project_id") or "teamos"),
             workstream_id=str(payload.workstream_id or _default_workstream_id()),
             payload=out,

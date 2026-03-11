@@ -1140,7 +1140,7 @@ def _ensure_task_worktree(ledger_path: Path, doc: dict[str, Any]) -> tuple[dict[
         source_repo_root=source_repo_root,
         raw_hint=desired_raw,
     )
-    branch_name = str(execution.get("branch_name") or f"codex/self-upgrade/{_slug(task_id.lower(), default='task')}").strip()
+    branch_name = str(execution.get("branch_name") or f"codex/repo-improvement/{_slug(task_id.lower(), default='task')}").strip()
     base_branch_out = _run(["git", "-C", str(source_repo_root), "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_repo_root, timeout_sec=30)
     base_branch = str(base_branch_out.get("stdout") or "").strip() or "main"
     legacy_roots: list[Path] = []
@@ -1873,7 +1873,7 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
     if not isinstance(execution_policy, dict):
         execution_policy = {}
     execution = _execution_state(task_doc)
-    commit_message = str(execution_policy.get("commit_message_template") or f"{task_id}: {task_doc.get('title') or 'self-upgrade task'}").strip()
+    commit_message = str(execution_policy.get("commit_message_template") or f"{task_id}: {task_doc.get('title') or 'repo-improvement task'}").strip()
     base_branch = str(execution.get("base_branch") or "main").strip() or "main"
     branch_name = str(execution.get("branch_name") or _run(["git", "-C", str(worktree_root), "rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_root, timeout_sec=30).get("stdout") or "").strip()
     add_cmd = ["git", "-C", str(worktree_root), "add", "-A", "--"]

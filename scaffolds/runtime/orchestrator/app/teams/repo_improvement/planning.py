@@ -1424,7 +1424,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         text = str(raw_output or "").strip()
         match = re.search(r"\{.*\}", text, re.S)
         if not match:
-            raise SelfUpgradeError("CrewAI returned no structured self-upgrade plan")
+            raise SelfUpgradeError("CrewAI returned no structured repo-improvement plan")
         plan = UpgradePlan.model_validate(json.loads(match.group(0)))
 
     findings: list[UpgradeFinding] = []
@@ -1543,7 +1543,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         findings.append(finding_obj)
         lane_counts[lane] = int(lane_counts.get(lane, 0)) + 1
     return UpgradePlan(
-        summary=str(plan.summary or "").strip() or "CrewAI self-upgrade analysis completed.",
+        summary=str(plan.summary or "").strip() or "CrewAI repo-improvement analysis completed.",
         findings=findings,
         ci_actions=[str(x).strip() for x in (plan.ci_actions or []) if str(x).strip()][:20],
         notes=[str(x).strip() for x in (plan.notes or []) if str(x).strip()][:20],
@@ -1669,7 +1669,7 @@ def kickoff_upgrade_plan(
             Task(
                 name="process_optimization_scan",
                 description=(
-                    "Review the repository context and recent self-upgrade execution telemetry.\n"
+                    "Review the repository context and recent repo-improvement execution telemetry.\n"
                     "Identify process improvements only if they are grounded in recent failures, delays, or workflow friction.\n"
                     "Prefer one high-value process improvement over many weak ones."
                 ),
@@ -3916,7 +3916,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
                     }
                 )
     except Exception as e:
-        _finish_agents(db=db, agent_ids=agent_ids, state="FAILED", current_action="self-upgrade failed")
+        _finish_agents(db=db, agent_ids=agent_ids, state="FAILED", current_action="repo-improvement failed")
         backoff_until = ""
         err_text = str(e)
         if any(x in err_text.lower() for x in ("insufficient_quota", "429", "rate limit")):
@@ -4152,7 +4152,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "pending_proposals": len(pending_proposals),
         }
     )
-    _finish_agents(db=db, agent_ids=agent_ids, state="DONE", current_action="self-upgrade recorded")
+    _finish_agents(db=db, agent_ids=agent_ids, state="DONE", current_action="repo-improvement recorded")
     db.add_event(
         event_type="SELF_UPGRADE_FINISHED",
         actor=actor,
@@ -4193,7 +4193,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "crewai": crewai_info,
         "dry_run": dry_run,
         "write_delegate": {
-            "write_mode": "crewai_self_upgrade",
+            "write_mode": "crewai_repo_improvement",
             "writer": "crewai_agents",
             "truth_sources": ["task_ledger", "github_issues", "github_projects"],
             "target_repo": repo_locator or str(repo_root),

@@ -949,7 +949,7 @@ def _runtime_root_for_repo(repo_root: Path) -> Path:
     return (repo_root.parent / "team-os-runtime").resolve()
 
 
-def _read_last_self_upgrade_run(repo_root: Path, *, base_url: str = "") -> dict[str, Any]:
+def _read_last_repo_improvement_run(repo_root: Path, *, base_url: str = "") -> dict[str, Any]:
     _ = repo_root
     url = str(base_url or "").strip().rstrip("/")
     if not url:
@@ -958,11 +958,19 @@ def _read_last_self_upgrade_run(repo_root: Path, *, base_url: str = "") -> dict[
         status = _http_json("GET", url + "/v1/status")
     except Exception:
         return {}
-    su = status.get("self_upgrade") if isinstance(status, dict) else {}
-    if not isinstance(su, dict):
+    repo_improvement = status.get("repo_improvement") if isinstance(status, dict) else {}
+    if isinstance(repo_improvement, dict):
+        last = repo_improvement.get("last_run")
+        return last if isinstance(last, dict) else {}
+    legacy = status.get("self_upgrade") if isinstance(status, dict) else {}
+    if not isinstance(legacy, dict):
         return {}
-    last = su.get("last_run")
+    last = legacy.get("last_run")
     return last if isinstance(last, dict) else {}
+
+
+def _read_last_self_upgrade_run(repo_root: Path, *, base_url: str = "") -> dict[str, Any]:
+    return _read_last_repo_improvement_run(repo_root, base_url=base_url)
 
 
 def _default_project_id(prof: dict[str, Any], args: argparse.Namespace) -> str:
@@ -1028,24 +1036,24 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"focus.updated_at={focus.get('updated_at','')}")
     repo_root = _find_team_os_repo_root()
     if repo_root:
-        su = _read_last_self_upgrade_run(repo_root, base_url=base) or {}
-        if su.get("ts"):
-            print(f"self_upgrade.last_run_at={su.get('ts')}")
-            print(f"self_upgrade.status={su.get('status','')}")
-            if su.get("records") is not None:
-                print(f"self_upgrade.records={su.get('records')}")
-    su_api = st.get("self_upgrade") or {}
-    proposal_counts = su_api.get("proposal_counts") or {}
+        last = _read_last_repo_improvement_run(repo_root, base_url=base) or {}
+        if last.get("ts"):
+            print(f"repo_improvement.last_run_at={last.get('ts')}")
+            print(f"repo_improvement.status={last.get('status','')}")
+            if last.get("records") is not None:
+                print(f"repo_improvement.records={last.get('records')}")
+    repo_improvement = (st.get("repo_improvement") or st.get("self_upgrade") or {}) if isinstance(st, dict) else {}
+    proposal_counts = repo_improvement.get("proposal_counts") or {}
     if proposal_counts:
-        print(f"self_upgrade.pending_proposals={proposal_counts.get('pending', 0)}")
-        print(f"self_upgrade.proposals_total={proposal_counts.get('total', 0)}")
-    delivery = su_api.get("delivery") or {}
+        print(f"repo_improvement.pending_proposals={proposal_counts.get('pending', 0)}")
+        print(f"repo_improvement.proposals_total={proposal_counts.get('total', 0)}")
+    delivery = repo_improvement.get("delivery") or {}
     delivery_summary = delivery.get("summary") or {}
     if delivery_summary:
-        print(f"self_upgrade.delivery_total={delivery_summary.get('total', 0)}")
-        print(f"self_upgrade.delivery_queued={delivery_summary.get('queued', 0)}")
-        print(f"self_upgrade.delivery_coding={delivery_summary.get('coding', 0)}")
-        print(f"self_upgrade.delivery_blocked={delivery_summary.get('blocked', 0)}")
+        print(f"repo_improvement.delivery_total={delivery_summary.get('total', 0)}")
+        print(f"repo_improvement.delivery_queued={delivery_summary.get('queued', 0)}")
+        print(f"repo_improvement.delivery_coding={delivery_summary.get('coding', 0)}")
+        print(f"repo_improvement.delivery_blocked={delivery_summary.get('blocked', 0)}")
     print()
 
     agents = st.get("agents") or []
@@ -1766,9 +1774,9 @@ def cmd_self_improve(args: argparse.Namespace) -> None:
         "force": bool(args.force),
         "trigger": "cli_auto" if bool(getattr(args, "auto", False)) else "cli",
     }
-    out = _http_json("POST", base + "/v1/self_upgrade/run", payload)
+    out = _http_json("POST", base + "/v1/repo_improvement/run", payload)
     if not bool(out.get("ok")):
-        raise RuntimeError(str(out.get("error") or "self_upgrade_failed"))
+        raise RuntimeError(str(out.get("error") or "repo_improvement_failed"))
     if bool(getattr(args, "quiet", False)):
         return
     print(
@@ -1804,7 +1812,7 @@ def cmd_self_upgrade_proposals(args: argparse.Namespace) -> None:
         query["lane"] = lane
     if status:
         query["status"] = status
-    url = base + "/v1/self_upgrade/proposals"
+    url = base + "/v1/repo_improvement/proposals"
     if query:
         url += "?" + urllib.parse.urlencode(query)
     out = _http_json("GET", url)
@@ -1842,7 +1850,7 @@ def cmd_self_upgrade_decide(args: argparse.Namespace) -> None:
         "summary": str(getattr(args, "summary", "") or "").strip() or None,
         "version_bump": str(getattr(args, "version_bump", "") or "").strip() or None,
     }
-    out = _http_json("POST", base + "/v1/self_upgrade/proposals/decide", payload)
+    out = _http_json("POST", base + "/v1/repo_improvement/proposals/decide", payload)
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1858,7 +1866,7 @@ def cmd_self_upgrade_decide(args: argparse.Namespace) -> None:
 
 def cmd_self_upgrade_discussions_sync(args: argparse.Namespace) -> None:
     base, _prof = _base_url(args)
-    out = _http_json("POST", base + "/v1/self_upgrade/discussions/sync", {})
+    out = _http_json("POST", base + "/v1/repo_improvement/discussions/sync", {})
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1879,7 +1887,7 @@ def cmd_self_upgrade_delivery(args: argparse.Namespace) -> None:
         "force": bool(getattr(args, "force", False)),
         "max_tasks": int(getattr(args, "max_tasks", 1) or 1),
     }
-    out = _http_json("POST", base + "/v1/self_upgrade/delivery/run", payload)
+    out = _http_json("POST", base + "/v1/repo_improvement/delivery/run", payload)
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1906,7 +1914,7 @@ def cmd_self_upgrade_delivery_tasks(args: argparse.Namespace) -> None:
         query["target_id"] = target_id
     if status:
         query["status"] = status
-    url = base + "/v1/self_upgrade/delivery/tasks"
+    url = base + "/v1/repo_improvement/delivery/tasks"
     if query:
         url += "?" + urllib.parse.urlencode(query)
     out = _http_json("GET", url)
@@ -1935,6 +1943,43 @@ def cmd_self_upgrade_delivery_tasks(args: argparse.Namespace) -> None:
             ]
         )
     print(_fmt_table(["task_id", "status", "stage", "owner_role", "attempts", "pull_request", "title"], rows))
+
+
+def cmd_repo_improvement_logs(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    run_id = str(getattr(args, "run_id", "") or "").strip()
+    if not run_id:
+        status = _http_json("GET", base + "/v1/status")
+        repo_improvement = (status.get("repo_improvement") or status.get("self_upgrade") or {}) if isinstance(status, dict) else {}
+        last_run = repo_improvement.get("last_run") if isinstance(repo_improvement, dict) else {}
+        if isinstance(last_run, dict):
+            run_id = str(last_run.get("run_id") or "").strip()
+    if not run_id:
+        raise RuntimeError("No repo-improvement run found. Run `teamos repo-improvement --dry-run --force` first or pass --run-id.")
+    limit = max(1, int(getattr(args, "limit", 200) or 200))
+    url = base + f"/v1/repo_improvement/runs/{urllib.parse.quote(run_id, safe='')}/logs?limit={limit}"
+    out = _http_json("GET", url)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    run = out.get("run") or {}
+    print(f"run_id={run.get('run_id','')}")
+    print(f"state={run.get('state','')}")
+    print(f"project_id={run.get('project_id','')}")
+    print(f"workstream_id={run.get('workstream_id','')}")
+    print(f"objective={run.get('objective','')}")
+    print(f"report_available={bool(out.get('report_available'))}")
+    if out.get("summary"):
+        print(f"summary={out.get('summary')}")
+    print(f"planning_agent_logs={len(list(out.get('planning_agent_logs') or []))}")
+    print(f"events={len(list(out.get('events') or []))}")
+    for item in list(out.get("planning_agent_logs") or []):
+        task_name = str(item.get("task_name") or "").strip()
+        agent = str(item.get("agent") or "").strip()
+        print()
+        print(f"[planning] {agent} :: {task_name}")
+        raw = str(item.get("raw") or "").strip()
+        print(raw if raw else "(empty)")
 
 
 def cmd_improvement_targets(args: argparse.Namespace) -> None:
@@ -3185,6 +3230,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     sidt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
     sidt.add_argument("--json", action="store_true", help="print raw JSON")
     sidt.set_defaults(fn=cmd_self_upgrade_delivery_tasks)
+
+    ril = sp.add_parser("repo-improvement-logs", help="Show CrewAI planning logs and runtime events for a repo-improvement run")
+    ril.add_argument("--run-id", default="", help="specific run id; defaults to the latest repo-improvement run")
+    ril.add_argument("--limit", type=int, default=200, help="max runtime events to include")
+    ril.add_argument("--json", action="store_true", help="print raw JSON")
+    ril.set_defaults(fn=cmd_repo_improvement_logs)
+
+    sul = sp.add_parser("self-upgrade-logs", help="Compatibility alias for `repo-improvement-logs`")
+    sul.add_argument("--run-id", default="", help="specific run id; defaults to the latest repo-improvement run")
+    sul.add_argument("--limit", type=int, default=200, help="max runtime events to include")
+    sul.add_argument("--json", action="store_true", help="print raw JSON")
+    sul.set_defaults(fn=cmd_repo_improvement_logs)
+
+    sil = sp.add_parser("self-improve-logs", help="Compatibility alias for `repo-improvement-logs`")
+    sil.add_argument("--run-id", default="", help="specific run id; defaults to the latest repo-improvement run")
+    sil.add_argument("--limit", type=int, default=200, help="max runtime events to include")
+    sil.add_argument("--json", action="store_true", help="print raw JSON")
+    sil.set_defaults(fn=cmd_repo_improvement_logs)
 
     tgt = sp.add_parser("improvement-targets", help="List registered improvement targets")
     tgt.add_argument("--project-id", default="", help="filter by project id")

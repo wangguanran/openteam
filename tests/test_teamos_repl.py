@@ -46,7 +46,7 @@ class TeamosReplTests(unittest.TestCase):
             repl.assert_called_once()
             call_args, call_kwargs = repl.call_args
             self.assertEqual(call_kwargs.get("project_id"), "demo1")
-            self.assertEqual(str(call_args[0].workspace_root), str(workspace_root))
+            self.assertEqual(str(Path(call_args[0].workspace_root).resolve()), str(workspace_root.resolve()))
 
     def test_project_repl_control_commands_do_not_write_raw(self) -> None:
         calls = []
@@ -98,6 +98,49 @@ class TeamosReplTests(unittest.TestCase):
         self.assertEqual(payload["text"], "need audit logs")
         self.assertEqual(payload["source"], "cli")
         self.assertEqual(payload["workstream_id"], "general")
+
+    def test_repo_improvement_logs_defaults_to_latest_run(self) -> None:
+        calls = []
+
+        def fake_http(method, url, payload=None, timeout_sec=10, **kwargs):
+            calls.append((method, url, payload, timeout_sec, kwargs))
+            if url.endswith("/v1/status"):
+                return {"repo_improvement": {"last_run": {"run_id": "run-123"}}}
+            if url.endswith("/v1/repo_improvement/runs/run-123/logs?limit=25"):
+                return {
+                    "run": {
+                        "run_id": "run-123",
+                        "state": "DONE",
+                        "project_id": "teamos",
+                        "workstream_id": "general",
+                        "objective": "CLI-triggered CrewAI repo-improvement",
+                    },
+                    "report_available": True,
+                    "summary": "no provable defect signal found this round",
+                    "planning_agent_logs": [
+                        {
+                            "stage": "planning",
+                            "task_name": "bug_scan",
+                            "agent": "Test-Manager",
+                            "raw": "0 bug findings",
+                        }
+                    ],
+                    "events": [{"event_type": "RUN_FINISHED"}],
+                }
+            raise AssertionError(f"unexpected url: {url}")
+
+        args = argparse.Namespace(profile=None, run_id="", limit=25, json=False)
+        stdout = io.StringIO()
+        with mock.patch.object(self.teamos, "_base_url", return_value=("http://cp.local", {"name": "local"})), mock.patch.object(
+            self.teamos, "_http_json", side_effect=fake_http
+        ), contextlib.redirect_stdout(stdout):
+            self.teamos.cmd_repo_improvement_logs(args)
+
+        out = stdout.getvalue()
+        self.assertIn("run_id=run-123", out)
+        self.assertIn("planning_agent_logs=1", out)
+        self.assertIn("[planning] Test-Manager :: bug_scan", out)
+        self.assertIn("0 bug findings", out)
 
 
 if __name__ == "__main__":

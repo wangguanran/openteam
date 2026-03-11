@@ -77,7 +77,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
     if crew_tools.is_native_crewai_flow(flow):
         run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
         write_delegate = {
-            "write_mode": "crewai_self_upgrade",
+            "write_mode": "crewai_repo_improvement",
             "writer": "crewai_agents",
             "truth_sources": ["task_ledger", "github_issues", "github_projects"],
         }

@@ -188,15 +188,15 @@ Control Plane now exposes hub APIs for presentation/orchestration layers:
 - `GET /v1/hub/approvals`
 - `GET /v1/runs`
 - `POST /v1/runs/start`
-- `POST /v1/self_upgrade/run` (`/v1/self_improve/run` is kept as a compatibility alias)
-- `GET /v1/self_upgrade/proposals`
-- `POST /v1/self_upgrade/proposals/decide`
+- `POST /v1/repo_improvement/run` (`/v1/self_upgrade/run` and `/v1/self_improve/run` are kept as compatibility aliases)
+- `GET /v1/repo_improvement/proposals`
+- `POST /v1/repo_improvement/proposals/decide`
 
 Default behavior:
 
-- `control-plane` startup triggers one CrewAI self-upgrade run for the current `team-os` repo.
-- `control-plane` also keeps a continuous self-upgrade loop running for the current repo.
-- The self-upgrade run can also target another local repo via `repo_path`.
+- `control-plane` startup triggers one CrewAI repo-improvement run for the current `team-os` repo.
+- `control-plane` also keeps a continuous repo-improvement loop running for the current repo.
+- The repo-improvement run can also target another local repo via `repo_path`.
 - Bug findings are materialized immediately.
 - Feature findings become proposals, wait for user confirmation, and respect a 1 hour cooldown before materialization.
 - Process optimizations collect telemetry for 24 hours before materialization.

@@ -447,3 +447,18 @@ def save_report(*, target_id: str, project_id: str, report: dict[str, Any]) -> d
     payload["target_id"] = str(target_id or "").strip()
     put_doc(REPORT_NAMESPACE, report_id, project_id=str(project_id or "teamos"), scope_id=str(target_id or "").strip(), state="done", category="report", value=payload)
     return payload
+
+
+def get_report(report_id: str) -> Optional[dict[str, Any]]:
+    doc = get_doc(REPORT_NAMESPACE, str(report_id or "").strip())
+    return dict(doc) if isinstance(doc, dict) else None
+
+
+def list_reports(*, target_id: str = "", project_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
+    items = list_docs(
+        REPORT_NAMESPACE,
+        project_id=str(project_id or ""),
+        scope_id=str(target_id or ""),
+        limit=max(1, min(int(limit or 100), 1000)),
+    )
+    return sorted(items, key=lambda x: str(x.get("ts") or x.get("run_id") or ""), reverse=True)

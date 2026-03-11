@@ -123,7 +123,7 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_PROCESS_OPTIMIZATION_ANALYST: CrewRoleSpec(
         role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST,
-        goal="Use recent execution telemetry to identify improvements in the self-upgrade process itself.",
+        goal="Use recent execution telemetry to identify improvements in the repo-improvement process itself.",
         backstory="You optimize the team workflow by looking at timings, failures, repeated blockers, and wasted motion.",
     ),
     ROLE_CODE_QUALITY_ANALYST: CrewRoleSpec(
@@ -156,25 +156,25 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_FEATURE_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_FEATURE_CODING_AGENT,
-        goal="Implement the approved self-upgrade task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_BUGFIX_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_BUGFIX_CODING_AGENT,
-        goal="Implement the approved self-upgrade task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_PROCESS_OPTIMIZATION_AGENT: CrewRoleSpec(
         role_id=ROLE_PROCESS_OPTIMIZATION_AGENT,
-        goal="Implement the approved self-upgrade task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_CODE_QUALITY_AGENT: CrewRoleSpec(
         role_id=ROLE_CODE_QUALITY_AGENT,
-        goal="Implement the approved self-upgrade task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
@@ -198,7 +198,7 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_MILESTONE_MANAGER: CrewRoleSpec(
         role_id=ROLE_MILESTONE_MANAGER,
-        goal="Plan release lines and milestones for approved self-upgrade work.",
+        goal="Plan release lines and milestones for approved repo-improvement work.",
         backstory="You keep milestones coherent, incremental, and traceable to the workstream plan.",
     ),
     ROLE_SCHEDULER_AGENT: CrewRoleSpec(
@@ -325,7 +325,7 @@ def delivery_team_blueprint(*, owner_role: str, review_role: str, qa_role: str, 
     return TeamBlueprint(
         team_id=STAGE_DELIVERY,
         members=(
-            TeamMemberSpec(role_id=ROLE_SCHEDULER_AGENT, state="RUNNING", current_action="dispatching self-upgrade task"),
+            TeamMemberSpec(role_id=ROLE_SCHEDULER_AGENT, state="RUNNING", current_action="dispatching repo-improvement task"),
             TeamMemberSpec(role_id=ROLE_ISSUE_AUDIT_AGENT, state="IDLE", current_action="waiting for issue audit"),
             TeamMemberSpec(role_id=ROLE_BUG_TESTCASE_AGENT, state="IDLE", current_action="waiting for failing test bootstrap"),
             TeamMemberSpec(role_id=ROLE_BUG_REPRO_AGENT, state="IDLE", current_action="waiting for bug reproduction"),
