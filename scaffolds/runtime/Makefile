@@ -1,18 +1,12 @@
 SHELL := /bin/bash
 
-.PHONY: build up up-build down pull ps logs doctor config auto-update-start auto-update-stop auto-update-status auto-update-check
+.PHONY: up down pull ps logs doctor config auto-update-start auto-update-stop auto-update-status auto-update-check
 
 AUTO_UPDATE_SCRIPT := ./scripts/auto_update.py
 
 up:
+	docker compose pull control-plane
 	docker compose up -d --no-build
-	@python3 $(AUTO_UPDATE_SCRIPT) start --runtime-dir . >/dev/null
-
-build:
-	docker compose build control-plane
-
-up-build:
-	docker compose up -d --build
 	@python3 $(AUTO_UPDATE_SCRIPT) start --runtime-dir . >/dev/null
 
 down:
@@ -20,7 +14,7 @@ down:
 	docker compose down --remove-orphans
 
 pull:
-	docker compose pull
+	docker compose pull control-plane
 
 ps:
 	docker compose ps

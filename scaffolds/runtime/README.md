@@ -46,7 +46,7 @@ cp .env.example .env
 # 外部数据库：填写 TEAMOS_DB_URL
 # 本地数据库：保持 TEAMOS_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
 # 按需填写 OPENAI_API_KEY
-make up-build
+make up
 make ps
 ```
 
@@ -68,7 +68,7 @@ TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
 
 启用后：
 
-- `make up` / `make up-build` 会自动拉起本地镜像 watcher
+- `make up` 会自动拉起本地镜像 watcher
 - watcher 会周期性执行 `docker compose pull control-plane`
 - 检测到本地镜像更新后，会自动重建 `control-plane`
 - 如需只在空闲时更新，可设置 `TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1`
@@ -92,8 +92,7 @@ make down
 
 说明：
 
-- `make up-build`：使用本地 `team-os` 源码通过统一 Dockerfile 构建并启动
-- `make up`：直接使用本地已有或预先 `pull` 下来的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动
+- `make up`：只使用 GitHub CI 发布的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动；本地不允许构建 control-plane 镜像
 - `docker-compose.yml` 默认总会启动本地 `postgres` 容器
 - 当 `TEAMOS_DB_URL` 为空时，control-plane 连接本地 `postgres`
 - 当 `TEAMOS_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
@@ -175,7 +174,7 @@ curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
 ## Makefile
 
 - `make up` / `make down`
-- `make build` / `make up-build`
+- 本地不再支持 `make build` / `make up-build`；如需新镜像，请等待 GitHub CI 发布后再 `make up`
 - `make pull`
 - `make ps`
 - `make logs`

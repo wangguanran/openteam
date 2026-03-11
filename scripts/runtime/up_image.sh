@@ -11,7 +11,7 @@ Usage:
 
 Purpose:
   Initialize an image-based TeamOS runtime config directory, write the required .env values,
-  pull the published control-plane image, and start the runtime with the unified docker compose file.
+  pull the published control-plane image created by GitHub CI, and start the runtime.
 
 Defaults:
   --path  ~/.teamos/runtime-config/default
