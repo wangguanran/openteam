@@ -1396,12 +1396,25 @@ def _crewai_llm():
     elif (not auth_mode) and ("codex" in model.lower()) and (not api_key):
         os.environ["CREWAI_OPENAI_AUTH_MODE"] = "oauth_codex"
 
+    reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "high").strip().lower()
+    reasoning_effort_aliases = {
+        "highest": "high",
+        "max": "high",
+        "xhigh": "high",
+        "minimal": "low",
+    }
+    reasoning_effort = reasoning_effort_aliases.get(reasoning_effort, reasoning_effort)
+    if reasoning_effort not in {"none", "low", "medium", "high"}:
+        reasoning_effort = "high"
+
     kwargs: dict[str, Any] = {
         "model": model,
         "api": "responses",
         "is_litellm": False,
         "max_tokens": 4000,
     }
+    if any(token in model.lower() for token in ("gpt-5", "codex", "o1", "o3", "o4")):
+        kwargs["reasoning_effort"] = reasoning_effort
     if base_url:
         kwargs["base_url"] = base_url
     if api_key:

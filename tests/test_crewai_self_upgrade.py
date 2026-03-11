@@ -146,6 +146,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertEqual(captured["api"], "responses")
         self.assertEqual(captured["is_litellm"], False)
         self.assertEqual(captured["max_tokens"], 4000)
+        self.assertEqual(captured["reasoning_effort"], "high")
         self.assertNotIn("api_key", captured)
         self.assertNotIn("base_url", captured)
 

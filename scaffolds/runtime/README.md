@@ -50,6 +50,14 @@ make up-build
 make ps
 ```
 
+如需把 CrewAI 的思考强度拉满，设置：
+
+```bash
+export TEAMOS_CREWAI_REASONING_EFFORT=high
+```
+
+当前 runtime 随镜像安装的 CrewAI `1.10.1` 仅支持 `none|low|medium|high`，因此本栈可用的最高档位就是 `high`。
+
 停止：
 
 ```bash
