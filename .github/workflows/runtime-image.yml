@@ -59,7 +59,7 @@ jobs:
 
       - name: Run runtime unit tests
         env:
-          TEAMOS_SELF_UPGRADE_AUTO: "0"
+          TEAMOS_REPO_IMPROVEMENT_AUTO: "0"
         run: |
           python -m unittest \
             tests.test_crewai_runtime \
