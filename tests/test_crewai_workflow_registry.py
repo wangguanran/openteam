@@ -36,7 +36,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
 
         self.assertFalse(spec.uses_proposal)
         self.assertEqual(spec.default_version_bump, "patch")
-        self.assertEqual(spec.max_candidates(), 2)
+        self.assertEqual(spec.max_candidates(), 0)
         self.assertEqual(spec.dormant_after_zero_scans(), 3)
         self.assertEqual(spec.default_baseline_action("patch"), "patch_release")
         self.assertTrue(spec.should_materialize(status="", due=False))
