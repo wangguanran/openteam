@@ -31,12 +31,14 @@ from .requirements_store import (
 from .runtime_db import RunRow, RuntimeDB
 from . import cluster_manager
 from . import crewai_orchestrator
+from . import crewai_role_registry
 from . import crewai_self_upgrade
 from . import crewai_self_upgrade_delivery
 from . import crewai_runtime
 from . import improvement_store
 from . import openclaw_reporter
 from . import crew_tools
+from .teams.repo_improvement.registries import workflows as repo_improvement_workflows
 from .state_store import (
     StateError,
     ensure_instance_id,
@@ -107,6 +109,11 @@ _TASK_STATE_IN_PROGRESS = frozenset({"doing", "running", "work", "in_progress", 
 _RUN_STATE_ACTIVE = frozenset({"RUNNING", "PAUSED"})
 _REPO_IMPROVEMENT_LOOP_STATE_LOCK = threading.Lock()
 _REPO_IMPROVEMENT_LOOP_STATE: dict[str, dict[str, Any]] = {}
+_REPO_IMPROVEMENT_LOOP_CLEANUP = "repo_improvement_cleanup"
+_REPO_IMPROVEMENT_LOOP_STARTUP = "repo_improvement_startup"
+_REPO_IMPROVEMENT_LOOP_DISCOVERY = "repo_improvement_discovery"
+_REPO_IMPROVEMENT_LOOP_DISCUSSION = "repo_improvement_discussion"
+_REPO_IMPROVEMENT_LOOP_DELIVERY = "repo_improvement_delivery"
 
 
 def _normalize_task_state(state: Any) -> str:
@@ -133,6 +140,41 @@ def _set_repo_improvement_loop_state(loop_id: str, **fields: Any) -> None:
 def _repo_improvement_loop_state_snapshot() -> dict[str, dict[str, Any]]:
     with _REPO_IMPROVEMENT_LOOP_STATE_LOCK:
         return {key: dict(value) for key, value in _REPO_IMPROVEMENT_LOOP_STATE.items()}
+
+
+def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: str) -> dict[str, dict[str, Any]]:
+    lanes = {
+        "bug": crewai_role_registry.WORKFLOW_BUG_FIX,
+        "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
+        "quality": crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
+        "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
+    }
+    statuses: dict[str, dict[str, Any]] = {}
+    for lane, workflow_id in lanes.items():
+        try:
+            spec = repo_improvement_workflows.workflow_spec(workflow_id, project_id=project_id)
+        except Exception:
+            continue
+        runtime_state = (
+            repo_improvement_workflows.workflow_runtime_state(target_id, workflow_id)
+            if str(target_id or "").strip()
+            else {}
+        )
+        statuses[lane] = {
+            "workflow_id": workflow_id,
+            "lane": lane,
+            "display_name_zh": str(spec.display_name_zh or "").strip(),
+            "enabled": bool(spec.enabled),
+            "disabled_reason": str(spec.disabled_reason or "").strip(),
+            "max_candidates": int(spec.max_candidates()),
+            "cooldown_hours": int(spec.cooldown_hours()),
+            "active_window_start_hour": int(spec.active_window_start_hour()),
+            "active_window_end_hour": int(spec.active_window_end_hour()),
+            "max_continuous_runtime_minutes": int(spec.max_continuous_runtime_minutes()),
+            "dormant_after_zero_scans": int(spec.dormant_after_zero_scans()),
+            "runtime_state": runtime_state,
+        }
+    return statuses
 
 
 def _task_id_from_run_id(run_id: str) -> str:
@@ -1148,7 +1190,7 @@ def _startup_background_threads() -> None:
     def _repo_improvement_cleanup_loop() -> None:
         interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_CLEANUP_INTERVAL_SEC", "60") or "60"))
         _set_repo_improvement_loop_state(
-            "cleanup",
+            _REPO_IMPROVEMENT_LOOP_CLEANUP,
             enabled=True,
             status="starting",
             current_action="initializing cleanup loop",
@@ -1158,7 +1200,7 @@ def _startup_background_threads() -> None:
             while True:
                 try:
                     _set_repo_improvement_loop_state(
-                        "cleanup",
+                        _REPO_IMPROVEMENT_LOOP_CLEANUP,
                         enabled=True,
                         status="running",
                         current_action="cleaning stale repo-improvement activity",
@@ -1167,7 +1209,7 @@ def _startup_background_threads() -> None:
                     )
                     _cleanup_stale_repo_improvement_activity()
                     _set_repo_improvement_loop_state(
-                        "cleanup",
+                        _REPO_IMPROVEMENT_LOOP_CLEANUP,
                         enabled=True,
                         status="sleeping",
                         current_action=f"sleeping {interval_sec}s until next cleanup sweep",
@@ -1176,7 +1218,7 @@ def _startup_background_threads() -> None:
                     )
                 except Exception:
                     _set_repo_improvement_loop_state(
-                        "cleanup",
+                        _REPO_IMPROVEMENT_LOOP_CLEANUP,
                         enabled=True,
                         status="error",
                         current_action="cleanup loop raised an exception",
@@ -1185,7 +1227,7 @@ def _startup_background_threads() -> None:
                 time.sleep(interval_sec)
         except Exception:
             _set_repo_improvement_loop_state(
-                "cleanup",
+                _REPO_IMPROVEMENT_LOOP_CLEANUP,
                 enabled=True,
                 status="stopped",
                 current_action="cleanup loop stopped",
@@ -1246,7 +1288,7 @@ def _startup_background_threads() -> None:
     def _self_upgrade_auto_once() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_AUTO", "1"):
             _set_repo_improvement_loop_state(
-                "startup",
+                _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=False,
                 status="disabled",
                 current_action="startup repo-improvement sweep disabled",
@@ -1254,7 +1296,7 @@ def _startup_background_threads() -> None:
             return
         try:
             _set_repo_improvement_loop_state(
-                "startup",
+                _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=True,
                 status="waiting",
                 current_action="waiting 4s before startup repo-improvement sweep",
@@ -1263,14 +1305,14 @@ def _startup_background_threads() -> None:
             time.sleep(4)
             if not _leader_write_allowed():
                 _set_repo_improvement_loop_state(
-                    "startup",
+                    _REPO_IMPROVEMENT_LOOP_STARTUP,
                     enabled=True,
                     status="skipped",
                     current_action="startup repo-improvement sweep skipped because this node is not leader",
                 )
                 return
             _set_repo_improvement_loop_state(
-                "startup",
+                _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=True,
                 status="running",
                 current_action="running startup repo-improvement sweeps",
@@ -1290,7 +1332,7 @@ def _startup_background_threads() -> None:
                     trigger="startup_auto",
                 )
             _set_repo_improvement_loop_state(
-                "startup",
+                _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=True,
                 status="done",
                 current_action="startup repo-improvement sweeps completed",
@@ -1298,7 +1340,7 @@ def _startup_background_threads() -> None:
             )
         except Exception as e:
             _set_repo_improvement_loop_state(
-                "startup",
+                _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=True,
                 status="error",
                 current_action=f"startup repo-improvement sweep failed: {str(e)[:160]}",
@@ -1321,7 +1363,7 @@ def _startup_background_threads() -> None:
     def _self_upgrade_continuous_loop() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_CONTINUOUS", "1"):
             _set_repo_improvement_loop_state(
-                "discovery",
+                _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                 enabled=False,
                 status="disabled",
                 current_action="continuous repo-improvement discovery disabled",
@@ -1332,7 +1374,7 @@ def _startup_background_threads() -> None:
         retry_sleep_sec = max(1, interval_sec)
         try:
             _set_repo_improvement_loop_state(
-                "discovery",
+                _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                 enabled=True,
                 status="waiting",
                 current_action=f"waiting {initial_delay_sec}s before first discovery sweep",
@@ -1344,7 +1386,7 @@ def _startup_background_threads() -> None:
                 try:
                     if not _leader_write_allowed():
                         _set_repo_improvement_loop_state(
-                            "discovery",
+                            _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                             enabled=True,
                             status="sleeping",
                             current_action=(
@@ -1355,7 +1397,7 @@ def _startup_background_threads() -> None:
                         time.sleep(retry_sleep_sec)
                         continue
                     _set_repo_improvement_loop_state(
-                        "discovery",
+                        _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                         enabled=True,
                         status="running",
                         current_action="running continuous repo-improvement discovery sweeps",
@@ -1376,7 +1418,7 @@ def _startup_background_threads() -> None:
                             trigger="continuous_loop",
                         )
                     _set_repo_improvement_loop_state(
-                        "discovery",
+                        _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                         enabled=True,
                         status="sleeping",
                         current_action=(
@@ -1389,7 +1431,7 @@ def _startup_background_threads() -> None:
                     )
                 except Exception as e:
                     _set_repo_improvement_loop_state(
-                        "discovery",
+                        _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                         enabled=True,
                         status="error",
                         current_action=f"discovery loop failed: {str(e)[:160]}",
@@ -1409,7 +1451,7 @@ def _startup_background_threads() -> None:
                 time.sleep(interval_sec)
         except Exception:
             _set_repo_improvement_loop_state(
-                "discovery",
+                _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                 enabled=True,
                 status="stopped",
                 current_action="discovery loop stopped",
@@ -1422,7 +1464,7 @@ def _startup_background_threads() -> None:
     def _self_upgrade_discussion_loop() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_AUTO", "1"):
             _set_repo_improvement_loop_state(
-                "discussion",
+                _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                 enabled=False,
                 status="disabled",
                 current_action="repo-improvement discussion loop disabled",
@@ -1432,7 +1474,7 @@ def _startup_background_threads() -> None:
         initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
         try:
             _set_repo_improvement_loop_state(
-                "discussion",
+                _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                 enabled=True,
                 status="waiting",
                 current_action=f"waiting {initial_delay_sec}s before first discussion sync",
@@ -1444,7 +1486,7 @@ def _startup_background_threads() -> None:
                 try:
                     if not _leader_write_allowed():
                         _set_repo_improvement_loop_state(
-                            "discussion",
+                            _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                             enabled=True,
                             status="sleeping",
                             current_action=f"discussion loop waiting {interval_sec}s because this node is not leader",
@@ -1453,7 +1495,7 @@ def _startup_background_threads() -> None:
                         time.sleep(interval_sec)
                         continue
                     _set_repo_improvement_loop_state(
-                        "discussion",
+                        _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                         enabled=True,
                         status="running",
                         current_action="running repo-improvement discussion sync",
@@ -1462,7 +1504,7 @@ def _startup_background_threads() -> None:
                     )
                     _ = _run_self_upgrade_discussion_sync(actor="control-plane.discussion-loop")
                     _set_repo_improvement_loop_state(
-                        "discussion",
+                        _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                         enabled=True,
                         status="sleeping",
                         current_action=f"sleeping {interval_sec}s until next discussion sync",
@@ -1471,7 +1513,7 @@ def _startup_background_threads() -> None:
                     )
                 except Exception as e:
                     _set_repo_improvement_loop_state(
-                        "discussion",
+                        _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                         enabled=True,
                         status="error",
                         current_action=f"discussion loop failed: {str(e)[:160]}",
@@ -1491,7 +1533,7 @@ def _startup_background_threads() -> None:
                 time.sleep(interval_sec)
         except Exception:
             _set_repo_improvement_loop_state(
-                "discussion",
+                _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                 enabled=True,
                 status="stopped",
                 current_action="discussion loop stopped",
@@ -1504,7 +1546,7 @@ def _startup_background_threads() -> None:
     def _self_upgrade_delivery_loop() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DELIVERY_AUTO", "1"):
             _set_repo_improvement_loop_state(
-                "delivery",
+                _REPO_IMPROVEMENT_LOOP_DELIVERY,
                 enabled=False,
                 status="disabled",
                 current_action="repo-improvement delivery loop disabled",
@@ -1515,7 +1557,7 @@ def _startup_background_threads() -> None:
         max_tasks = max(1, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
         try:
             _set_repo_improvement_loop_state(
-                "delivery",
+                _REPO_IMPROVEMENT_LOOP_DELIVERY,
                 enabled=True,
                 status="waiting",
                 current_action=f"waiting {initial_delay_sec}s before first delivery sweep",
@@ -1528,7 +1570,7 @@ def _startup_background_threads() -> None:
                 try:
                     if not _leader_write_allowed():
                         _set_repo_improvement_loop_state(
-                            "delivery",
+                            _REPO_IMPROVEMENT_LOOP_DELIVERY,
                             enabled=True,
                             status="sleeping",
                             current_action=f"delivery loop waiting {interval_sec}s because this node is not leader",
@@ -1538,7 +1580,7 @@ def _startup_background_threads() -> None:
                         time.sleep(interval_sec)
                         continue
                     _set_repo_improvement_loop_state(
-                        "delivery",
+                        _REPO_IMPROVEMENT_LOOP_DELIVERY,
                         enabled=True,
                         status="running",
                         current_action=f"running delivery sweeps (max_tasks={max_tasks})",
@@ -1556,7 +1598,7 @@ def _startup_background_threads() -> None:
                             max_tasks=max_tasks,
                         )
                     _set_repo_improvement_loop_state(
-                        "delivery",
+                        _REPO_IMPROVEMENT_LOOP_DELIVERY,
                         enabled=True,
                         status="sleeping",
                         current_action=f"sleeping {interval_sec}s until next delivery sweep",
@@ -1566,7 +1608,7 @@ def _startup_background_threads() -> None:
                     )
                 except Exception as e:
                     _set_repo_improvement_loop_state(
-                        "delivery",
+                        _REPO_IMPROVEMENT_LOOP_DELIVERY,
                         enabled=True,
                         status="error",
                         current_action=f"delivery loop failed: {str(e)[:160]}",
@@ -1587,7 +1629,7 @@ def _startup_background_threads() -> None:
                 time.sleep(interval_sec)
         except Exception:
             _set_repo_improvement_loop_state(
-                "delivery",
+                _REPO_IMPROVEMENT_LOOP_DELIVERY,
                 enabled=True,
                 status="stopped",
                 current_action="delivery loop stopped",
@@ -1883,6 +1925,7 @@ def v1_status():
     targets = improvement_store.list_targets()
     default_target = _default_local_improvement_target()
     default_target_id = str((default_target or {}).get("target_id") or "")
+    default_target_project_id = str((default_target or {}).get("project_id") or "teamos").strip() or "teamos"
 
     runs = [r.__dict__ for r in DB.list_runs()]
     agents = [a.__dict__ for a in DB.list_agents()]
@@ -1935,6 +1978,10 @@ def v1_status():
         "last_run": repo_improvement_state.get("last_run") if isinstance(repo_improvement_state.get("last_run"), dict) else {},
         "backoff_until": str(repo_improvement_state.get("backoff_until") or ""),
         "loops": _repo_improvement_loop_state_snapshot(),
+        "workflows": _repo_improvement_workflow_status_snapshot(
+            target_id=default_target_id,
+            project_id=default_target_project_id,
+        ),
         "proposal_counts": {
             "total": len(proposals),
             "pending": len(pending_proposals),
