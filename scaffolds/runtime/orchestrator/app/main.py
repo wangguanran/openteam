@@ -1327,8 +1327,9 @@ def _startup_background_threads() -> None:
                 current_action="continuous repo-improvement discovery disabled",
             )
             return
-        interval_sec = max(60, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INTERVAL_SEC", "300") or "300"))
-        initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
+        interval_sec = max(0, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INTERVAL_SEC", "300") or "300"))
+        initial_delay_sec = max(0, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
+        retry_sleep_sec = max(1, interval_sec)
         try:
             _set_repo_improvement_loop_state(
                 "discovery",
@@ -1346,10 +1347,12 @@ def _startup_background_threads() -> None:
                             "discovery",
                             enabled=True,
                             status="sleeping",
-                            current_action=f"discovery loop waiting {interval_sec}s because this node is not leader",
+                            current_action=(
+                                f"discovery loop waiting {retry_sleep_sec}s because this node is not leader"
+                            ),
                             interval_sec=interval_sec,
                         )
-                        time.sleep(interval_sec)
+                        time.sleep(retry_sleep_sec)
                         continue
                     _set_repo_improvement_loop_state(
                         "discovery",
@@ -1376,7 +1379,11 @@ def _startup_background_threads() -> None:
                         "discovery",
                         enabled=True,
                         status="sleeping",
-                        current_action=f"sleeping {interval_sec}s until next discovery sweep",
+                        current_action=(
+                            "immediately scheduling next discovery sweep"
+                            if interval_sec <= 0
+                            else f"sleeping {interval_sec}s until next discovery sweep"
+                        ),
                         interval_sec=interval_sec,
                         last_completed_at=_utc_now_iso(),
                     )

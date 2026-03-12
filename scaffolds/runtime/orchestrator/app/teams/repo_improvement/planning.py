@@ -2222,8 +2222,9 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
 
     findings: list[UpgradeFinding] = []
     lane_counts: dict[str, int] = {}
+    findings_limit = max(0, int(max_findings))
     for finding in plan.findings:
-        if len(findings) >= max(1, int(max_findings)):
+        if findings_limit > 0 and len(findings) >= findings_limit:
             break
         raw_kind = str(finding.kind or "").strip().upper()
         if raw_kind in ("FEATURE", "OPTIMIZATION"):
@@ -2345,6 +2346,18 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
     )
 
 
+def _scan_limit(max_findings: int, lane_limit: int) -> int:
+    normalized_max = max(0, int(max_findings))
+    normalized_lane = max(0, int(lane_limit))
+    if normalized_max <= 0 and normalized_lane <= 0:
+        return 0
+    if normalized_max <= 0:
+        return normalized_lane
+    if normalized_lane <= 0:
+        return normalized_max
+    return min(normalized_max, normalized_lane)
+
+
 def _structured_bug_scan_prompt(
     *,
     repo_context: dict[str, Any],
@@ -2462,6 +2475,7 @@ def _kickoff_bug_only_plan(
     started_at = time.monotonic()
     max_runtime_minutes = _lane_max_continuous_runtime_minutes("bug", project_id=project_id)
     max_runtime_seconds = float(max_runtime_minutes) * 60.0 if int(max_runtime_minutes) > 0 else 0.0
+    findings_limit = max(0, int(max_findings))
 
     if bug_module_chunks:
         for chunk in bug_module_chunks:
@@ -2477,7 +2491,7 @@ def _kickoff_bug_only_plan(
                 llm=llm,
                 repo_context=repo_context,
                 module_chunk=chunk,
-                bug_scan_limit=max(1, int(bug_scan_limit)),
+                bug_scan_limit=max(1, int(bug_scan_limit or 0)),
                 bug_scan_dormant=bug_scan_dormant,
             )
             task_outputs.append(debug_task)
@@ -2538,7 +2552,7 @@ def _kickoff_bug_only_plan(
                         ],
                     }
                 )
-                if len(aggregated_findings) >= max(1, int(max_findings)):
+                if findings_limit > 0 and len(aggregated_findings) >= findings_limit:
                     break
             if progress_callback is not None:
                 try:
@@ -2556,18 +2570,18 @@ def _kickoff_bug_only_plan(
                     )
                 except Exception:
                     pass
-            if len(aggregated_findings) >= max(1, int(max_findings)):
-                break
-            if aggregated_findings:
-                notes.append("已发现可证明 bug；为尽快进入 issue/task materialize，本轮停止继续扫描后续模块。")
+            if findings_limit > 0 and len(aggregated_findings) >= findings_limit:
                 break
     else:
         summaries.append("未发现可读取的模块切片，未生成 bug finding。")
         notes.append("repository_inspection 未生成模块切片；本轮 bug triage 返回空结果。")
 
+    if aggregated_findings:
+        notes.append("已完成所有可读模块的 bug 通读扫描；本轮将把已验证缺陷统一进入 issue/task materialize。")
+
     raw_plan = {
         "summary": "；".join([x for x in summaries if x]).strip() or "Bug-only repo-improvement analysis completed.",
-        "findings": aggregated_findings[: max(1, int(max_findings))],
+        "findings": aggregated_findings[:findings_limit] if findings_limit > 0 else aggregated_findings,
         "ci_actions": ci_actions[:20],
         "notes": notes[:20],
         "current_version": current_version,
@@ -2605,9 +2619,9 @@ def kickoff_upgrade_plan(
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> tuple[UpgradePlan, dict[str, Any]]:
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
-    feature_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("feature", project_id=project_id) or int(max_findings)))
-    bug_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("bug", project_id=project_id) or int(max_findings)))
-    quality_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("quality", project_id=project_id) or int(max_findings)))
+    feature_scan_limit = _scan_limit(max_findings, _lane_max_candidates("feature", project_id=project_id))
+    bug_scan_limit = _scan_limit(max_findings, _lane_max_candidates("bug", project_id=project_id))
+    quality_scan_limit = _scan_limit(max_findings, _lane_max_candidates("quality", project_id=project_id))
     enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
     feature_enabled = crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT in enabled_workflows
     bug_enabled = crewai_role_registry.WORKFLOW_BUG_FIX in enabled_workflows
@@ -2642,8 +2656,15 @@ def kickoff_upgrade_plan(
             Task(
                 name="product_feature_scan",
                 description=(
-                    "Analyze the repository context as a product manager.\n"
-                    f"Return at most {int(feature_scan_limit)} feature ideas or product optimizations.\n"
+                    (
+                        "Analyze the repository context as a product manager.\n"
+                        + (
+                            f"Return at most {int(feature_scan_limit)} feature ideas or product optimizations.\n"
+                            if feature_scan_limit > 0
+                            else "Return every actionable feature idea or product optimization you can prove from the repository context.\n"
+                        )
+                    )
+                    +
                     "Mark changes that should be treated as FEATURE and note whether they imply a major or minor version bump.\n"
                     "Use only the supplied context.\n\n"
                     f"Repository context:\n{repo_blob}"
@@ -2683,9 +2704,16 @@ def kickoff_upgrade_plan(
                     Task(
                         name=f"qa_bug_scan_{_module_slug(module)}",
                         description=(
-                            f"Analyze module `{module}` as a test manager.\n"
-                            "Treat the supplied module_chunk as the full module reading bundle for this scan.\n"
-                            "Return at most 1 bug or regression candidate for this module.\n"
+                            (
+                                f"Analyze module `{module}` as a test manager.\n"
+                                "Treat the supplied module_chunk as the full module reading bundle for this scan.\n"
+                                + (
+                                    f"Return at most {int(bug_scan_limit)} bug or regression candidates for this module.\n"
+                                    if bug_scan_limit > 0
+                                    else "Return every bug or regression candidate in this module that is backed by current evidence.\n"
+                                )
+                            )
+                            +
                             "Returning 0 bug findings is normal when the module currently has no proven defect signal.\n"
                             "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, executable reproduction path, or failed/timed-out baseline check attributable to this module.\n"
                             "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
@@ -2709,8 +2737,15 @@ def kickoff_upgrade_plan(
                 Task(
                     name="qa_bug_scan",
                     description=(
-                        "Analyze the repository context as a test manager.\n"
-                        f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
+                        (
+                            "Analyze the repository context as a test manager.\n"
+                            + (
+                                f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
+                                if bug_scan_limit > 0
+                                else "Return every bug or regression candidate backed by current evidence.\n"
+                            )
+                        )
+                        +
                         "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
                         "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
                         "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
@@ -2741,8 +2776,15 @@ def kickoff_upgrade_plan(
                 Task(
                     name="qa_test_gap_scan",
                     description=(
-                        "Analyze the repository context as a dedicated test-case gap agent.\n"
-                        f"Return at most {int(quality_scan_limit)} high-value black-box or white-box test gap candidates.\n"
+                        (
+                            "Analyze the repository context as a dedicated test-case gap agent.\n"
+                            + (
+                                f"Return at most {int(quality_scan_limit)} high-value black-box or white-box test gap candidates.\n"
+                                if quality_scan_limit > 0
+                                else "Return every high-value black-box or white-box test gap candidate you can prove from the repository context.\n"
+                            )
+                        )
+                        +
                         "Only propose a candidate when there is a clearly identifiable untested path, missing regression protection, or behavior/branch coverage gap worth tracking as an issue.\n"
                         "For each candidate, distinguish test_gap_type as blackbox or whitebox, identify target_paths and missing_paths, suggest repo-relative suggested_test_files, and explain why the path is not covered today.\n"
                         "Use lane=quality and kind=CODE_QUALITY for these findings.\n"
@@ -2756,8 +2798,15 @@ def kickoff_upgrade_plan(
                 Task(
                     name="code_quality_scan",
                     description=(
-                        "Review the repository context as a code quality analyst.\n"
-                        f"Return at most {int(quality_scan_limit)} code quality candidates.\n"
+                        (
+                            "Review the repository context as a code quality analyst.\n"
+                            + (
+                                f"Return at most {int(quality_scan_limit)} code quality candidates.\n"
+                                if quality_scan_limit > 0
+                                else "Return every concrete, high-value code quality candidate you can support with repository evidence.\n"
+                            )
+                        )
+                        +
                         "Focus on duplicated logic, unnecessary files, dead/stale code candidates, oversized modules, and reuse/refactor opportunities.\n"
                         "Do not spend candidates on pure test-gap discovery; that is handled by the dedicated test-case gap scan.\n"
                         "Only propose work when the quality gain is concrete and the change can be broken into small, scoped items.\n"
@@ -2823,13 +2872,19 @@ def kickoff_upgrade_plan(
     review_task = Task(
         name="review_delivery_plan",
         description=(
-            "Review the draft upgrade plan.\n"
-            "Reject large or fuzzy work items. Ensure every coding work item has clear path scope, task-linked commit discipline, and explicit downstream review/QA roles.\n"
-            "Reject any finding that spans multiple modules or uses an unstable module name.\n"
-            "For quality items, reject vague refactors or cleanup that is not backed by concrete evidence from the repository context.\n"
-            "For test-gap quality items, reject anything without a clear blackbox/whitebox classification, uncovered path, and suggested test file location.\n"
-            "Keep all user-facing natural language fields in Simplified Chinese.\n"
-            f"Keep no more than {int(max_findings)} findings in the final output."
+            (
+                "Review the draft upgrade plan.\n"
+                "Reject large or fuzzy work items. Ensure every coding work item has clear path scope, task-linked commit discipline, and explicit downstream review/QA roles.\n"
+                "Reject any finding that spans multiple modules or uses an unstable module name.\n"
+                "For quality items, reject vague refactors or cleanup that is not backed by concrete evidence from the repository context.\n"
+                "For test-gap quality items, reject anything without a clear blackbox/whitebox classification, uncovered path, and suggested test file location.\n"
+                "Keep all user-facing natural language fields in Simplified Chinese.\n"
+            )
+            + (
+                f"Keep no more than {int(max_findings)} findings in the final output."
+                if int(max_findings) > 0
+                else "Keep every validated finding in the final output; do not invent filler findings."
+            )
         ),
         expected_output="A validated structured JSON upgrade plan ready for issue/task recording.",
         agent=review_agent,
@@ -4925,7 +4980,8 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     force = bool(getattr(spec, "force", False))
     dry_run = bool(getattr(spec, "dry_run", False))
     trigger = str(getattr(spec, "trigger", "") or "manual").strip() or "manual"
-    max_findings = max(1, min(int(os.getenv("TEAMOS_REPO_IMPROVEMENT_MAX_FINDINGS", "3") or "3"), 10))
+    max_findings_raw = int(os.getenv("TEAMOS_REPO_IMPROVEMENT_MAX_FINDINGS", "3") or "3")
+    max_findings = 0 if max_findings_raw <= 0 else min(max_findings_raw, 10)
     run_started_at = _utc_now_iso()
     enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
 
