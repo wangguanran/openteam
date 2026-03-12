@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 
 def _add_template_app_to_syspath() -> None:
@@ -94,6 +95,18 @@ class RepoImprovementLockTests(unittest.TestCase):
         finally:
             app_main.DB = original_db
 
+    def test_effective_repo_improvement_project_id_prefers_target_project(self) -> None:
+        with mock.patch.object(
+            app_main.improvement_store,
+            "get_target",
+            return_value={"target_id": "wangguanran-projectmanager", "project_id": "projectmanager"},
+        ):
+            project_id = app_main._effective_repo_improvement_project_id(
+                project_id="teamos",
+                target_id="wangguanran-projectmanager",
+            )
+        self.assertEqual(project_id, "projectmanager")
+
     def test_cleanup_stale_repo_improvement_run_uses_event_flow_not_objective_text(self) -> None:
         stale_run = SimpleNamespace(
             run_id="run-123",
@@ -135,6 +148,64 @@ class RepoImprovementLockTests(unittest.TestCase):
             app_main._cleanup_stale_repo_improvement_activity()
             self.assertEqual(fake_db.update_run_state_calls, [("run-123", "FAILED")])
             self.assertTrue(any(call[0] == "REPO_IMPROVEMENT_STALE_RUN_CLEANED" for call in fake_db.event_calls))
+        finally:
+            app_main.DB = original_db
+            if original_ttl is None:
+                os.environ.pop("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
+            else:
+                os.environ["TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
+
+    def test_cleanup_stale_repo_improvement_run_cleans_gap_and_milestone_agents(self) -> None:
+        stale_agents = [
+            SimpleNamespace(
+                agent_id="agent-gap",
+                role_id=app_main.crewai_self_upgrade.ROLE_TEST_CASE_GAP_AGENT,
+                project_id="projectmanager",
+                workstream_id="general",
+                state="RUNNING",
+                last_heartbeat="2026-03-11T16:27:16Z",
+                current_action="mapping black-box and white-box test gaps",
+            ),
+            SimpleNamespace(
+                agent_id="agent-ms",
+                role_id=app_main.crewai_self_upgrade.ROLE_MILESTONE_MANAGER,
+                project_id="projectmanager",
+                workstream_id="general",
+                state="RUNNING",
+                last_heartbeat="2026-03-11T16:27:16Z",
+                current_action="planning release lines and milestones",
+            ),
+        ]
+        fake_db = SimpleNamespace(
+            list_runs=lambda: [],
+            list_agents=lambda: stale_agents,
+            list_events=lambda limit=5000: [],
+            update_calls=[],
+            event_calls=[],
+        )
+
+        def _update_assignment(**kwargs) -> None:
+            fake_db.update_calls.append(kwargs)
+
+        def _add_event(**kwargs) -> int:
+            fake_db.event_calls.append(kwargs)
+            return 1
+
+        fake_db.update_assignment = _update_assignment
+        fake_db.add_event = _add_event
+
+        original_db = app_main.DB
+        original_ttl = os.environ.get("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC")
+        try:
+            app_main.DB = fake_db
+            os.environ["TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
+            app_main._cleanup_stale_repo_improvement_activity()
+            cleaned_ids = {str(call.get("agent_id") or "") for call in fake_db.update_calls}
+            self.assertEqual(cleaned_ids, {"agent-gap", "agent-ms"})
+            self.assertEqual(
+                sum(1 for call in fake_db.event_calls if call.get("event_type") == "REPO_IMPROVEMENT_STALE_AGENT_CLEANED"),
+                2,
+            )
         finally:
             app_main.DB = original_db
             if original_ttl is None:

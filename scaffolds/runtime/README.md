@@ -93,6 +93,7 @@ make down
 说明：
 
 - `make up`：只使用 GitHub CI 发布的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动；本地不允许构建 control-plane 镜像
+- `control-plane` 会以 `/team-os/scaffolds/runtime/orchestrator` 作为工作目录运行，因此优先执行当前挂载的 TeamOS 仓库源码，而不是镜像内打包的旧 `/app/app`
 - `docker-compose.yml` 默认总会启动本地 `postgres` 容器
 - 当 `TEAMOS_DB_URL` 为空时，control-plane 连接本地 `postgres`
 - 当 `TEAMOS_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
@@ -128,6 +129,8 @@ cd ../team-os
 - 镜像构建默认不走代理
 - Node/npm/PyPI/apt 构建源默认指向国内镜像
 - runtime 容器联网单独由 `TEAMOS_RUNTIME_HTTP_PROXY` 等变量控制
+- 若使用 `oauth_codex` + `openai-codex/*`，请确保 `TEAMOS_RUNTIME_NO_PROXY` 包含 `chatgpt.com,.chatgpt.com,api.openai.com,.openai.com`，否则模型调用可能被代理链路上的 Cloudflare challenge 挡住
+- 默认会在 `oauth_codex` 调用期临时撤掉 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY`，由 `TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX=1` 控制
 
 镜像化 runtime 默认：
 

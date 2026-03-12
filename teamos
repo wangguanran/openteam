@@ -1961,7 +1961,7 @@ def cmd_repo_improvement_logs(args: argparse.Namespace) -> None:
         if isinstance(last_run, dict):
             run_id = str(last_run.get("run_id") or "").strip()
     if not run_id:
-        raise RuntimeError("No repo-improvement run found. Run `teamos repo-improvement --dry-run --force` first or pass --run-id.")
+        raise RuntimeError("No repo-improvement run found. Run `teamos repo-improvement --force` first or pass --run-id.")
     limit = max(1, int(getattr(args, "limit", 200) or 200))
     url = base + f"/v1/repo_improvement/runs/{urllib.parse.quote(run_id, safe='')}/logs?limit={limit}"
     out = _http_json("GET", url)
@@ -3154,7 +3154,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     dy.set_defaults(fn=cmd_daemon_status)
 
     def _configure_self_upgrade_parser(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--dry-run", action="store_true", help="plan only; do not materialize GitHub issues/tasks/panel writes")
+        parser.add_argument("--dry-run", action="store_true", help="opt-in plan only mode; default runs normal issue/task materialization")
         parser.add_argument("--force", action="store_true", help="ignore debounce and run now")
         parser.add_argument("--local", action="store_true", help="deprecated compatibility flag; local pipeline mode has been removed")
         parser.add_argument("--auto", action="store_true", help="internal compatibility flag for auto triggers")

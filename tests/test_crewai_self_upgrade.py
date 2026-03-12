@@ -159,6 +159,251 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertGreaterEqual(int(first_chunk.get("included_file_count") or 0), 1)
             self.assertTrue(isinstance(first_chunk.get("files"), list))
 
+    def test_kickoff_upgrade_plan_uses_structured_fast_path_for_bug_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            repo_context = {
+                **self._repo_context(repo, head_commit="abc123"),
+                "repository_inspection": {"tracked_file_count": 4, "category_counts": {"source": 2}, "baseline_checks": []},
+            }
+            bug_scan = crewai_self_upgrade.StructuredBugScanResult(
+                summary="已在 src/plugins 模块发现可证明缺陷。",
+                findings=[
+                    crewai_self_upgrade.StructuredBugCandidate(
+                        title="修复插件初始化缺陷",
+                        summary="插件初始化路径在当前输入下会稳定失败。",
+                        module="Runtime",
+                        rationale="基线检查和模块全文阅读均指向初始化异常。",
+                        files=["src/plugins/init.py"],
+                        tests=["python -m unittest tests.test_plugins"],
+                        acceptance=["插件初始化后不再报错"],
+                        reproduction_steps=["运行插件初始化入口"],
+                        test_case_files=["tests/test_plugins.py"],
+                        verification_steps=["重新运行插件初始化测试"],
+                    )
+                ],
+                ci_actions=["为插件初始化回归补充稳定测试命令"],
+                notes=["bug-only 快路径已启用"],
+            )
+            with mock.patch(
+                "app.crewai_self_upgrade._enabled_planning_workflow_ids",
+                return_value=[crewai_self_upgrade.crewai_role_registry.WORKFLOW_BUG_FIX],
+            ), mock.patch(
+                "app.crewai_self_upgrade._use_bug_only_fast_path",
+                return_value=True,
+            ), mock.patch(
+                "app.crewai_self_upgrade._bug_scan_module_chunks",
+                return_value=[{"module": "src/plugins", "files": [{"path": "src/plugins/init.py", "content": "print('x')"}]}],
+            ), mock.patch(
+                "app.crewai_self_upgrade._structured_bug_scan_for_chunk",
+                return_value=(
+                    bug_scan,
+                    {"name": "qa_bug_scan_src_plugins", "agent": crewai_self_upgrade.ROLE_TEST_MANAGER, "raw": '{"summary":"ok"}'},
+                ),
+            ), mock.patch(
+                "app.crewai_self_upgrade._crewai_llm",
+                return_value=object(),
+            ):
+                plan, debug = crewai_self_upgrade.kickoff_upgrade_plan(
+                    repo_context=repo_context,
+                    project_id="projectmanager",
+                    max_findings=3,
+                    verbose=False,
+                )
+
+            self.assertEqual(len(plan.findings), 1)
+            self.assertEqual(plan.findings[0].lane, "bug")
+            self.assertTrue(any(item.get("name") == "qa_bug_scan_src_plugins" for item in debug.get("task_outputs") or []))
+            self.assertTrue(any(item.get("name") == "structured_bug_plan" for item in debug.get("task_outputs") or []))
+
+    def test_kickoff_upgrade_plan_bug_only_progress_callback_receives_partial_logs(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            repo_context = {
+                **self._repo_context(repo, head_commit="abc123"),
+                "repository_inspection": {"tracked_file_count": 4, "category_counts": {"source": 2}, "baseline_checks": []},
+            }
+            bug_scan = crewai_self_upgrade.StructuredBugScanResult(
+                summary="已在 src/plugins 模块发现可证明缺陷。",
+                findings=[],
+                ci_actions=["补一条 smoke test"],
+                notes=["module chunk completed"],
+            )
+            progress_updates: list[dict[str, object]] = []
+            with mock.patch(
+                "app.crewai_self_upgrade._enabled_planning_workflow_ids",
+                return_value=[crewai_self_upgrade.crewai_role_registry.WORKFLOW_BUG_FIX],
+            ), mock.patch(
+                "app.crewai_self_upgrade._use_bug_only_fast_path",
+                return_value=True,
+            ), mock.patch(
+                "app.crewai_self_upgrade._bug_scan_module_chunks",
+                return_value=[{"module": "src/plugins", "files": [{"path": "src/plugins/init.py", "content": "print('x')"}]}],
+            ), mock.patch(
+                "app.crewai_self_upgrade._structured_bug_scan_for_chunk",
+                return_value=(
+                    bug_scan,
+                    {"name": "qa_bug_scan_src_plugins", "agent": crewai_self_upgrade.ROLE_TEST_MANAGER, "raw": '{"summary":"ok"}'},
+                ),
+            ), mock.patch(
+                "app.crewai_self_upgrade._crewai_llm",
+                return_value=object(),
+            ):
+                crewai_self_upgrade.kickoff_upgrade_plan(
+                    repo_context=repo_context,
+                    project_id="projectmanager",
+                    max_findings=3,
+                    verbose=False,
+                    progress_callback=lambda payload: progress_updates.append(payload),
+                )
+
+            self.assertEqual(len(progress_updates), 1)
+            self.assertEqual(str(progress_updates[0].get("module") or ""), "src/plugins")
+            self.assertTrue(
+                any(
+                    item.get("name") == "qa_bug_scan_src_plugins"
+                    for item in ((progress_updates[0].get("crew_debug") or {}).get("task_outputs") or [])
+                )
+            )
+
+    def test_kickoff_upgrade_plan_bug_only_scans_multiple_module_chunks(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            repo_context = {
+                **self._repo_context(repo, head_commit="abc123"),
+                "repository_inspection": {"tracked_file_count": 6, "category_counts": {"source": 3}, "baseline_checks": []},
+            }
+            first_scan = crewai_self_upgrade.StructuredBugScanResult(
+                summary="src/plugins 模块未发现可证明 bug。",
+                findings=[],
+                ci_actions=["补一条 smoke test"],
+                notes=["first module completed"],
+            )
+            second_scan = crewai_self_upgrade.StructuredBugScanResult(
+                summary="src/core 模块发现可证明缺陷。",
+                findings=[
+                    crewai_self_upgrade.StructuredBugCandidate(
+                        title="修复核心路径缺陷",
+                        summary="核心路径在当前输入下会稳定失败。",
+                        module="Runtime",
+                        rationale="模块全文阅读和基线检查均指向核心路径异常。",
+                        files=["src/core/main.py"],
+                        tests=["python -m unittest tests.test_core"],
+                        acceptance=["核心路径不再抛错"],
+                        reproduction_steps=["运行核心路径入口"],
+                        test_case_files=["tests/test_core.py"],
+                        verification_steps=["重新运行核心路径测试"],
+                    )
+                ],
+                ci_actions=["补充核心路径回归测试"],
+                notes=["second module completed"],
+            )
+            with mock.patch(
+                "app.crewai_self_upgrade._enabled_planning_workflow_ids",
+                return_value=[crewai_self_upgrade.crewai_role_registry.WORKFLOW_BUG_FIX],
+            ), mock.patch(
+                "app.crewai_self_upgrade._use_bug_only_fast_path",
+                return_value=True,
+            ), mock.patch(
+                "app.crewai_self_upgrade._bug_scan_module_chunks",
+                return_value=[
+                    {"module": "src/plugins", "files": [{"path": "src/plugins/init.py", "content": "print('x')"}]},
+                    {"module": "src/core", "files": [{"path": "src/core/main.py", "content": "raise RuntimeError()"}]},
+                ],
+            ), mock.patch(
+                "app.crewai_self_upgrade._structured_bug_scan_for_chunk",
+                side_effect=[
+                    (first_scan, {"name": "qa_bug_scan_src_plugins", "agent": crewai_self_upgrade.ROLE_TEST_MANAGER, "raw": '{"summary":"first"}'}),
+                    (second_scan, {"name": "qa_bug_scan_src_core", "agent": crewai_self_upgrade.ROLE_TEST_MANAGER, "raw": '{"summary":"second"}'}),
+                ],
+            ) as scan_mock, mock.patch(
+                "app.crewai_self_upgrade._crewai_llm",
+                return_value=object(),
+            ):
+                plan, debug = crewai_self_upgrade.kickoff_upgrade_plan(
+                    repo_context=repo_context,
+                    project_id="projectmanager",
+                    max_findings=3,
+                    verbose=False,
+                )
+
+            self.assertEqual(scan_mock.call_count, 2)
+            self.assertEqual(len(plan.findings), 1)
+            self.assertEqual(plan.findings[0].title, "修复核心路径缺陷")
+            task_output_names = [str(item.get("name") or "") for item in (debug.get("task_outputs") or [])]
+            self.assertIn("qa_bug_scan_src_plugins", task_output_names)
+            self.assertIn("qa_bug_scan_src_core", task_output_names)
+            self.assertIn("structured_bug_plan", task_output_names)
+
+    def test_kickoff_upgrade_plan_bug_only_stops_after_first_verified_bug(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            repo_context = {
+                **self._repo_context(repo, head_commit="abc123"),
+                "repository_inspection": {"tracked_file_count": 6, "category_counts": {"source": 3}, "baseline_checks": []},
+            }
+            first_scan = crewai_self_upgrade.StructuredBugScanResult(
+                summary="src/plugins 模块发现可证明缺陷。",
+                findings=[
+                    crewai_self_upgrade.StructuredBugCandidate(
+                        title="修复插件初始化缺陷",
+                        summary="插件初始化路径在当前输入下会稳定失败。",
+                        module="Runtime",
+                        rationale="模块全文阅读和基线检查均指向初始化异常。",
+                        files=["src/plugins/init.py"],
+                        tests=["python -m unittest tests.test_plugins"],
+                        acceptance=["插件初始化后不再报错"],
+                        reproduction_steps=["运行插件初始化入口"],
+                        test_case_files=["tests/test_plugins.py"],
+                        verification_steps=["重新运行插件初始化测试"],
+                    )
+                ],
+                ci_actions=["为插件初始化回归补充稳定测试命令"],
+                notes=["first module completed"],
+            )
+            with mock.patch(
+                "app.crewai_self_upgrade._enabled_planning_workflow_ids",
+                return_value=[crewai_self_upgrade.crewai_role_registry.WORKFLOW_BUG_FIX],
+            ), mock.patch(
+                "app.crewai_self_upgrade._use_bug_only_fast_path",
+                return_value=True,
+            ), mock.patch(
+                "app.crewai_self_upgrade._bug_scan_module_chunks",
+                return_value=[
+                    {"module": "src/plugins", "files": [{"path": "src/plugins/init.py", "content": "print('x')"}]},
+                    {"module": "src/core", "files": [{"path": "src/core/main.py", "content": "raise RuntimeError()"}]},
+                ],
+            ), mock.patch(
+                "app.crewai_self_upgrade._structured_bug_scan_for_chunk",
+                side_effect=[
+                    (first_scan, {"name": "qa_bug_scan_src_plugins", "agent": crewai_self_upgrade.ROLE_TEST_MANAGER, "raw": '{"summary":"first"}'}),
+                    AssertionError("second module should not be scanned once a bug is found"),
+                ],
+            ) as scan_mock, mock.patch(
+                "app.crewai_self_upgrade._crewai_llm",
+                return_value=object(),
+            ):
+                plan, debug = crewai_self_upgrade.kickoff_upgrade_plan(
+                    repo_context=repo_context,
+                    project_id="projectmanager",
+                    max_findings=3,
+                    verbose=False,
+                )
+
+            self.assertEqual(scan_mock.call_count, 1)
+            self.assertEqual(len(plan.findings), 1)
+            self.assertEqual(plan.findings[0].title, "修复插件初始化缺陷")
+            raw = str(debug.get("raw") or "")
+            self.assertIn("已发现可证明 bug", raw)
+
     def test_crewai_llm_matches_codex_oauth_demo_defaults(self):
         captured: dict[str, object] = {}
 
@@ -194,6 +439,47 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertEqual(captured["reasoning_effort"], "xhigh")
         self.assertNotIn("api_key", captured)
         self.assertNotIn("base_url", captured)
+
+    def test_crewai_llm_adds_chatgpt_to_no_proxy_for_codex_oauth(self):
+        captured: dict[str, object] = {}
+
+        class FakeLLM:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        fake_crewai_pkg = ModuleType("crewai")
+        fake_crewai_llm = ModuleType("crewai.llm")
+        fake_crewai_llm.LLM = FakeLLM
+
+        with mock.patch("app.crewai_self_upgrade.crewai_runtime.require_crewai_importable", return_value={"importable": True}), mock.patch(
+            "app.crewai_self_upgrade.codex_llm.codex_login_status",
+            return_value=(True, "Logged in using ChatGPT"),
+        ), mock.patch.dict(
+            sys.modules,
+            {"crewai": fake_crewai_pkg, "crewai.llm": fake_crewai_llm},
+            clear=False,
+        ), mock.patch.dict(
+            os.environ,
+            {
+                "HTTP_PROXY": "http://host.docker.internal:1082",
+                "HTTPS_PROXY": "http://host.docker.internal:1082",
+                "NO_PROXY": "localhost,127.0.0.1,postgres",
+            },
+            clear=True,
+        ):
+            crewai_self_upgrade._crewai_llm()
+            no_proxy = str(os.getenv("NO_PROXY") or "")
+
+        self.assertIn("chatgpt.com", no_proxy)
+        self.assertIn(".chatgpt.com", no_proxy)
+        self.assertIn("api.openai.com", no_proxy)
+
+    def test_zh_localization_requires_codex_cli(self):
+        with mock.patch.dict(os.environ, {"TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH": "1"}, clear=False), mock.patch(
+            "app.crewai_self_upgrade.shutil.which",
+            return_value=None,
+        ):
+            self.assertFalse(crewai_self_upgrade._zh_localization_enabled())
 
     def test_run_self_upgrade_dry_run_skips_materialized_records(self):
         db = _FakeDB()
@@ -258,6 +544,56 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 self.assertEqual(out["records"][0]["issue_url"], "")
                 state = crewai_self_upgrade._read_state(out["target_id"])
                 self.assertEqual((state.get("last_run") or {}).get("status"), "DONE")
+
+    def test_run_self_upgrade_keeps_requested_project_id_without_panel_mapping(self):
+        db = _FakeDB()
+        empty_plan = crewai_self_upgrade.UpgradePlan(summary="planned", findings=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+            spec = SimpleNamespace(
+                project_id="projectmanager",
+                workstream_id="general",
+                repo_path=str(repo),
+                repo_locator="wangguanran/ProjectManager",
+                force=True,
+                dry_run=True,
+                trigger="test",
+                task_id="",
+            )
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.collect_repo_context",
+                return_value={
+                    **self._repo_context(repo, head_commit="abc123"),
+                    "repo_locator": "wangguanran/ProjectManager",
+                },
+            ), mock.patch(
+                "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                return_value=(empty_plan, {"task_outputs": [], "token_usage": {}}),
+            ), mock.patch(
+                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                return_value={"ok": False, "dry_run": True, "error": "not configured"},
+            ):
+                out = crewai_self_upgrade.run_self_upgrade(
+                    db=db,
+                    spec=spec,
+                    actor="test",
+                    run_id="run-projectmanager",
+                    crewai_info={"importable": True},
+                )
+
+            self.assertTrue(out["ok"])
+            started = next(e for e in db.events if e.get("event_type") == "REPO_IMPROVEMENT_STARTED")
+            self.assertEqual(started.get("project_id"), "projectmanager")
+            reports = improvement_store.list_reports(project_id="projectmanager")
+            self.assertTrue(reports)
+            self.assertEqual(str(reports[0].get("run_id") or ""), "run-projectmanager")
 
     def test_decide_proposal_updates_version_metadata(self):
         with tempfile.TemporaryDirectory() as td:

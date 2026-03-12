@@ -77,7 +77,7 @@ def _env_truthy(name: str, default: str = "0") -> bool:
 
 
 def _compat_file_mirror_enabled() -> bool:
-    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "0")
+    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
 
 
 def _runtime_root() -> Path:
@@ -1357,7 +1357,8 @@ def _kickoff_task_output(*, agent: Any, name: str, description: str, expected_ou
         output_json=model_cls,
     )
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose)
-    out = crew.kickoff()
+    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(getattr(agent, "llm", None), "model", "") or "")):
+        out = crew.kickoff()
     return _coerce_model_output(out, model_cls, error_text=f"CrewAI returned no structured output for task={name}")
 
 

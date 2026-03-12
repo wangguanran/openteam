@@ -109,7 +109,7 @@ def _run_git(args: list[str], *, cwd: Optional[Path] = None) -> str:
 
 def _normalize_target(raw: dict[str, Any]) -> dict[str, Any]:
     now = _utc_now_iso()
-    repo_root = str(raw.get("repo_root") or "").strip()
+    repo_root = str(raw.get("repo_root") or raw.get("repo_path") or "").strip()
     repo_url = str(raw.get("repo_url") or "").strip()
     repo_locator = str(raw.get("repo_locator") or "").strip()
     project_id = str(raw.get("project_id") or "teamos").strip() or "teamos"
@@ -194,15 +194,35 @@ def ensure_target(*, project_id: str = "teamos", target_id: str = "", repo_path:
 def materialize_target_repo(target: dict[str, Any], *, fetch: bool = True) -> dict[str, Any]:
     doc = _normalize_target(target)
     target_id = str(doc.get("target_id") or "").strip()
+    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     repo_root_raw = str(doc.get("repo_root") or "").strip()
     repo_url = str(doc.get("repo_url") or "").strip()
     checkout_policy = str(doc.get("checkout_policy") or "").strip() or ("clone" if repo_url else "existing")
 
-    if repo_root_raw:
-        repo_root = Path(repo_root_raw).expanduser().resolve()
+    scaffold = workspace_store.ensure_target_scaffold(target_id)
+    scaffold_repo_root = Path(str(scaffold.get("repo_dir") or "")).resolve()
+    project_repo_root = workspace_store.project_repo_dir(project_id).resolve()
+    repo_candidates: list[Path] = []
+    for raw in (
+        repo_root_raw,
+        str(scaffold_repo_root),
+        str(project_repo_root),
+    ):
+        candidate_raw = str(raw or "").strip()
+        if not candidate_raw:
+            continue
+        candidate = Path(candidate_raw).expanduser().resolve()
+        if candidate not in repo_candidates:
+            repo_candidates.append(candidate)
+
+    repo_root: Path = scaffold_repo_root
+    for candidate in repo_candidates:
+        if candidate.exists() and _git_dir(candidate) is not None:
+            repo_root = candidate
+            break
     else:
-        scaffold = workspace_store.ensure_target_scaffold(target_id)
-        repo_root = Path(str(scaffold.get("repo_dir") or "")).resolve()
+        if repo_root_raw:
+            repo_root = Path(repo_root_raw).expanduser().resolve()
 
     git_dir = _git_dir(repo_root) if repo_root.exists() else None
     if git_dir is None and repo_url:
@@ -448,7 +468,16 @@ def save_report(*, target_id: str, project_id: str, report: dict[str, Any]) -> d
     report_id = str(report.get("run_id") or hashlib.sha1(str(report).encode("utf-8")).hexdigest()[:12]).strip()
     payload = dict(report)
     payload["target_id"] = str(target_id or "").strip()
-    put_doc(REPORT_NAMESPACE, report_id, project_id=str(project_id or "teamos"), scope_id=str(target_id or "").strip(), state="done", category="report", value=payload)
+    report_state = str(payload.get("state") or "done").strip() or "done"
+    put_doc(
+        REPORT_NAMESPACE,
+        report_id,
+        project_id=str(project_id or "teamos"),
+        scope_id=str(target_id or "").strip(),
+        state=report_state,
+        category="report",
+        value=payload,
+    )
     return payload
 
 

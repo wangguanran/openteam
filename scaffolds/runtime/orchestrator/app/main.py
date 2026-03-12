@@ -321,9 +321,11 @@ _REPO_IMPROVEMENT_STALE_AGENT_ROLES = frozenset(
     {
         crewai_self_upgrade.ROLE_PRODUCT_MANAGER,
         crewai_self_upgrade.ROLE_TEST_MANAGER,
+        crewai_self_upgrade.ROLE_TEST_CASE_GAP_AGENT,
         crewai_self_upgrade.ROLE_ISSUE_DRAFTER,
         crewai_self_upgrade.ROLE_PLAN_REVIEW_AGENT,
         crewai_self_upgrade.ROLE_PLAN_QA_AGENT,
+        crewai_self_upgrade.ROLE_MILESTONE_MANAGER,
         crewai_self_upgrade.ROLE_PROCESS_OPTIMIZATION_ANALYST,
         crewai_self_upgrade.ROLE_CODE_QUALITY_ANALYST,
         "Scheduler-Agent",
@@ -678,6 +680,16 @@ def _target_repo_configured(target: dict[str, Any]) -> bool:
     return marker.is_dir() or marker.is_file()
 
 
+def _effective_repo_improvement_project_id(*, project_id: str, target_id: str = "") -> str:
+    normalized = str(project_id or "teamos").strip() or "teamos"
+    tid = str(target_id or "").strip()
+    if not tid:
+        return normalized
+    target = improvement_store.get_target(tid) or {}
+    target_project_id = str(target.get("project_id") or "").strip()
+    return target_project_id or normalized
+
+
 def _default_local_improvement_target() -> Optional[dict[str, Any]]:
     repo_root = Path(os.getenv("TEAM_OS_REPO_PATH") or str(team_os_root())).expanduser().resolve()
     marker = repo_root / ".git"
@@ -754,8 +766,10 @@ def _run_self_upgrade_iteration(
     force: bool = False,
     trigger: str = "api",
 ) -> dict[str, Any]:
+    effective_project_id = _effective_repo_improvement_project_id(project_id=project_id, target_id=target_id)
+    _cleanup_stale_repo_improvement_activity()
     lock_key = _repo_improvement_lock_key(
-        project_id=project_id,
+        project_id=effective_project_id,
         target_id=target_id,
         repo_path=repo_path,
         repo_url=repo_url,
@@ -766,7 +780,7 @@ def _run_self_upgrade_iteration(
             "ok": True,
             "skipped": True,
             "reason": "repo_improvement_already_running",
-            "project_id": project_id,
+            "project_id": effective_project_id,
             "workstream_id": workstream_id,
             "trigger": trigger,
             "target_id": str(target_id or "").strip(),
@@ -776,7 +790,7 @@ def _run_self_upgrade_iteration(
             DB.add_event(
                 event_type="REPO_IMPROVEMENT_ALREADY_RUNNING",
                 actor=actor,
-                project_id=project_id,
+                project_id=effective_project_id,
                 workstream_id=workstream_id,
                 payload=payload,
             )
@@ -786,7 +800,7 @@ def _run_self_upgrade_iteration(
 
     try:
         spec = crewai_orchestrator.RunSpec(
-            project_id=project_id,
+            project_id=effective_project_id,
             workstream_id=workstream_id,
             objective=objective or "Run CrewAI repo-improvement for the target repository",
             flow="repo_improvement",
@@ -825,6 +839,7 @@ def _run_self_upgrade_delivery_iteration(
     force: bool = False,
     max_tasks: Optional[int] = None,
 ) -> dict[str, Any]:
+    _cleanup_stale_repo_improvement_activity()
     current_project_id = str(project_id or "teamos").strip() or "teamos"
     lock_key = _repo_improvement_delivery_lock_key(
         project_id=current_project_id,

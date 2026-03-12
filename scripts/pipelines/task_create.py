@@ -46,16 +46,34 @@ def _next_teamos_seq(tasks_dir: Path) -> int:
     return mx + 1
 
 
-def _generate_task_id(*, scope: str, project_id: str, tasks_dir: Path) -> str:
+def _generate_task_id(*, scope: str, project_id: str, tasks_dir: Path, logs_root: Path) -> str:
     if scope == "teamos":
         seq = _next_teamos_seq(tasks_dir)
         return f"TEAMOS-{seq:04d}"
     # project scope: keep local-only deterministic id in its own ledger dir
-    seq = 1
+    import re
+
+    pat = re.compile(rf"^{re.escape(project_id.upper())}-(\d{{4}})$")
+    mx = 0
     for p in sorted(tasks_dir.glob(f"{project_id.upper()}-*.yaml")):
-        _ = p
-        seq += 1
-    return f"{project_id.upper()}-{seq:04d}"
+        m = pat.match(p.stem)
+        if not m:
+            continue
+        try:
+            mx = max(mx, int(m.group(1)))
+        except Exception:
+            continue
+    for p in sorted(logs_root.iterdir()) if logs_root.exists() else []:
+        if not p.is_dir():
+            continue
+        m = pat.match(p.name)
+        if not m:
+            continue
+        try:
+            mx = max(mx, int(m.group(1)))
+        except Exception:
+            continue
+    return f"{project_id.upper()}-{mx + 1:04d}"
 
 
 def _task_paths(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> tuple[Path, Path]:
@@ -128,13 +146,14 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dir(tasks_dir, dry_run=bool(args.dry_run))
     ensure_dir(logs_root, dry_run=bool(args.dry_run))
 
-    task_id = _generate_task_id(scope=scope, project_id=pid, tasks_dir=tasks_dir)
+    task_id = _generate_task_id(scope=scope, project_id=pid, tasks_dir=tasks_dir, logs_root=logs_root)
     ledger_path = tasks_dir / f"{task_id}.yaml"
     if ledger_path.exists():
         raise PipelineError(f"refusing to overwrite ledger: {ledger_path}")
     logs_dir = logs_root / task_id
+    recovering_existing_scaffold = False
     if logs_dir.exists() and any(logs_dir.iterdir()):
-        raise PipelineError(f"refusing to overwrite logs dir: {logs_dir}")
+        recovering_existing_scaffold = True
 
     now = utc_now_iso()
 
@@ -196,13 +215,13 @@ def main(argv: list[str] | None = None) -> int:
             metrics,
             {
                 "ts": now,
-                "event_type": "TASK_CREATED",
+                "event_type": "TASK_RECOVERED" if recovering_existing_scaffold else "TASK_CREATED",
                 "actor": "pipeline.task_create",
                 "task_id": task_id,
                 "project_id": pid,
                 "workstream_id": workstream_id,
                 "severity": "INFO",
-                "message": "task scaffold created",
+                "message": "task scaffold recovered" if recovering_existing_scaffold else "task scaffold created",
                 "payload": {"ledger": str(ledger_path), "logs_dir": str(logs_dir), "scope": scope},
             },
             dry_run=False,

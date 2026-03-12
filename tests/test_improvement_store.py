@@ -125,6 +125,41 @@ class ImprovementStoreTests(unittest.TestCase):
             self.assertEqual(improvement_store.get_report("run-1")["run_id"], "run-1")
             self.assertEqual(len(improvement_store.list_reports(target_id="demo-target", project_id="demo")), 1)
 
+    def test_save_report_preserves_non_default_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self._configure_runtime(td)
+
+            improvement_store.save_report(
+                target_id="demo-target",
+                project_id="demo",
+                report={"run_id": "run-running", "ok": True, "state": "RUNNING"},
+            )
+
+            report = improvement_store.get_report("run-running")
+            self.assertIsNotNone(report)
+            self.assertEqual(str(report.get("state") or ""), "RUNNING")
+
+    def test_upsert_target_accepts_repo_path_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self._configure_runtime(td)
+
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            target = improvement_store.upsert_target(
+                {
+                    "target_id": "demo-target",
+                    "project_id": "demo",
+                    "display_name": "Demo Target",
+                    "repo_path": str(repo),
+                    "repo_locator": "owner/demo",
+                    "enabled": True,
+                }
+            )
+
+            self.assertEqual(target["repo_root"], str(repo))
+            self.assertEqual(improvement_store.get_target("demo-target")["repo_root"], str(repo))
+
     def test_repo_improvement_run_logs_are_persisted_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             self._configure_runtime(td)
@@ -223,6 +258,35 @@ class ImprovementStoreTests(unittest.TestCase):
             expected_root = (Path(td) / "workspace" / "targets" / "demo-target").resolve()
             self.assertTrue(str(repo_root).startswith(str(expected_root)))
             self.assertEqual(improvement_store.get_target("demo-target")["repo_root"], str(repo_root))
+
+    def test_materialize_target_repo_repairs_stale_repo_root_using_target_scaffold_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self._configure_runtime(td)
+
+            repaired_repo = Path(td) / "workspace" / "targets" / "demo-target" / "repo"
+            repaired_repo.mkdir(parents=True, exist_ok=True)
+            _git(["init"], cwd=repaired_repo)
+            _git(["config", "user.name", "Team OS"], cwd=repaired_repo)
+            _git(["config", "user.email", "team-os@example.com"], cwd=repaired_repo)
+            (repaired_repo / "README.md").write_text("# repaired\n", encoding="utf-8")
+            _git(["add", "README.md"], cwd=repaired_repo)
+            _git(["commit", "-m", "init"], cwd=repaired_repo)
+
+            target = improvement_store.upsert_target(
+                {
+                    "target_id": "demo-target",
+                    "project_id": "demo",
+                    "display_name": "Demo Target",
+                    "repo_root": str(Path(td) / "missing-repo"),
+                    "repo_locator": "owner/demo",
+                    "enabled": True,
+                }
+            )
+
+            materialized = improvement_store.materialize_target_repo(target, fetch=False)
+
+            self.assertEqual(materialized["repo_root"], str(repaired_repo.resolve()))
+            self.assertEqual(improvement_store.get_target("demo-target")["repo_root"], str(repaired_repo.resolve()))
 
 
 if __name__ == "__main__":

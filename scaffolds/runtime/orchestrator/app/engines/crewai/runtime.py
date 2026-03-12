@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,16 @@ class CrewAIRuntimeError(RuntimeError):
     pass
 
 
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+
+
 def _env_truthy(name: str, default: str = "0") -> bool:
     raw = str(os.getenv(name, default) or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -21,6 +32,32 @@ def _env_truthy(name: str, default: str = "0") -> bool:
 
 def _normalize_path(raw: str) -> Path:
     return Path(raw).expanduser().resolve()
+
+
+def codex_oauth_should_bypass_proxy(*, model: str = "", auth_mode: str = "") -> bool:
+    if not _env_truthy("TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX", "1"):
+        return False
+    resolved_model = str(model or os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "").strip().lower()
+    resolved_auth_mode = str(auth_mode or os.getenv("TEAMOS_CREWAI_AUTH_MODE") or os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower()
+    return "codex" in resolved_model and resolved_auth_mode == "oauth_codex"
+
+
+@contextmanager
+def suppress_proxy_for_codex_oauth(*, model: str = "", auth_mode: str = ""):
+    if not codex_oauth_should_bypass_proxy(model=model, auth_mode=auth_mode):
+        yield
+        return
+    previous = {key: os.environ.get(key) for key in _PROXY_ENV_KEYS}
+    try:
+        for key in _PROXY_ENV_KEYS:
+            os.environ.pop(key, None)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _crewai_storage_dir_name() -> str:

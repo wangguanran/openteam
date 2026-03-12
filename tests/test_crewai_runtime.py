@@ -155,6 +155,27 @@ class CrewAIRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["first_execution_done"])
             self.assertFalse(payload["trace_consent"])
 
+    def test_suppress_proxy_for_codex_oauth_temporarily_unsets_proxy_envs(self):
+        os.environ["HTTP_PROXY"] = "http://proxy.example"
+        os.environ["HTTPS_PROXY"] = "http://proxy.example"
+        os.environ["ALL_PROXY"] = "socks5://proxy.example"
+
+        with crewai_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):
+            self.assertNotIn("HTTP_PROXY", os.environ)
+            self.assertNotIn("HTTPS_PROXY", os.environ)
+            self.assertNotIn("ALL_PROXY", os.environ)
+
+        self.assertEqual(os.environ["HTTP_PROXY"], "http://proxy.example")
+        self.assertEqual(os.environ["HTTPS_PROXY"], "http://proxy.example")
+        self.assertEqual(os.environ["ALL_PROXY"], "socks5://proxy.example")
+
+    def test_suppress_proxy_for_codex_oauth_respects_disable_switch(self):
+        os.environ["TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX"] = "0"
+        os.environ["HTTP_PROXY"] = "http://proxy.example"
+
+        with crewai_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):
+            self.assertEqual(os.environ["HTTP_PROXY"], "http://proxy.example")
+
 
 if __name__ == "__main__":
     unittest.main()

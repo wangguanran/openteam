@@ -89,7 +89,7 @@ upsert_env() {
 upsert_env "TEAMOS_DB_URL" "$db_url"
 upsert_env "TEAMOS_CONTROL_PLANE_IMAGE" "$image"
 upsert_env "CONTROL_PLANE_PORT" "$port"
-upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "0"
+upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "1"
 upsert_env "TEAM_OS_REPO_PATH" "$ROOT"
 
 base_name="$(basename "$target")"

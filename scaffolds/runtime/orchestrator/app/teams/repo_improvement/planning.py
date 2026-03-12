@@ -4,11 +4,12 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import configparser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -87,6 +88,27 @@ class UpgradePlan(BaseModel):
     notes: list[str] = Field(default_factory=list)
     current_version: str = ""
     planned_version: str = ""
+
+
+class StructuredBugCandidate(BaseModel):
+    title: str
+    summary: str = ""
+    rationale: str = ""
+    impact: str = "MED"
+    module: str = ""
+    files: list[str] = Field(default_factory=list)
+    tests: list[str] = Field(default_factory=list)
+    acceptance: list[str] = Field(default_factory=list)
+    reproduction_steps: list[str] = Field(default_factory=list)
+    test_case_files: list[str] = Field(default_factory=list)
+    verification_steps: list[str] = Field(default_factory=list)
+
+
+class StructuredBugScanResult(BaseModel):
+    summary: str = ""
+    findings: list[StructuredBugCandidate] = Field(default_factory=list)
+    ci_actions: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class ProposalDiscussionResponse(BaseModel):
@@ -372,6 +394,10 @@ def _lane_max_candidates(lane: str, *, project_id: str = "teamos") -> int:
     return crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id).max_candidates()
 
 
+def _lane_max_continuous_runtime_minutes(lane: str, *, project_id: str = "teamos") -> int:
+    return crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id).max_continuous_runtime_minutes()
+
+
 def _issue_type_token(lane: str) -> str:
     return {"feature": "Feature", "bug": "Bug", "process": "Process", "quality": "Quality"}.get(str(lane or "").strip().lower(), "Task")
 
@@ -498,7 +524,9 @@ def _normalize_issue_text(text: str, *, empty_fallback: str = "(空)") -> str:
 
 
 def _zh_localization_enabled() -> bool:
-    return _env_truthy("TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH", "1")
+    if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH", "1"):
+        return False
+    return shutil.which("codex") is not None
 
 
 def _git_dir(repo_root: Path) -> Optional[Path]:
@@ -921,10 +949,28 @@ def _repository_chunk_label(rel: str) -> str:
         return "root"
     parts = [part for part in path.split("/") if part]
     if len(parts) == 1:
-        return "root"
+        stem = Path(parts[0]).stem
+        return stem or "root"
     head = parts[0]
-    if head in ("src", "tests", "projects") and len(parts) >= 2 and "." not in parts[1]:
-        return f"{head}/{parts[1]}"
+    if head in ("src", "tests", "projects"):
+        if "." in parts[-1]:
+            file_name = parts[-1]
+            if file_name.startswith("__init__."):
+                return "/".join(parts[:-1]) or head
+            stem = Path(file_name).stem
+            base = parts[:-1]
+            return "/".join([*base, stem]) if stem else "/".join(base) or head
+        if len(parts) >= 3 and "." not in parts[2]:
+            return "/".join(parts[:3])
+        if len(parts) >= 2 and "." not in parts[1]:
+            return f"{head}/{parts[1]}"
+    if "." in parts[-1]:
+        file_name = parts[-1]
+        if file_name.startswith("__init__."):
+            return "/".join(parts[:-1]) or head
+        stem = Path(file_name).stem
+        base = parts[:-1]
+        return "/".join([*base, stem]) if stem else "/".join(base) or head
     return head
 
 
@@ -1069,13 +1115,36 @@ def _repository_inspection(root: Path) -> dict[str, Any]:
 def _bug_scan_module_chunks(repo_context: dict[str, Any], *, limit: int = 6) -> list[dict[str, Any]]:
     inspection = dict(repo_context.get("repository_inspection") or {})
     chunks = inspection.get("module_chunks") if isinstance(inspection.get("module_chunks"), list) else []
-    out: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for chunk in chunks:
         if not isinstance(chunk, dict):
             continue
         category_counts = dict(chunk.get("category_counts") or {})
         if int(category_counts.get("source") or 0) <= 0 and int(category_counts.get("test") or 0) <= 0:
             continue
+        if int(chunk.get("included_chars") or 0) <= 80:
+            continue
+        candidates.append(chunk)
+    def _priority(item: dict[str, Any]) -> tuple[int, int, int, int, str]:
+        module = str(item.get("module") or "").strip()
+        if module.startswith("src/") or module == "src":
+            head_rank = 0
+        elif module.startswith("tests/") or module == "tests":
+            head_rank = 1
+        elif module.startswith("crewai_agents/") or module == "crewai_agents":
+            head_rank = 2
+        elif module.startswith("projects/") or module == "projects":
+            head_rank = 3
+        else:
+            head_rank = 4
+        category_counts = dict(item.get("category_counts") or {})
+        source_count = int(category_counts.get("source") or 0)
+        test_count = int(category_counts.get("test") or 0)
+        included_chars = int(item.get("included_chars") or 0)
+        return (head_rank, -source_count, -test_count, -included_chars, module)
+
+    out: list[dict[str, Any]] = []
+    for chunk in sorted(candidates, key=_priority):
         out.append(chunk)
         if len(out) >= max(1, int(limit)):
             break
@@ -1919,6 +1988,38 @@ def _planned_version(current_version: str, findings: list[UpgradeFinding]) -> st
     return _bump_version(current_version, bump)
 
 
+def _ensure_codex_proxy_bypass() -> None:
+    bypass_hosts = [
+        "chatgpt.com",
+        ".chatgpt.com",
+        "api.openai.com",
+        ".openai.com",
+    ]
+    current = str(os.getenv("NO_PROXY") or os.getenv("no_proxy") or "").strip()
+    entries: list[str] = []
+    seen: set[str] = set()
+    for raw in current.split(","):
+        item = str(raw or "").strip()
+        if not item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(item)
+    for item in bypass_hosts:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(item)
+    if not entries:
+        return
+    resolved = ",".join(entries)
+    os.environ["NO_PROXY"] = resolved
+    os.environ["no_proxy"] = resolved
+
+
 def _crewai_llm():
     os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
     crewai_runtime.require_crewai_importable(refresh=True)
@@ -1946,6 +2047,9 @@ def _crewai_llm():
     elif (not auth_mode) and ("codex" in model.lower()) and (not api_key):
         os.environ["CREWAI_OPENAI_AUTH_MODE"] = "oauth_codex"
 
+    if "codex" in model.lower() and str(os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower() == "oauth_codex":
+        _ensure_codex_proxy_bypass()
+
     reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "xhigh").strip().lower()
     reasoning_effort_aliases = {
         "highest": "xhigh",
@@ -1972,6 +2076,8 @@ def _crewai_llm():
 
 def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str, project_id: str = "teamos") -> UpgradePlan:
     obj: Any = None
+    if isinstance(raw_output, dict):
+        obj = raw_output
     if hasattr(raw_output, "to_dict"):
         try:
             obj = raw_output.to_dict()
@@ -2113,6 +2219,256 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
     )
 
 
+def _structured_bug_scan_prompt(
+    *,
+    repo_context: dict[str, Any],
+    module_chunk: dict[str, Any],
+    bug_scan_limit: int,
+    bug_scan_dormant: bool,
+) -> str:
+    inspection = repo_context.get("repository_inspection") if isinstance(repo_context.get("repository_inspection"), dict) else {}
+    baseline_checks = inspection.get("baseline_checks") if isinstance(inspection, dict) else []
+    baseline_summary = [
+        {
+            "command": str(item.get("command") or ""),
+            "status": str(item.get("status") or ""),
+            "returncode": item.get("returncode"),
+            "stdout_tail": _tail_text(str(item.get("stdout") or ""), max_chars=300),
+            "stderr_tail": _tail_text(str(item.get("stderr") or ""), max_chars=300),
+        }
+        for item in (baseline_checks or [])
+        if isinstance(item, dict)
+    ][:3]
+    module_payload = {
+        "module": module_chunk.get("module"),
+        "files": [
+            {
+                "path": str(item.get("path") or ""),
+                "category": str(item.get("category") or "other"),
+                "content": str(item.get("content") or ""),
+                "truncated": bool(item.get("truncated")),
+            }
+            for item in (module_chunk.get("files") or [])
+            if isinstance(item, dict)
+        ],
+    }
+    shared_context = {
+        "repo_name": repo_context.get("repo_name"),
+        "repo_locator": repo_context.get("repo_locator"),
+        "head_commit": repo_context.get("head_commit"),
+    }
+    payload = {
+        "shared_context": shared_context,
+        "baseline_checks": baseline_summary,
+        "module_chunk": module_payload,
+    }
+    module = str(module_chunk.get("module") or "module").strip()
+    dormant_note = (
+        "当前 bug lane 处于 dormant 状态。只有在输入里存在明确当前失败信号时，才允许输出 bug finding。"
+        if bug_scan_dormant
+        else ""
+    )
+    return "\n".join(
+        [
+            "你是 Team OS 的 Test-Manager。",
+            f"请按模块完整通读 `{module}`，并只基于提供的模块全文阅读包判断当前是否存在可证明的 bug。",
+            "要求：",
+            f"- 最多输出 {int(bug_scan_limit)} 个 bug finding；0 个是完全正常的结果。",
+            "- 你必须先通读 module_chunk.files 中提供的文件全文/截断全文，再做结论。",
+            "- 只有当存在当前失败行为、测试失败、异常栈、可执行复现路径，或可归因到该模块的 baseline check 失败/超时时，才允许输出 bug。",
+            "- 缺测试、未覆盖路径、代码味道、潜在风险、推测性的设计问题，都不是 bug；这些应当留给 quality/test-gap 流程。",
+            "- 环境缺工具这类失败（例如 make 不存在）不是仓库 bug；应放到 ci_actions 或 notes。",
+            "- 每个 finding 只返回最小 bug 候选字段：title、summary、rationale、impact、module、files、tests、acceptance、reproduction_steps、test_case_files、verification_steps。",
+            "- 不要返回 work_items、owner_role、review_role、qa_role、lane、kind、version_bump 这类流程字段；这些由运行时补全。",
+            "- 所有面向用户的自然语言字段必须使用简体中文。",
+            "- 只输出符合给定 JSON Schema 的对象。",
+            dormant_note,
+            "",
+            "输入 JSON：",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        ]
+    ).strip()
+
+
+def _structured_bug_scan_for_chunk(
+    *,
+    llm: Any,
+    repo_context: dict[str, Any],
+    module_chunk: dict[str, Any],
+    bug_scan_limit: int,
+    bug_scan_dormant: bool,
+) -> tuple[StructuredBugScanResult, dict[str, Any]]:
+    prompt = _structured_bug_scan_prompt(
+        repo_context=repo_context,
+        module_chunk=module_chunk,
+        bug_scan_limit=bug_scan_limit,
+        bug_scan_dormant=bug_scan_dormant,
+    )
+    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+        raw_result = llm.call(prompt, response_model=StructuredBugScanResult)
+    parsed = raw_result if isinstance(raw_result, StructuredBugScanResult) else StructuredBugScanResult.model_validate(raw_result)
+    module = str(module_chunk.get("module") or "module").strip()
+    return parsed, {
+        "name": f"qa_bug_scan_{_module_slug(module)}",
+        "agent": ROLE_TEST_MANAGER,
+        "raw": json.dumps(parsed.model_dump(), ensure_ascii=False, indent=2)[:4000],
+    }
+
+
+def _kickoff_bug_only_plan(
+    *,
+    repo_context: dict[str, Any],
+    project_id: str,
+    max_findings: int,
+    bug_scan_limit: int,
+    bug_scan_dormant: bool,
+    progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+) -> tuple[UpgradePlan, dict[str, Any]]:
+    repo_root = Path(str(repo_context.get("repo_root") or ".")).resolve()
+    current_version = str(repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
+    bug_module_chunks = _bug_scan_module_chunks(repo_context, limit=999)
+    llm = _crewai_llm()
+    task_outputs: list[dict[str, Any]] = []
+    aggregated_findings: list[dict[str, Any]] = []
+    ci_actions: list[str] = []
+    notes: list[str] = []
+    summaries: list[str] = []
+    started_at = time.monotonic()
+    max_runtime_minutes = _lane_max_continuous_runtime_minutes("bug", project_id=project_id)
+    max_runtime_seconds = float(max_runtime_minutes) * 60.0 if int(max_runtime_minutes) > 0 else 0.0
+
+    if bug_module_chunks:
+        for chunk in bug_module_chunks:
+            if max_runtime_seconds > 0 and task_outputs:
+                elapsed_seconds = max(0.0, time.monotonic() - started_at)
+                if elapsed_seconds >= max_runtime_seconds:
+                    notes.append(
+                        f"Bug 模块通读已达到 workflow 运行时长上限（{int(max_runtime_minutes)} 分钟），剩余模块将在后续轮次继续扫描。"
+                    )
+                    break
+            module = str(chunk.get("module") or "module").strip()
+            scan_result, debug_task = _structured_bug_scan_for_chunk(
+                llm=llm,
+                repo_context=repo_context,
+                module_chunk=chunk,
+                bug_scan_limit=max(1, int(bug_scan_limit)),
+                bug_scan_dormant=bug_scan_dormant,
+            )
+            task_outputs.append(debug_task)
+            if str(scan_result.summary or "").strip():
+                summaries.append(str(scan_result.summary).strip())
+            ci_actions.extend([str(x).strip() for x in (scan_result.ci_actions or []) if str(x).strip()])
+            notes.extend([str(x).strip() for x in (scan_result.notes or []) if str(x).strip()])
+            for candidate in list(scan_result.findings or []):
+                title = str(candidate.title or "").strip()
+                summary = str(candidate.summary or "").strip()
+                if not title and not summary:
+                    continue
+                files = [str(x).strip() for x in (candidate.files or []) if str(x).strip()][:20]
+                tests = [str(x).strip() for x in (candidate.tests or []) if str(x).strip()][:20]
+                acceptance = [str(x).strip() for x in (candidate.acceptance or []) if str(x).strip()][:20]
+                reproduction_steps = [str(x).strip() for x in (candidate.reproduction_steps or []) if str(x).strip()][:10]
+                test_case_files = [str(x).strip() for x in (candidate.test_case_files or []) if str(x).strip()][:10]
+                verification_steps = [str(x).strip() for x in (candidate.verification_steps or []) if str(x).strip()][:10]
+                module = _normalize_module_name(
+                    str(candidate.module or "").strip(),
+                    paths=files,
+                    workstream_id="general",
+                    title=title,
+                    summary=summary,
+                    lane="bug",
+                )
+                aggregated_findings.append(
+                    {
+                        "kind": "BUG",
+                        "lane": "bug",
+                        "title": title or summary or "未命名缺陷",
+                        "summary": summary or title or "发现可证明的当前缺陷信号。",
+                        "module": module,
+                        "rationale": str(candidate.rationale or "").strip(),
+                        "impact": str(candidate.impact or "MED").strip() or "MED",
+                        "workstream_id": "general",
+                        "files": files,
+                        "tests": tests,
+                        "acceptance": acceptance,
+                        "version_bump": "patch",
+                        "requires_user_confirmation": False,
+                        "work_items": [
+                            {
+                                "title": title or summary or "未命名缺陷",
+                                "summary": summary or title or "发现可证明的当前缺陷信号。",
+                                "owner_role": ROLE_BUGFIX_CODING_AGENT,
+                                "review_role": ROLE_REVIEW_AGENT,
+                                "qa_role": ROLE_QA_AGENT,
+                                "workstream_id": "general",
+                                "allowed_paths": files,
+                                "tests": tests,
+                                "acceptance": acceptance,
+                                "reproduction_steps": reproduction_steps,
+                                "test_case_files": test_case_files,
+                                "verification_steps": verification_steps or acceptance,
+                                "module": module,
+                            }
+                        ],
+                    }
+                )
+                if len(aggregated_findings) >= max(1, int(max_findings)):
+                    break
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        {
+                            "module": module,
+                            "summary": "；".join([x for x in summaries if x]).strip() or str(scan_result.summary or "").strip(),
+                            "findings": list(aggregated_findings),
+                            "ci_actions": ci_actions[:20],
+                            "notes": notes[:20],
+                            "current_version": current_version,
+                            "planned_version": current_version,
+                            "crew_debug": {"task_outputs": list(task_outputs)},
+                        }
+                    )
+                except Exception:
+                    pass
+            if len(aggregated_findings) >= max(1, int(max_findings)):
+                break
+            if aggregated_findings:
+                notes.append("已发现可证明 bug；为尽快进入 issue/task materialize，本轮停止继续扫描后续模块。")
+                break
+    else:
+        summaries.append("未发现可读取的模块切片，未生成 bug finding。")
+        notes.append("repository_inspection 未生成模块切片；本轮 bug triage 返回空结果。")
+
+    raw_plan = {
+        "summary": "；".join([x for x in summaries if x]).strip() or "Bug-only repo-improvement analysis completed.",
+        "findings": aggregated_findings[: max(1, int(max_findings))],
+        "ci_actions": ci_actions[:20],
+        "notes": notes[:20],
+        "current_version": current_version,
+        "planned_version": current_version,
+    }
+    plan = _coerce_plan(
+        raw_plan,
+        max_findings=max_findings,
+        repo_root=repo_root,
+        current_version=current_version,
+        project_id=project_id,
+    )
+    plan = plan.model_copy(update={"findings": [_localize_finding_to_zh(f) for f in (plan.findings or [])]})
+    task_outputs.append(
+        {
+            "name": "structured_bug_plan",
+            "agent": "Repo-Improvement-Bug-Planner",
+            "raw": json.dumps(raw_plan, ensure_ascii=False, indent=2)[:4000],
+        }
+    )
+    return plan, {
+        "raw": json.dumps(raw_plan, ensure_ascii=False, indent=2),
+        "token_usage": {},
+        "task_outputs": task_outputs,
+    }
+
+
 def kickoff_upgrade_plan(
     *,
     repo_context: dict[str, Any],
@@ -2120,12 +2476,9 @@ def kickoff_upgrade_plan(
     max_findings: int,
     verbose: bool = False,
     bug_scan_dormant: bool = False,
+    progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> tuple[UpgradePlan, dict[str, Any]]:
-    crewai_runtime.require_crewai_importable()
-    from crewai import Crew, Process, Task
-
     repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
-    llm = _crewai_llm()
     feature_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("feature", project_id=project_id) or int(max_findings)))
     bug_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("bug", project_id=project_id) or int(max_findings)))
     quality_scan_limit = max(1, min(int(max_findings), _lane_max_candidates("quality", project_id=project_id) or int(max_findings)))
@@ -2134,6 +2487,21 @@ def kickoff_upgrade_plan(
     bug_enabled = crewai_role_registry.WORKFLOW_BUG_FIX in enabled_workflows
     quality_enabled = crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT in enabled_workflows
     process_enabled = crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT in enabled_workflows
+
+    if _use_bug_only_fast_path(project_id=project_id, enabled_workflows=enabled_workflows):
+        return _kickoff_bug_only_plan(
+            repo_context=repo_context,
+            project_id=project_id,
+            max_findings=max_findings,
+            bug_scan_limit=bug_scan_limit,
+            bug_scan_dormant=bug_scan_dormant,
+            progress_callback=progress_callback,
+        )
+
+    crewai_runtime.require_crewai_importable()
+    from crewai import Crew, Process, Task
+
+    llm = _crewai_llm()
 
     issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, llm=llm, verbose=verbose)
     review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, llm=llm, verbose=verbose)
@@ -2162,7 +2530,7 @@ def kickoff_upgrade_plan(
     if bug_enabled:
         test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
         enabled_agents.append(test_manager)
-        bug_module_chunks = _bug_scan_module_chunks(repo_context, limit=max(2, int(bug_scan_limit) + 1))
+        bug_module_chunks = _bug_scan_module_chunks(repo_context, limit=max(1, min(6, int(bug_scan_limit) * 2)))
         bug_shared_context = {
             "repo_name": repo_context.get("repo_name"),
             "repo_locator": repo_context.get("repo_locator"),
@@ -2364,7 +2732,8 @@ def kickoff_upgrade_plan(
         process=Process.sequential,
         verbose=verbose,
     )
-    out = crew.kickoff()
+    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+        out = crew.kickoff()
     current_version = str(repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     plan = _coerce_plan(
         out,
@@ -2396,7 +2765,7 @@ def _task_ledger_dir(project_id: str) -> Path:
 
 
 def _compat_file_mirror_enabled() -> bool:
-    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "0")
+    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
 
 
 def _is_self_upgrade_task_doc(doc: dict[str, Any]) -> bool:
@@ -3304,7 +3673,8 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
         output_json=ProposalDiscussionResponse,
     )
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose)
-    out = crew.kickoff()
+    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+        out = crew.kickoff()
     if hasattr(out, "to_dict"):
         return ProposalDiscussionResponse.model_validate(out.to_dict())
     if hasattr(out, "json_dict"):
@@ -4276,8 +4646,15 @@ def _enabled_planning_workflow_ids(*, project_id: str) -> set[str]:
     return enabled
 
 
+def _use_bug_only_fast_path(*, project_id: str, enabled_workflows: set[str] | None = None) -> bool:
+    workflows = enabled_workflows if enabled_workflows is not None else _enabled_planning_workflow_ids(project_id=project_id)
+    return workflows == {crewai_role_registry.WORKFLOW_BUG_FIX}
+
+
 def _planning_role_ids(*, project_id: str) -> set[str]:
     enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
+    if _use_bug_only_fast_path(project_id=project_id, enabled_workflows=enabled_workflows):
+        return {ROLE_TEST_MANAGER}
     roles = {
         ROLE_ISSUE_DRAFTER,
         ROLE_PLAN_REVIEW_AGENT,
@@ -4397,7 +4774,10 @@ def _mark_proposal_materialized(proposal_id: str) -> None:
 
 
 def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
-    project_id = _panel_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
+    # Repo-improvement runtime state must stay scoped to the requested project_id.
+    # GitHub panel mappings are optional view-layer config and must not collapse
+    # project-local workflow settings/state back to the global "teamos" project.
+    project_id = _safe_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
     target = _resolve_target(
         target_id=str(getattr(spec, "target_id", "") or ""),
         repo_path=str(getattr(spec, "repo_path", "") or ""),
@@ -4500,6 +4880,74 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         },
     )
 
+    partial_progress: dict[str, Any] = {
+        "summary": "",
+        "findings": [],
+        "ci_actions": [],
+        "notes": [],
+        "crew_debug": {"task_outputs": []},
+    }
+    seen_bug_modules: set[str] = set()
+
+    def _persist_running_report(*, state: str, error: str = "") -> None:
+        report = {
+            "state": state,
+            "ts": _utc_now_iso(),
+            "run_id": run_id,
+            "target_id": target_id,
+            "actor": actor,
+            "trigger": trigger,
+            "target": target,
+            "repo_context": repo_context,
+            "summary": str(partial_progress.get("summary") or "").strip(),
+            "bug_findings": len(list(partial_progress.get("findings") or [])),
+            "plan": {
+                "summary": str(partial_progress.get("summary") or "").strip(),
+                "findings": list(partial_progress.get("findings") or []),
+                "ci_actions": list(partial_progress.get("ci_actions") or []),
+                "notes": list(partial_progress.get("notes") or []),
+                "current_version": str(repo_context.get("current_version") or "0.1.0"),
+                "planned_version": str(partial_progress.get("planned_version") or repo_context.get("current_version") or "0.1.0"),
+            },
+            "records": [],
+            "pending_proposals": [],
+            "panel_sync": {},
+            "crewai": crewai_info,
+            "crew_debug": dict(partial_progress.get("crew_debug") or {}),
+        }
+        if error:
+            report["error"] = str(error)[:500]
+        improvement_store.save_report(target_id=target_id, project_id=project_id, report=report)
+        try:
+            improvement_store.persist_repo_improvement_run_logs(db=db, run_id=run_id, limit=500)
+        except Exception:
+            pass
+
+    def _persist_planning_progress(update: dict[str, Any]) -> None:
+        partial_progress["summary"] = str(update.get("summary") or partial_progress.get("summary") or "").strip()
+        partial_progress["findings"] = list(update.get("findings") or partial_progress.get("findings") or [])
+        partial_progress["ci_actions"] = list(update.get("ci_actions") or partial_progress.get("ci_actions") or [])
+        partial_progress["notes"] = list(update.get("notes") or partial_progress.get("notes") or [])
+        partial_progress["planned_version"] = str(update.get("planned_version") or partial_progress.get("planned_version") or "").strip()
+        partial_progress["crew_debug"] = dict(update.get("crew_debug") or partial_progress.get("crew_debug") or {"task_outputs": []})
+        module = str(update.get("module") or "").strip()
+        if module and module not in seen_bug_modules:
+            seen_bug_modules.add(module)
+            db.add_event(
+                event_type="REPO_IMPROVEMENT_BUG_MODULE_SCANNED",
+                actor=actor,
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload={
+                    "run_id": run_id,
+                    "target_id": target_id,
+                    "module": module,
+                    "bug_findings": len(list(partial_progress.get("findings") or [])),
+                    "summary": str(partial_progress.get("summary") or "")[:500],
+                },
+            )
+        _persist_running_report(state="RUNNING")
+
     bug_scan_policy = _bug_scan_policy(
         target_id=target_id,
         project_id=project_id,
@@ -4528,6 +4976,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             max_findings=max_findings,
             verbose=_env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0"),
             bug_scan_dormant=bool(bug_scan_policy.get("dormant")),
+            progress_callback=_persist_planning_progress,
         )
         current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
         if bug_scan_policy.get("dormant"):
@@ -4541,6 +4990,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
                 )
     except Exception as e:
         _finish_agents(db=db, agent_ids=agent_ids, state="FAILED", current_action="repo-improvement failed")
+        _persist_running_report(state="FAILED", error=str(e))
         backoff_until = ""
         err_text = str(e)
         if any(x in err_text.lower() for x in ("insufficient_quota", "429", "rate limit")):
