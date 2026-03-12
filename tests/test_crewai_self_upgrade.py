@@ -147,6 +147,11 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertGreaterEqual(len(baseline_checks), 1)
             self.assertEqual(str(baseline_checks[0].get("command") or ""), "python -m unittest")
             self.assertEqual(str(baseline_checks[0].get("status") or ""), "passed")
+            text_pass = inspection.get("text_pass") or {}
+            self.assertGreaterEqual(int(text_pass.get("text_file_count") or 0), 4)
+            excerpt_paths = [str(item.get("path") or "") for item in (text_pass.get("entries") or []) if isinstance(item, dict)]
+            self.assertIn("README.md", excerpt_paths)
+            self.assertIn("src/__main__.py", excerpt_paths)
 
     def test_crewai_llm_matches_codex_oauth_demo_defaults(self):
         captured: dict[str, object] = {}

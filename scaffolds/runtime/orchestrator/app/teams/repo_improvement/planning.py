@@ -645,6 +645,16 @@ _INSPECTION_PRIORITY_NAMES = (
     "main.py",
     "app.py",
 )
+_TEXT_PASS_MARKERS = (
+    "TODO",
+    "FIXME",
+    "BUG",
+    "HACK",
+    "XXX",
+    "NotImplementedError",
+    "assert False",
+    "except Exception: pass",
+)
 
 
 def _classify_repo_path(rel: str) -> str:
@@ -840,6 +850,63 @@ def _focus_file_excerpts(root: Path, *, tracked_files: list[str]) -> list[dict[s
     return out
 
 
+def _repository_text_pass(root: Path, *, tracked_files: list[str]) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    suspicious_files: list[dict[str, Any]] = []
+    marker_totals: dict[str, int] = {marker: 0 for marker in _TEXT_PASS_MARKERS}
+    text_file_count = 0
+    excerpted_file_count = 0
+    total_chars_read = 0
+
+    for rel in tracked_files:
+        path = root / rel
+        suffix = path.suffix.lower()
+        if suffix not in _INSPECTION_TEXT_EXTENSIONS and path.name.lower() not in ("makefile", "dockerfile"):
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        text_file_count += 1
+        total_chars_read += len(content)
+        lines = content.count("\n") + (0 if not content else 1)
+        marker_hits: dict[str, int] = {}
+        for marker in _TEXT_PASS_MARKERS:
+            hits = int(content.count(marker))
+            if hits:
+                marker_totals[marker] = int(marker_totals.get(marker, 0)) + hits
+                marker_hits[marker] = hits
+        excerpt = content[:800]
+        if excerpt:
+            excerpted_file_count += 1
+        entry = {
+            "path": rel,
+            "category": _classify_repo_path(rel),
+            "bytes": int(path.stat().st_size) if path.exists() else 0,
+            "line_count": lines,
+            "excerpt": excerpt,
+            "truncated": len(content) > len(excerpt),
+        }
+        if marker_hits:
+            entry["marker_hits"] = marker_hits
+            suspicious_files.append(
+                {
+                    "path": rel,
+                    "marker_hits": marker_hits,
+                }
+            )
+        entries.append(entry)
+
+    return {
+        "text_file_count": text_file_count,
+        "excerpted_file_count": excerpted_file_count,
+        "total_chars_read": total_chars_read,
+        "marker_totals": {key: value for key, value in marker_totals.items() if int(value) > 0},
+        "suspicious_files": suspicious_files[:40],
+        "entries": entries[:120],
+    }
+
+
 def _repository_inspection(root: Path) -> dict[str, Any]:
     tracked_files = _git_ls_files(root)
     test_command_candidates = _discover_test_command_candidates(root, tracked_files=tracked_files)
@@ -875,6 +942,7 @@ def _repository_inspection(root: Path) -> dict[str, Any]:
         "category_counts": category_counts,
         "category_samples": {key: value[:20] for key, value in category_samples.items()},
         "focus_file_excerpts": _focus_file_excerpts(root, tracked_files=tracked_files),
+        "text_pass": _repository_text_pass(root, tracked_files=tracked_files),
         "test_command_candidates": test_command_candidates,
         "baseline_checks": _run_repository_baseline_checks(root, command_candidates=test_command_candidates),
     }
@@ -1970,6 +2038,7 @@ def kickoff_upgrade_plan(
                     "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
                     "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
                     "You must actively inspect the repository_inspection section: review the tracked file inventory, key source/test/config excerpts, and discovered test command candidates before deciding there are 0 bugs.\n"
+                    "repository_inspection.text_pass is a full text pass over tracked text files; use its entries, marker_totals, and suspicious_files as repository-wide reading evidence.\n"
                     "You must inspect repository_inspection.baseline_checks and treat failed or timed-out baseline checks as primary bug evidence when they are attributable to repository code.\n"
                     "Do not rely on recent_execution_metrics alone when the repository inspection shows real application code and tests.\n"
                     "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
@@ -2052,6 +2121,7 @@ def kickoff_upgrade_plan(
             "- It is valid for the final plan to contain 0 bug findings when there is no current, provable defect signal.\n"
             "- Never create a bug from speculation, code smell, or missing test coverage alone.\n"
             "- Bug conclusions must consider repository_inspection, not just recent_execution_metrics. If the repository contains substantial source or test files, treat the inspection summary and file excerpts as primary evidence.\n"
+            "- repository_inspection.text_pass reflects a repository-wide text read. Use it to ground module selection, test-gap context, and code-area rationale, but do not turn marker hits alone into bugs.\n"
             "- If repository_inspection.baseline_checks contains a failed or timed-out repo-attributable command, include that evidence explicitly in bug findings or ci_actions.\n"
             "- Code quality improvements use lane=quality, kind=CODE_QUALITY, require user confirmation, default to version_bump=none, and focus on cleanup/refactor/reuse/deletion work.\n"
             "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
