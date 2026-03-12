@@ -2384,8 +2384,7 @@ def _structured_bug_scan_prompt(
             {
                 "path": str(item.get("path") or ""),
                 "category": str(item.get("category") or "other"),
-                "content": str(item.get("content") or ""),
-                "truncated": bool(item.get("truncated")),
+                "bytes": item.get("bytes"),
             }
             for item in (module_chunk.get("files") or [])
             if isinstance(item, dict)
@@ -2410,10 +2409,10 @@ def _structured_bug_scan_prompt(
     return "\n".join(
         [
             "你是 Team OS 的 Test-Manager。",
-            f"请按模块完整通读 `{module}`，并只基于提供的模块全文阅读包判断当前是否存在可证明的 bug。",
+            f"请按模块完整通读 `{module}`，并使用仓库工具自行读取源码和测试文件，判断当前是否存在可证明的 bug。",
             "要求：",
-            f"- 最多输出 {int(bug_scan_limit)} 个 bug finding；0 个是完全正常的结果。",
-            "- 你必须先通读 module_chunk.files 中提供的文件全文/截断全文，再做结论。",
+            "- bug finding 数量不设上限；如果当前没有可证明缺陷，返回 0 个是完全正常的结果。",
+            "- 输入 JSON 只提供模块索引；源码和测试内容请通过工具自行读取，不要依赖输入 JSON 里的文件内容。",
             "- 只有当存在当前失败行为、测试失败、异常栈、可执行复现路径，或可归因到该模块的 baseline check 失败/超时时，才允许输出 bug。",
             "- 缺测试、未覆盖路径、代码味道、潜在风险、推测性的设计问题，都不是 bug；这些应当留给 quality/test-gap 流程。",
             "- 环境缺工具这类失败（例如 make 不存在）不是仓库 bug；应放到 ci_actions 或 notes。",
@@ -2427,6 +2426,59 @@ def _structured_bug_scan_prompt(
             json.dumps(payload, ensure_ascii=False, indent=2),
         ]
     ).strip()
+
+
+def _prompt_safe_repository_inspection(inspection: dict[str, Any]) -> dict[str, Any]:
+    text_pass = inspection.get("text_pass") if isinstance(inspection.get("text_pass"), dict) else {}
+    return {
+        "tracked_file_count": inspection.get("tracked_file_count"),
+        "tracked_file_sample": inspection.get("tracked_file_sample"),
+        "top_level_directory_counts": inspection.get("top_level_directory_counts"),
+        "category_counts": inspection.get("category_counts"),
+        "test_command_candidates": inspection.get("test_command_candidates"),
+        "focus_file_index": [
+            {
+                "path": str(item.get("path") or ""),
+                "bytes": item.get("bytes"),
+            }
+            for item in (inspection.get("focus_file_excerpts") or [])
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        ][:20],
+        "text_pass_summary": {
+            "text_file_count": text_pass.get("text_file_count"),
+            "marker_totals": text_pass.get("marker_totals"),
+            "suspicious_files": text_pass.get("suspicious_files"),
+        },
+        "module_chunk_index": [
+            {
+                "module": str(item.get("module") or ""),
+                "included_file_count": item.get("included_file_count"),
+                "path_sample": item.get("path_sample"),
+            }
+            for item in (inspection.get("module_chunks") or [])
+            if isinstance(item, dict)
+        ][:20],
+    }
+
+
+def _prompt_safe_repo_context(repo_context: dict[str, Any]) -> dict[str, Any]:
+    inspection = repo_context.get("repository_inspection") if isinstance(repo_context.get("repository_inspection"), dict) else {}
+    return {
+        "repo_name": repo_context.get("repo_name"),
+        "repo_locator": repo_context.get("repo_locator"),
+        "default_branch": repo_context.get("default_branch"),
+        "head_commit": repo_context.get("head_commit"),
+        "current_version": repo_context.get("current_version"),
+        "git_status_dirty": repo_context.get("git_status_dirty"),
+        "git_status_sample": repo_context.get("git_status_sample"),
+        "top_level_entries": repo_context.get("top_level_entries"),
+        "dependency_files": repo_context.get("dependency_files"),
+        "workflow_files": repo_context.get("workflow_files"),
+        "test_files": repo_context.get("test_files"),
+        "has_github_actions": repo_context.get("has_github_actions"),
+        "recent_execution_metrics": repo_context.get("recent_execution_metrics"),
+        "repository_inspection": _prompt_safe_repository_inspection(inspection),
+    }
 
 
 def _build_bug_scan_tools(*, repo_root: Path, repo_context: dict[str, Any]) -> dict[str, list[Any]]:
@@ -2464,18 +2516,7 @@ def _structured_bug_scan_repo_prompt(
         for item in baseline_checks
         if isinstance(item, dict)
     ][:6]
-    inspection_summary = {
-        "tracked_file_count": inspection.get("tracked_file_count"),
-        "top_level_directory_counts": inspection.get("top_level_directory_counts"),
-        "category_counts": inspection.get("category_counts"),
-        "test_command_candidates": inspection.get("test_command_candidates"),
-        "focus_file_excerpts": inspection.get("focus_file_excerpts"),
-        "text_pass_summary": {
-            "text_file_count": ((inspection.get("text_pass") or {}) if isinstance(inspection.get("text_pass"), dict) else {}).get("text_file_count"),
-            "marker_totals": ((inspection.get("text_pass") or {}) if isinstance(inspection.get("text_pass"), dict) else {}).get("marker_totals"),
-            "suspicious_files": ((inspection.get("text_pass") or {}) if isinstance(inspection.get("text_pass"), dict) else {}).get("suspicious_files"),
-        },
-    }
+    inspection_summary = _prompt_safe_repository_inspection(inspection)
     payload = {
         "shared_context": {
             "repo_name": repo_context.get("repo_name"),
@@ -2495,9 +2536,10 @@ def _structured_bug_scan_repo_prompt(
             "你是 Team OS 的 Test-Manager。",
             "你现在拥有整个仓库的只读扫描权限。请自行决定先读哪些目录、哪些源码文件、哪些测试文件，并使用工具完成整仓 bug triage。",
             "要求：",
-            f"- 最多输出 {int(bug_scan_limit)} 个 bug finding；0 个是完全正常的结果。",
+            "- bug finding 数量不设上限；如果当前没有可证明缺陷，返回 0 个是完全正常的结果。",
             "- 你必须主动使用仓库工具进行检查，而不是只复述输入摘要。",
             "- 你应优先结合目录结构、搜索结果、源码文件、测试文件、工作流文件和 baseline check 结果来判断 bug。",
+            "- 输入 JSON 只提供仓库摘要；源码和测试内容请通过工具自行读取，不要依赖输入 JSON 里的文件内容。",
             "- 只有当存在当前失败行为、测试失败、异常栈、可执行复现路径、或能从当前代码直接证明的高置信静态缺陷时，才允许输出 bug。",
             "- 缺测试、未覆盖路径、代码味道、潜在风险、推测性的设计问题，都不是 bug；这些应当留给 quality/test-gap 流程。",
             "- 环境缺工具这类失败（例如 make 不存在）不是仓库 bug；应放到 ci_actions 或 notes。",
@@ -2774,7 +2816,7 @@ def kickoff_upgrade_plan(
     bug_scan_dormant: bool = False,
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> tuple[UpgradePlan, dict[str, Any]]:
-    repo_blob = json.dumps(repo_context, ensure_ascii=False, indent=2)
+    repo_blob = json.dumps(_prompt_safe_repo_context(repo_context), ensure_ascii=False, indent=2)
     feature_scan_limit = _scan_limit(max_findings, _lane_max_candidates("feature", project_id=project_id))
     bug_scan_limit = _scan_limit(max_findings, _lane_max_candidates("bug", project_id=project_id))
     quality_scan_limit = _scan_limit(max_findings, _lane_max_candidates("quality", project_id=project_id))
