@@ -107,6 +107,39 @@ class RepoImprovementLockTests(unittest.TestCase):
             )
         self.assertEqual(project_id, "projectmanager")
 
+    def test_repo_improvement_delivery_iteration_prefers_target_project(self) -> None:
+        with mock.patch.object(
+            app_main.improvement_store,
+            "get_target",
+            return_value={"target_id": "wangguanran-projectmanager", "project_id": "projectmanager"},
+        ), mock.patch.object(
+            app_main,
+            "_cleanup_stale_repo_improvement_activity",
+        ), mock.patch.object(
+            app_main._REPO_IMPROVEMENT_DELIVERY_LOCKS,
+            "acquire",
+            return_value=True,
+        ), mock.patch.object(
+            app_main._REPO_IMPROVEMENT_DELIVERY_LOCKS,
+            "release",
+        ) as release_mock, mock.patch.object(
+            app_main.crewai_self_upgrade_delivery,
+            "run_delivery_sweep",
+            return_value={"ok": True, "processed": 0, "summary": {"total": 0}},
+        ) as sweep_mock:
+            out = app_main._run_self_upgrade_delivery_iteration(
+                actor="test",
+                project_id="teamos",
+                target_id="wangguanran-projectmanager",
+                task_id="PROJECTMANAGER-0003",
+                force=True,
+            )
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(sweep_mock.call_args.kwargs["project_id"], "projectmanager")
+        self.assertEqual(out["project_id"], "projectmanager")
+        release_mock.assert_called_once_with("task:PROJECTMANAGER-0003")
+
     def test_cleanup_stale_repo_improvement_run_uses_event_flow_not_objective_text(self) -> None:
         stale_run = SimpleNamespace(
             run_id="run-123",

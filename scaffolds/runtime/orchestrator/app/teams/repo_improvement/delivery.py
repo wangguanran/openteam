@@ -1354,6 +1354,16 @@ def _coerce_model_output(raw_output: Any, model_cls: type[BaseModel], *, error_t
     if obj:
         return model_cls.model_validate(obj)
     text = str(raw_output or "").strip()
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            parsed, end = decoder.raw_decode(text[idx:])
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return model_cls.model_validate(parsed)
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
         raise DeliveryError(error_text)

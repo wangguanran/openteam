@@ -143,6 +143,22 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
         self._sync_issue_patch.stop()
         self._env_patch.stop()
 
+    def test_coerce_model_output_accepts_json_with_trailing_text(self):
+        raw = """preface
+{"approved": true, "summary": "bootstrapped", "changed_files": ["tests/test_demo.py"]}
+extra trailing commentary that should be ignored
+"""
+
+        out = crewai_self_upgrade_delivery._coerce_model_output(
+            raw,
+            crewai_self_upgrade_delivery.DeliveryBugTestCaseResult,
+            error_text="parse failed",
+        )
+
+        self.assertTrue(out.approved)
+        self.assertEqual(out.summary, "bootstrapped")
+        self.assertEqual(out.changed_files, ["tests/test_demo.py"])
+
     def test_list_delivery_tasks_only_returns_self_upgrade_ledgers(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"

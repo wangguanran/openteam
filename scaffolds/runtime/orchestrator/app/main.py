@@ -951,7 +951,10 @@ def _run_self_upgrade_delivery_iteration(
     max_tasks: Optional[int] = None,
 ) -> dict[str, Any]:
     _cleanup_stale_repo_improvement_activity()
-    current_project_id = str(project_id or "teamos").strip() or "teamos"
+    current_project_id = _effective_repo_improvement_project_id(
+        project_id=str(project_id or "teamos").strip() or "teamos",
+        target_id=target_id,
+    )
     lock_key = _repo_improvement_delivery_lock_key(
         project_id=current_project_id,
         target_id=target_id,
