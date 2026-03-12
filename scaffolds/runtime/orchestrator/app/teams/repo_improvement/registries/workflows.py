@@ -23,6 +23,36 @@ def _workflow_env(name: str, default: str = "") -> str:
     return str(raw if raw is not None else default or "").strip()
 
 
+def _workflow_lane_env_prefix(lane: str) -> str:
+    normalized = str(lane or "").strip().upper()
+    return f"TEAMOS_REPO_IMPROVEMENT_{normalized}" if normalized else ""
+
+
+def _workflow_lane_bool_override(lane: str, *suffixes: str) -> bool | None:
+    prefix = _workflow_lane_env_prefix(lane)
+    if not prefix:
+        return None
+    for suffix in suffixes:
+        raw = _workflow_env(f"{prefix}_{str(suffix or '').strip().upper()}")
+        if not raw:
+            continue
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
+    return None
+
+
+def _workflow_lane_int_override(lane: str, suffix: str) -> int | None:
+    prefix = _workflow_lane_env_prefix(lane)
+    if not prefix:
+        return None
+    raw = _workflow_env(f"{prefix}_{str(suffix or '').strip().upper()}")
+    if not raw:
+        return None
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return None
+
+
 @dataclass(frozen=True)
 class WorkflowRunPolicy:
     allowed: bool
@@ -459,6 +489,31 @@ def _apply_team_workflow_overrides(spec: WorkflowSpec, *, team_id: str, project_
             dormant_after_zero_scans = max(0, int(override.get("dormant_after_zero_scans") or 0))
         except Exception:
             pass
+
+    env_enabled = _workflow_lane_bool_override(spec.lane, "ENABLED", "AUTO")
+    if env_enabled is not None:
+        enabled = bool(env_enabled)
+        disabled_reason = "" if enabled else "workflow_disabled_by_env"
+
+    env_max_candidates = _workflow_lane_int_override(spec.lane, "MAX_CANDIDATES")
+    if env_max_candidates is not None:
+        max_candidates = max(0, int(env_max_candidates))
+
+    env_active_window_start_hour = _workflow_lane_int_override(spec.lane, "ACTIVE_WINDOW_START_HOUR")
+    if env_active_window_start_hour is not None:
+        active_window_start_hour = min(23, max(0, int(env_active_window_start_hour)))
+
+    env_active_window_end_hour = _workflow_lane_int_override(spec.lane, "ACTIVE_WINDOW_END_HOUR")
+    if env_active_window_end_hour is not None:
+        active_window_end_hour = min(24, max(0, int(env_active_window_end_hour)))
+
+    env_max_continuous_runtime_minutes = _workflow_lane_int_override(spec.lane, "MAX_CONTINUOUS_RUNTIME_MINUTES")
+    if env_max_continuous_runtime_minutes is not None:
+        max_continuous_runtime_minutes = max(0, int(env_max_continuous_runtime_minutes))
+
+    env_dormant_after_zero_scans = _workflow_lane_int_override(spec.lane, "DORMANT_AFTER_ZERO_SCANS")
+    if env_dormant_after_zero_scans is not None:
+        dormant_after_zero_scans = max(0, int(env_dormant_after_zero_scans))
 
     return replace(
         spec,

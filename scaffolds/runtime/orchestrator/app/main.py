@@ -142,7 +142,15 @@ def _repo_improvement_loop_state_snapshot() -> dict[str, dict[str, Any]]:
         return {key: dict(value) for key, value in _REPO_IMPROVEMENT_LOOP_STATE.items()}
 
 
+def _repo_improvement_stage_loop_state_snapshot() -> dict[str, dict[str, Any]]:
+    return _repo_improvement_loop_state_snapshot()
+
+
 def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: str) -> dict[str, dict[str, Any]]:
+    stage_loops = _repo_improvement_stage_loop_state_snapshot()
+    discovery_loop = dict(stage_loops.get(_REPO_IMPROVEMENT_LOOP_DISCOVERY) or {})
+    discussion_loop = dict(stage_loops.get(_REPO_IMPROVEMENT_LOOP_DISCUSSION) or {})
+    delivery_loop = dict(stage_loops.get(_REPO_IMPROVEMENT_LOOP_DELIVERY) or {})
     lanes = {
         "bug": crewai_role_registry.WORKFLOW_BUG_FIX,
         "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
@@ -160,18 +168,43 @@ def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: st
             if str(target_id or "").strip()
             else {}
         )
+        phases: dict[str, dict[str, Any]] = {
+            "discovery": discovery_loop,
+            "delivery": delivery_loop,
+        }
+        if bool(spec.requires_user_confirmation):
+            phases["discussion"] = discussion_loop
+        phase_items = [dict(item) for item in phases.values() if isinstance(item, dict)]
+        active_phase = next((item for item in phase_items if str(item.get("status") or "").strip().lower() == "running"), None)
+        if active_phase is None:
+            active_phase = next((item for item in phase_items if str(item.get("status") or "").strip().lower() in ("waiting", "sleeping", "done")), None)
+        status = "disabled"
+        current_action = str(spec.disabled_reason or "").strip() or "workflow disabled"
+        if bool(spec.enabled):
+            runtime_reason = str(runtime_state.get("last_reason") or "").strip()
+            status = "ready"
+            current_action = "workflow ready for repo-improvement scans"
+            if str(runtime_state.get("status") or "").strip().lower() == "paused":
+                status = "paused"
+                current_action = runtime_reason or "workflow paused by runtime policy"
+            elif active_phase:
+                status = str(active_phase.get("status") or "").strip().lower() or "ready"
+                current_action = str(active_phase.get("current_action") or "").strip() or current_action
         statuses[lane] = {
             "workflow_id": workflow_id,
             "lane": lane,
             "display_name_zh": str(spec.display_name_zh or "").strip(),
             "enabled": bool(spec.enabled),
             "disabled_reason": str(spec.disabled_reason or "").strip(),
+            "status": status,
+            "current_action": current_action,
             "max_candidates": int(spec.max_candidates()),
             "cooldown_hours": int(spec.cooldown_hours()),
             "active_window_start_hour": int(spec.active_window_start_hour()),
             "active_window_end_hour": int(spec.active_window_end_hour()),
             "max_continuous_runtime_minutes": int(spec.max_continuous_runtime_minutes()),
             "dormant_after_zero_scans": int(spec.dormant_after_zero_scans()),
+            "phases": phases,
             "runtime_state": runtime_state,
         }
     return statuses
@@ -1977,7 +2010,11 @@ def v1_status():
         "default_target_id": default_target_id,
         "last_run": repo_improvement_state.get("last_run") if isinstance(repo_improvement_state.get("last_run"), dict) else {},
         "backoff_until": str(repo_improvement_state.get("backoff_until") or ""),
-        "loops": _repo_improvement_loop_state_snapshot(),
+        "loops": _repo_improvement_workflow_status_snapshot(
+            target_id=default_target_id,
+            project_id=default_target_project_id,
+        ),
+        "stage_loops": _repo_improvement_stage_loop_state_snapshot(),
         "workflows": _repo_improvement_workflow_status_snapshot(
             target_id=default_target_id,
             project_id=default_target_project_id,
