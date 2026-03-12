@@ -2166,6 +2166,52 @@ def cmd_repo_improvement_watch(args: argparse.Namespace) -> None:
                 return
 
 
+def _default_runtime_control_plane_container() -> str:
+    proc = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "label=com.docker.compose.service=control-plane",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"docker ps failed: {(proc.stderr or proc.stdout or '').strip()[:300]}")
+    names = [str(line).strip() for line in (proc.stdout or "").splitlines() if str(line).strip()]
+    if not names:
+        raise RuntimeError("No running control-plane container found. Start the runtime first.")
+    for name in names:
+        if "control-plane" in name:
+            return name
+    return names[0]
+
+
+def cmd_repo_improvement_bug_scan_live(args: argparse.Namespace) -> None:
+    container = str(getattr(args, "container", "") or "").strip() or _default_runtime_control_plane_container()
+    cmd = [
+        "docker",
+        "exec",
+        "-i",
+        container,
+        "python",
+        "/team-os/scripts/runtime/repo_improvement_bug_scan_live.py",
+        "--target-id",
+        str(args.target_id),
+    ]
+    if str(getattr(args, "project_id", "") or "").strip():
+        cmd += ["--project-id", str(args.project_id).strip()]
+    if bool(getattr(args, "json", False)):
+        cmd.append("--json")
+    proc = subprocess.run(cmd)
+    if proc.returncode != 0:
+        raise SystemExit(proc.returncode)
+
+
 def cmd_improvement_targets(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
     query: dict[str, str] = {}
@@ -3428,6 +3474,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     riw.add_argument("--json", action="store_true", help="print raw JSON event envelopes")
     riw.set_defaults(fn=cmd_repo_improvement_watch)
 
+    rib = sp.add_parser("repo-improvement-bug-scan-live", help="Run a whole-repository bug discovery scan live in the control-plane container")
+    rib.add_argument("--target-id", required=True, help="improvement target id")
+    rib.add_argument("--project-id", default="", help="project id override")
+    rib.add_argument("--container", default="", help="control-plane container name override")
+    rib.add_argument("--json", action="store_true", help="print raw JSON result")
+    rib.set_defaults(fn=cmd_repo_improvement_bug_scan_live)
+
     sul = sp.add_parser("self-upgrade-logs", help="Compatibility alias for `repo-improvement-logs`")
     sul.add_argument("--run-id", default="", help="specific run id; defaults to the latest repo-improvement run")
     sul.add_argument("--limit", type=int, default=200, help="max runtime events to include")
@@ -3441,6 +3494,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     suw.add_argument("--json", action="store_true", help="print raw JSON event envelopes")
     suw.set_defaults(fn=cmd_repo_improvement_watch)
 
+    sub = sp.add_parser("self-upgrade-bug-scan-live", help="Compatibility alias for `repo-improvement-bug-scan-live`")
+    sub.add_argument("--target-id", required=True, help="improvement target id")
+    sub.add_argument("--project-id", default="", help="project id override")
+    sub.add_argument("--container", default="", help="control-plane container name override")
+    sub.add_argument("--json", action="store_true", help="print raw JSON result")
+    sub.set_defaults(fn=cmd_repo_improvement_bug_scan_live)
+
     sil = sp.add_parser("self-improve-logs", help="Compatibility alias for `repo-improvement-logs`")
     sil.add_argument("--run-id", default="", help="specific run id; defaults to the latest repo-improvement run")
     sil.add_argument("--limit", type=int, default=200, help="max runtime events to include")
@@ -3453,6 +3513,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     siw.add_argument("--timeout", type=int, default=3600, help="stream timeout in seconds")
     siw.add_argument("--json", action="store_true", help="print raw JSON event envelopes")
     siw.set_defaults(fn=cmd_repo_improvement_watch)
+
+    sib = sp.add_parser("self-improve-bug-scan-live", help="Compatibility alias for `repo-improvement-bug-scan-live`")
+    sib.add_argument("--target-id", required=True, help="improvement target id")
+    sib.add_argument("--project-id", default="", help="project id override")
+    sib.add_argument("--container", default="", help="control-plane container name override")
+    sib.add_argument("--json", action="store_true", help="print raw JSON result")
+    sib.set_defaults(fn=cmd_repo_improvement_bug_scan_live)
 
     tgt = sp.add_parser("improvement-targets", help="List registered improvement targets")
     tgt.add_argument("--project-id", default="", help="filter by project id")

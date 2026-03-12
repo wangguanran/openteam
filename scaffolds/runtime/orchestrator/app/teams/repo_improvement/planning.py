@@ -2429,6 +2429,184 @@ def _structured_bug_scan_prompt(
     ).strip()
 
 
+def _build_bug_scan_tools(*, repo_root: Path, repo_context: dict[str, Any]) -> dict[str, list[Any]]:
+    from app.teams.repo_improvement import delivery
+
+    inspection = repo_context.get("repository_inspection") if isinstance(repo_context.get("repository_inspection"), dict) else {}
+    tests_allowlist = [str(x).strip() for x in (inspection.get("test_command_candidates") or []) if str(x).strip()]
+    base_tools = delivery._build_repo_tools(repo_root=repo_root, allowed_paths=["."], tests_allowlist=tests_allowlist)
+    read_tools = list(base_tools.get("read") or [])
+    qa_tools: list[Any] = list(read_tools)
+    for tool_obj in list(base_tools.get("qa") or []):
+        tool_name = str(getattr(tool_obj, "name", "") or "").strip()
+        if any(str(getattr(existing, "name", "") or "").strip() == tool_name for existing in qa_tools):
+            continue
+        qa_tools.append(tool_obj)
+    return {"read": read_tools, "qa": qa_tools}
+
+
+def _structured_bug_scan_repo_prompt(
+    *,
+    repo_context: dict[str, Any],
+    bug_scan_limit: int,
+    bug_scan_dormant: bool,
+) -> str:
+    inspection = repo_context.get("repository_inspection") if isinstance(repo_context.get("repository_inspection"), dict) else {}
+    baseline_checks = inspection.get("baseline_checks") if isinstance(inspection.get("baseline_checks"), list) else []
+    baseline_summary = [
+        {
+            "command": str(item.get("command") or ""),
+            "status": str(item.get("status") or ""),
+            "returncode": item.get("returncode"),
+            "stdout_tail": _tail_text(str(item.get("stdout") or ""), max_chars=300),
+            "stderr_tail": _tail_text(str(item.get("stderr") or ""), max_chars=300),
+        }
+        for item in baseline_checks
+        if isinstance(item, dict)
+    ][:6]
+    inspection_summary = {
+        "tracked_file_count": inspection.get("tracked_file_count"),
+        "top_level_directory_counts": inspection.get("top_level_directory_counts"),
+        "category_counts": inspection.get("category_counts"),
+        "test_command_candidates": inspection.get("test_command_candidates"),
+        "focus_file_excerpts": inspection.get("focus_file_excerpts"),
+        "text_pass_summary": {
+            "text_file_count": ((inspection.get("text_pass") or {}) if isinstance(inspection.get("text_pass"), dict) else {}).get("text_file_count"),
+            "marker_totals": ((inspection.get("text_pass") or {}) if isinstance(inspection.get("text_pass"), dict) else {}).get("marker_totals"),
+            "suspicious_files": ((inspection.get("text_pass") or {}) if isinstance(inspection.get("text_pass"), dict) else {}).get("suspicious_files"),
+        },
+    }
+    payload = {
+        "shared_context": {
+            "repo_name": repo_context.get("repo_name"),
+            "repo_locator": repo_context.get("repo_locator"),
+            "head_commit": repo_context.get("head_commit"),
+        },
+        "inspection_summary": inspection_summary,
+        "baseline_checks": baseline_summary,
+    }
+    dormant_note = (
+        "当前 bug lane 处于 dormant 状态。只有在你通过仓库读取和验证确认了明确当前失败信号时，才允许输出 bug finding。"
+        if bug_scan_dormant
+        else ""
+    )
+    return "\n".join(
+        [
+            "你是 Team OS 的 Test-Manager。",
+            "你现在拥有整个仓库的只读扫描权限。请自行决定先读哪些目录、哪些源码文件、哪些测试文件，并使用工具完成整仓 bug triage。",
+            "要求：",
+            f"- 最多输出 {int(bug_scan_limit)} 个 bug finding；0 个是完全正常的结果。",
+            "- 你必须主动使用仓库工具进行检查，而不是只复述输入摘要。",
+            "- 你应优先结合目录结构、搜索结果、源码文件、测试文件、工作流文件和 baseline check 结果来判断 bug。",
+            "- 只有当存在当前失败行为、测试失败、异常栈、可执行复现路径、或能从当前代码直接证明的高置信静态缺陷时，才允许输出 bug。",
+            "- 缺测试、未覆盖路径、代码味道、潜在风险、推测性的设计问题，都不是 bug；这些应当留给 quality/test-gap 流程。",
+            "- 环境缺工具这类失败（例如 make 不存在）不是仓库 bug；应放到 ci_actions 或 notes。",
+            "- 每个 finding 只返回最小 bug 候选字段：title、summary、rationale、impact、module、files、tests、acceptance、reproduction_steps、test_case_files、verification_steps。",
+            "- 不要返回 work_items、owner_role、review_role、qa_role、lane、kind、version_bump 这类流程字段；这些由运行时补全。",
+            "- 所有面向用户的自然语言字段必须使用简体中文。",
+            "- 只输出符合给定 JSON Schema 的对象。",
+            dormant_note,
+            "",
+            "你可以使用的工具：",
+            "- List Directory：浏览目录",
+            "- Search Repository：全文搜索仓库",
+            "- Read Repository File：读取文件全文",
+            "- Git Status / Git Diff：查看当前仓库状态",
+            "- Run Validation Command：执行安全测试命令",
+            "",
+            "输入 JSON：",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        ]
+    ).strip()
+
+
+def _coerce_structured_task_output(raw_output: Any, model_cls: type[BaseModel], *, error_text: str) -> BaseModel:
+    obj: Any = None
+    if hasattr(raw_output, "to_dict"):
+        try:
+            obj = raw_output.to_dict()
+        except Exception:
+            obj = None
+    if obj is None and hasattr(raw_output, "json_dict"):
+        try:
+            obj = raw_output.json_dict
+        except Exception:
+            obj = None
+    if obj is None and hasattr(raw_output, "pydantic"):
+        obj = getattr(raw_output, "pydantic", None)
+    if obj is None:
+        obj = raw_output
+    if isinstance(obj, model_cls):
+        return obj
+    if isinstance(obj, dict):
+        return model_cls.model_validate(obj)
+    text = str(getattr(raw_output, "raw", "") or str(raw_output or "")).strip()
+    try:
+        return model_cls.model_validate(json.loads(text))
+    except Exception:
+        match = re.search(r"\{.*\}", text, re.S)
+        if not match:
+            raise RuntimeError(error_text)
+        return model_cls.model_validate(json.loads(match.group(0)))
+
+
+def _structured_bug_scan_for_repo(
+    *,
+    repo_context: dict[str, Any],
+    bug_scan_limit: int,
+    bug_scan_dormant: bool,
+    verbose: bool,
+) -> tuple[StructuredBugScanResult, dict[str, Any]]:
+    from crewai import Crew, Process, Task
+
+    repo_root = Path(str(repo_context.get("scan_repo_root") or repo_context.get("repo_root") or ".")).resolve()
+    llm = _crewai_llm()
+    tools_by_profile = _build_bug_scan_tools(repo_root=repo_root, repo_context=repo_context)
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=ROLE_TEST_MANAGER,
+        llm=llm,
+        verbose=verbose,
+        tools_by_profile=tools_by_profile,
+        tool_profile="qa",
+    )
+    task = Task(
+        name="qa_bug_scan_repo",
+        description=_structured_bug_scan_repo_prompt(
+            repo_context=repo_context,
+            bug_scan_limit=bug_scan_limit,
+            bug_scan_dormant=bug_scan_dormant,
+        ),
+        expected_output="A structured JSON bug triage result for the whole repository.",
+        agent=agent,
+        output_json=StructuredBugScanResult,
+    )
+    crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose)
+    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+        out = crew.kickoff()
+    parsed = _coerce_structured_task_output(
+        out,
+        StructuredBugScanResult,
+        error_text="CrewAI returned no structured output for repo bug scan",
+    )
+    task_outputs = [
+        {
+            "name": str(getattr(t, "name", "") or ""),
+            "agent": str(getattr(t, "agent", "") or ""),
+            "raw": str(getattr(t, "raw", "") or "")[:4000],
+        }
+        for t in (getattr(out, "tasks_output", None) or [])
+    ]
+    if not task_outputs:
+        task_outputs = [
+            {
+                "name": "qa_bug_scan_repo",
+                "agent": ROLE_TEST_MANAGER,
+                "raw": json.dumps(parsed.model_dump(), ensure_ascii=False, indent=2)[:4000],
+            }
+        ]
+    return parsed, task_outputs[0]
+
+
 def _structured_bug_scan_for_chunk(
     *,
     llm: Any,
@@ -2465,119 +2643,97 @@ def _kickoff_bug_only_plan(
 ) -> tuple[UpgradePlan, dict[str, Any]]:
     repo_root = Path(str(repo_context.get("repo_root") or ".")).resolve()
     current_version = str(repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
-    bug_module_chunks = _bug_scan_module_chunks(repo_context, limit=999)
-    llm = _crewai_llm()
     task_outputs: list[dict[str, Any]] = []
     aggregated_findings: list[dict[str, Any]] = []
     ci_actions: list[str] = []
     notes: list[str] = []
     summaries: list[str] = []
-    started_at = time.monotonic()
-    max_runtime_minutes = _lane_max_continuous_runtime_minutes("bug", project_id=project_id)
-    max_runtime_seconds = float(max_runtime_minutes) * 60.0 if int(max_runtime_minutes) > 0 else 0.0
     findings_limit = max(0, int(max_findings))
 
-    if bug_module_chunks:
-        for chunk in bug_module_chunks:
-            if max_runtime_seconds > 0 and task_outputs:
-                elapsed_seconds = max(0.0, time.monotonic() - started_at)
-                if elapsed_seconds >= max_runtime_seconds:
-                    notes.append(
-                        f"Bug 模块通读已达到 workflow 运行时长上限（{int(max_runtime_minutes)} 分钟），剩余模块将在后续轮次继续扫描。"
-                    )
-                    break
-            module = str(chunk.get("module") or "module").strip()
-            scan_result, debug_task = _structured_bug_scan_for_chunk(
-                llm=llm,
-                repo_context=repo_context,
-                module_chunk=chunk,
-                bug_scan_limit=max(1, int(bug_scan_limit or 0)),
-                bug_scan_dormant=bug_scan_dormant,
-            )
-            task_outputs.append(debug_task)
-            if str(scan_result.summary or "").strip():
-                summaries.append(str(scan_result.summary).strip())
-            ci_actions.extend([str(x).strip() for x in (scan_result.ci_actions or []) if str(x).strip()])
-            notes.extend([str(x).strip() for x in (scan_result.notes or []) if str(x).strip()])
-            for candidate in list(scan_result.findings or []):
-                title = str(candidate.title or "").strip()
-                summary = str(candidate.summary or "").strip()
-                if not title and not summary:
-                    continue
-                files = [str(x).strip() for x in (candidate.files or []) if str(x).strip()][:20]
-                tests = [str(x).strip() for x in (candidate.tests or []) if str(x).strip()][:20]
-                acceptance = [str(x).strip() for x in (candidate.acceptance or []) if str(x).strip()][:20]
-                reproduction_steps = [str(x).strip() for x in (candidate.reproduction_steps or []) if str(x).strip()][:10]
-                test_case_files = [str(x).strip() for x in (candidate.test_case_files or []) if str(x).strip()][:10]
-                verification_steps = [str(x).strip() for x in (candidate.verification_steps or []) if str(x).strip()][:10]
-                module = _normalize_module_name(
-                    str(candidate.module or "").strip(),
-                    paths=files,
-                    workstream_id="general",
-                    title=title,
-                    summary=summary,
-                    lane="bug",
-                )
-                aggregated_findings.append(
+    scan_result, debug_task = _structured_bug_scan_for_repo(
+        repo_context=repo_context,
+        bug_scan_limit=max(1, int(bug_scan_limit or 0)),
+        bug_scan_dormant=bug_scan_dormant,
+        verbose=False,
+    )
+    task_outputs.append(debug_task)
+    if str(scan_result.summary or "").strip():
+        summaries.append(str(scan_result.summary).strip())
+    ci_actions.extend([str(x).strip() for x in (scan_result.ci_actions or []) if str(x).strip()])
+    notes.extend([str(x).strip() for x in (scan_result.notes or []) if str(x).strip()])
+    for candidate in list(scan_result.findings or []):
+        title = str(candidate.title or "").strip()
+        summary = str(candidate.summary or "").strip()
+        if not title and not summary:
+            continue
+        files = [str(x).strip() for x in (candidate.files or []) if str(x).strip()][:20]
+        tests = [str(x).strip() for x in (candidate.tests or []) if str(x).strip()][:20]
+        acceptance = [str(x).strip() for x in (candidate.acceptance or []) if str(x).strip()][:20]
+        reproduction_steps = [str(x).strip() for x in (candidate.reproduction_steps or []) if str(x).strip()][:10]
+        test_case_files = [str(x).strip() for x in (candidate.test_case_files or []) if str(x).strip()][:10]
+        verification_steps = [str(x).strip() for x in (candidate.verification_steps or []) if str(x).strip()][:10]
+        module = _normalize_module_name(
+            str(candidate.module or "").strip(),
+            paths=files,
+            workstream_id="general",
+            title=title,
+            summary=summary,
+            lane="bug",
+        )
+        aggregated_findings.append(
+            {
+                "kind": "BUG",
+                "lane": "bug",
+                "title": title or summary or "未命名缺陷",
+                "summary": summary or title or "发现可证明的当前缺陷信号。",
+                "module": module,
+                "rationale": str(candidate.rationale or "").strip(),
+                "impact": str(candidate.impact or "MED").strip() or "MED",
+                "workstream_id": "general",
+                "files": files,
+                "tests": tests,
+                "acceptance": acceptance,
+                "version_bump": "patch",
+                "requires_user_confirmation": False,
+                "work_items": [
                     {
-                        "kind": "BUG",
-                        "lane": "bug",
                         "title": title or summary or "未命名缺陷",
                         "summary": summary or title or "发现可证明的当前缺陷信号。",
-                        "module": module,
-                        "rationale": str(candidate.rationale or "").strip(),
-                        "impact": str(candidate.impact or "MED").strip() or "MED",
+                        "owner_role": ROLE_BUGFIX_CODING_AGENT,
+                        "review_role": ROLE_REVIEW_AGENT,
+                        "qa_role": ROLE_QA_AGENT,
                         "workstream_id": "general",
-                        "files": files,
+                        "allowed_paths": files,
                         "tests": tests,
                         "acceptance": acceptance,
-                        "version_bump": "patch",
-                        "requires_user_confirmation": False,
-                        "work_items": [
-                            {
-                                "title": title or summary or "未命名缺陷",
-                                "summary": summary or title or "发现可证明的当前缺陷信号。",
-                                "owner_role": ROLE_BUGFIX_CODING_AGENT,
-                                "review_role": ROLE_REVIEW_AGENT,
-                                "qa_role": ROLE_QA_AGENT,
-                                "workstream_id": "general",
-                                "allowed_paths": files,
-                                "tests": tests,
-                                "acceptance": acceptance,
-                                "reproduction_steps": reproduction_steps,
-                                "test_case_files": test_case_files,
-                                "verification_steps": verification_steps or acceptance,
-                                "module": module,
-                            }
-                        ],
+                        "reproduction_steps": reproduction_steps,
+                        "test_case_files": test_case_files,
+                        "verification_steps": verification_steps or acceptance,
+                        "module": module,
                     }
-                )
-                if findings_limit > 0 and len(aggregated_findings) >= findings_limit:
-                    break
-            if progress_callback is not None:
-                try:
-                    progress_callback(
-                        {
-                            "module": module,
-                            "summary": "；".join([x for x in summaries if x]).strip() or str(scan_result.summary or "").strip(),
-                            "findings": list(aggregated_findings),
-                            "ci_actions": ci_actions[:20],
-                            "notes": notes[:20],
-                            "current_version": current_version,
-                            "planned_version": current_version,
-                            "crew_debug": {"task_outputs": list(task_outputs)},
-                        }
-                    )
-                except Exception:
-                    pass
-            if findings_limit > 0 and len(aggregated_findings) >= findings_limit:
-                break
-    else:
-        summaries.append("未发现可读取的模块切片，未生成 bug finding。")
-        notes.append("repository_inspection 未生成模块切片；本轮 bug triage 返回空结果。")
-
+                ],
+            }
+        )
+        if findings_limit > 0 and len(aggregated_findings) >= findings_limit:
+            break
+    if progress_callback is not None:
+        try:
+            progress_callback(
+                {
+                    "module": "repository",
+                    "summary": "；".join([x for x in summaries if x]).strip() or str(scan_result.summary or "").strip(),
+                    "findings": list(aggregated_findings),
+                    "ci_actions": ci_actions[:20],
+                    "notes": notes[:20],
+                    "current_version": current_version,
+                    "planned_version": current_version,
+                    "crew_debug": {"task_outputs": list(task_outputs)},
+                }
+            )
+        except Exception:
+            pass
     if aggregated_findings:
-        notes.append("已完成所有可读模块的 bug 通读扫描；本轮将把已验证缺陷统一进入 issue/task materialize。")
+        notes.append("已完成整仓 bug 通读扫描；本轮将把已验证缺陷统一进入 issue/task materialize。")
 
     raw_plan = {
         "summary": "；".join([x for x in summaries if x]).strip() or "Bug-only repo-improvement analysis completed.",
@@ -2675,98 +2831,32 @@ def kickoff_upgrade_plan(
             )
         )
     if bug_enabled:
-        test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
+        bug_scan_tools = _build_bug_scan_tools(
+            repo_root=Path(str(repo_context.get("scan_repo_root") or repo_context.get("repo_root") or ".")).resolve(),
+            repo_context=repo_context,
+        )
+        test_manager = crewai_agent_factory.build_crewai_agent(
+            role_id=ROLE_TEST_MANAGER,
+            llm=llm,
+            verbose=verbose,
+            tools_by_profile=bug_scan_tools,
+            tool_profile="qa",
+        )
         enabled_agents.append(test_manager)
-        bug_module_chunks = _bug_scan_module_chunks(repo_context, limit=max(1, min(6, int(bug_scan_limit) * 2)))
-        bug_shared_context = {
-            "repo_name": repo_context.get("repo_name"),
-            "repo_locator": repo_context.get("repo_locator"),
-            "head_commit": repo_context.get("head_commit"),
-            "recent_execution_metrics": repo_context.get("recent_execution_metrics"),
-            "repository_inspection_summary": {
-                "tracked_file_count": ((repo_context.get("repository_inspection") or {}) if isinstance(repo_context.get("repository_inspection"), dict) else {}).get("tracked_file_count"),
-                "category_counts": ((repo_context.get("repository_inspection") or {}) if isinstance(repo_context.get("repository_inspection"), dict) else {}).get("category_counts"),
-                "baseline_checks": ((repo_context.get("repository_inspection") or {}) if isinstance(repo_context.get("repository_inspection"), dict) else {}).get("baseline_checks"),
-            },
-        }
-        if bug_module_chunks:
-            for idx, chunk in enumerate(bug_module_chunks, start=1):
-                module = str(chunk.get("module") or f"Module-{idx}").strip()
-                module_blob = json.dumps(
-                    {
-                        "shared_context": bug_shared_context,
-                        "module_chunk": chunk,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                enabled_scan_tasks.append(
-                    Task(
-                        name=f"qa_bug_scan_{_module_slug(module)}",
-                        description=(
-                            (
-                                f"Analyze module `{module}` as a test manager.\n"
-                                "Treat the supplied module_chunk as the full module reading bundle for this scan.\n"
-                                + (
-                                    f"Return at most {int(bug_scan_limit)} bug or regression candidates for this module.\n"
-                                    if bug_scan_limit > 0
-                                    else "Return every bug or regression candidate in this module that is backed by current evidence.\n"
-                                )
-                            )
-                            +
-                            "Returning 0 bug findings is normal when the module currently has no proven defect signal.\n"
-                            "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, executable reproduction path, or failed/timed-out baseline check attributable to this module.\n"
-                            "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
-                            "Use module_chunk.files as the primary module reading evidence. Review the included file contents before deciding there are 0 bugs.\n"
-                            "Use repository_inspection_summary.baseline_checks and module marker hits as supporting evidence, but do not convert marker hits alone into bugs.\n"
-                            + (
-                                "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
-                                if bug_scan_dormant
-                                else ""
-                            )
-                            + "Use only the supplied context.\n\n"
-                            + f"Module scan context:\n{module_blob}"
-                        ),
-                        expected_output=f"A module-scoped bug finding for `{module}` with concrete evidence, or an explicit empty result.",
-                        agent=test_manager,
-                        markdown=True,
-                    )
-                )
-        else:
-            enabled_scan_tasks.append(
-                Task(
-                    name="qa_bug_scan",
-                    description=(
-                        (
-                            "Analyze the repository context as a test manager.\n"
-                            + (
-                                f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
-                                if bug_scan_limit > 0
-                                else "Return every bug or regression candidate backed by current evidence.\n"
-                            )
-                        )
-                        +
-                        "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
-                        "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
-                        "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
-                        "You must actively inspect the repository_inspection section: review the tracked file inventory, key source/test/config excerpts, and discovered test command candidates before deciding there are 0 bugs.\n"
-                        "repository_inspection.text_pass is a full text pass over tracked text files; use its entries, marker_totals, and suspicious_files as repository-wide reading evidence.\n"
-                        "You must inspect repository_inspection.baseline_checks and treat failed or timed-out baseline checks as primary bug evidence when they are attributable to repository code.\n"
-                        "Do not rely on recent_execution_metrics alone when the repository inspection shows real application code and tests.\n"
-                        "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
-                        + (
-                            "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
-                            if bug_scan_dormant
-                            else ""
-                        )
-                        + "Use only the supplied context.\n\n"
-                        + f"Repository context:\n{repo_blob}"
-                    ),
-                    expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
-                    agent=test_manager,
-                    markdown=True,
-                )
+        enabled_scan_tasks.append(
+            Task(
+                name="qa_bug_scan_repo",
+                description=_structured_bug_scan_repo_prompt(
+                    repo_context=repo_context,
+                    bug_scan_limit=max(1, int(bug_scan_limit or 0)),
+                    bug_scan_dormant=bug_scan_dormant,
+                ),
+                expected_output="A structured repository-wide bug triage result backed by active repository inspection.",
+                agent=test_manager,
+                output_json=StructuredBugScanResult,
+                markdown=True,
             )
+        )
     if quality_enabled:
         test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, llm=llm, verbose=verbose)
         code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, llm=llm, verbose=verbose)
