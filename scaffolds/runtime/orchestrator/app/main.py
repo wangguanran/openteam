@@ -105,6 +105,8 @@ def _utc_now_iso() -> str:
 
 _TASK_STATE_IN_PROGRESS = frozenset({"doing", "running", "work", "in_progress", "inprogress"})
 _RUN_STATE_ACTIVE = frozenset({"RUNNING", "PAUSED"})
+_REPO_IMPROVEMENT_LOOP_STATE_LOCK = threading.Lock()
+_REPO_IMPROVEMENT_LOOP_STATE: dict[str, dict[str, Any]] = {}
 
 
 def _normalize_task_state(state: Any) -> str:
@@ -116,6 +118,21 @@ def _normalize_task_state(state: Any) -> str:
 
 def _normalize_run_state(state: Any) -> str:
     return str(state or "").strip().upper()
+
+
+def _set_repo_improvement_loop_state(loop_id: str, **fields: Any) -> None:
+    now = _utc_now_iso()
+    with _REPO_IMPROVEMENT_LOOP_STATE_LOCK:
+        current = dict(_REPO_IMPROVEMENT_LOOP_STATE.get(loop_id) or {})
+        current.update(fields)
+        current.setdefault("loop_id", loop_id)
+        current["updated_at"] = now
+        _REPO_IMPROVEMENT_LOOP_STATE[loop_id] = current
+
+
+def _repo_improvement_loop_state_snapshot() -> dict[str, dict[str, Any]]:
+    with _REPO_IMPROVEMENT_LOOP_STATE_LOCK:
+        return {key: dict(value) for key, value in _REPO_IMPROVEMENT_LOOP_STATE.items()}
 
 
 def _task_id_from_run_id(run_id: str) -> str:
@@ -1130,15 +1147,50 @@ def _startup_background_threads() -> None:
 
     def _repo_improvement_cleanup_loop() -> None:
         interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_CLEANUP_INTERVAL_SEC", "60") or "60"))
+        _set_repo_improvement_loop_state(
+            "cleanup",
+            enabled=True,
+            status="starting",
+            current_action="initializing cleanup loop",
+            interval_sec=interval_sec,
+        )
         try:
             while True:
                 try:
+                    _set_repo_improvement_loop_state(
+                        "cleanup",
+                        enabled=True,
+                        status="running",
+                        current_action="cleaning stale repo-improvement activity",
+                        interval_sec=interval_sec,
+                        last_started_at=_utc_now_iso(),
+                    )
                     _cleanup_stale_repo_improvement_activity()
+                    _set_repo_improvement_loop_state(
+                        "cleanup",
+                        enabled=True,
+                        status="sleeping",
+                        current_action=f"sleeping {interval_sec}s until next cleanup sweep",
+                        interval_sec=interval_sec,
+                        last_completed_at=_utc_now_iso(),
+                    )
                 except Exception:
-                    pass
+                    _set_repo_improvement_loop_state(
+                        "cleanup",
+                        enabled=True,
+                        status="error",
+                        current_action="cleanup loop raised an exception",
+                        interval_sec=interval_sec,
+                    )
                 time.sleep(interval_sec)
         except Exception:
-            pass
+            _set_repo_improvement_loop_state(
+                "cleanup",
+                enabled=True,
+                status="stopped",
+                current_action="cleanup loop stopped",
+                interval_sec=interval_sec,
+            )
 
     rct = threading.Thread(target=_repo_improvement_cleanup_loop, name="repo-improvement-cleanup-loop", daemon=True)
     rct.start()
@@ -1193,11 +1245,37 @@ def _startup_background_threads() -> None:
 
     def _self_upgrade_auto_once() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_AUTO", "1"):
+            _set_repo_improvement_loop_state(
+                "startup",
+                enabled=False,
+                status="disabled",
+                current_action="startup repo-improvement sweep disabled",
+            )
             return
         try:
+            _set_repo_improvement_loop_state(
+                "startup",
+                enabled=True,
+                status="waiting",
+                current_action="waiting 4s before startup repo-improvement sweep",
+                initial_delay_sec=4,
+            )
             time.sleep(4)
             if not _leader_write_allowed():
+                _set_repo_improvement_loop_state(
+                    "startup",
+                    enabled=True,
+                    status="skipped",
+                    current_action="startup repo-improvement sweep skipped because this node is not leader",
+                )
                 return
+            _set_repo_improvement_loop_state(
+                "startup",
+                enabled=True,
+                status="running",
+                current_action="running startup repo-improvement sweeps",
+                last_started_at=_utc_now_iso(),
+            )
             for target in _enabled_improvement_targets(auto_mode="discovery"):
                 _ = _run_self_upgrade_iteration(
                     actor="control-plane.startup",
@@ -1211,7 +1289,21 @@ def _startup_background_threads() -> None:
                     force=False,
                     trigger="startup_auto",
                 )
+            _set_repo_improvement_loop_state(
+                "startup",
+                enabled=True,
+                status="done",
+                current_action="startup repo-improvement sweeps completed",
+                last_completed_at=_utc_now_iso(),
+            )
         except Exception as e:
+            _set_repo_improvement_loop_state(
+                "startup",
+                enabled=True,
+                status="error",
+                current_action=f"startup repo-improvement sweep failed: {str(e)[:160]}",
+                last_error=str(e)[:300],
+            )
             try:
                 DB.add_event(
                     event_type="REPO_IMPROVEMENT_AUTO_FAILED",
@@ -1228,16 +1320,45 @@ def _startup_background_threads() -> None:
 
     def _self_upgrade_continuous_loop() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_CONTINUOUS", "1"):
+            _set_repo_improvement_loop_state(
+                "discovery",
+                enabled=False,
+                status="disabled",
+                current_action="continuous repo-improvement discovery disabled",
+            )
             return
         interval_sec = max(60, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INTERVAL_SEC", "300") or "300"))
         initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
         try:
+            _set_repo_improvement_loop_state(
+                "discovery",
+                enabled=True,
+                status="waiting",
+                current_action=f"waiting {initial_delay_sec}s before first discovery sweep",
+                interval_sec=interval_sec,
+                initial_delay_sec=initial_delay_sec,
+            )
             time.sleep(initial_delay_sec)
             while True:
                 try:
                     if not _leader_write_allowed():
+                        _set_repo_improvement_loop_state(
+                            "discovery",
+                            enabled=True,
+                            status="sleeping",
+                            current_action=f"discovery loop waiting {interval_sec}s because this node is not leader",
+                            interval_sec=interval_sec,
+                        )
                         time.sleep(interval_sec)
                         continue
+                    _set_repo_improvement_loop_state(
+                        "discovery",
+                        enabled=True,
+                        status="running",
+                        current_action="running continuous repo-improvement discovery sweeps",
+                        interval_sec=interval_sec,
+                        last_started_at=_utc_now_iso(),
+                    )
                     for target in _enabled_improvement_targets(auto_mode="discovery"):
                         _ = _run_self_upgrade_iteration(
                             actor="control-plane.loop",
@@ -1251,7 +1372,23 @@ def _startup_background_threads() -> None:
                             force=False,
                             trigger="continuous_loop",
                         )
+                    _set_repo_improvement_loop_state(
+                        "discovery",
+                        enabled=True,
+                        status="sleeping",
+                        current_action=f"sleeping {interval_sec}s until next discovery sweep",
+                        interval_sec=interval_sec,
+                        last_completed_at=_utc_now_iso(),
+                    )
                 except Exception as e:
+                    _set_repo_improvement_loop_state(
+                        "discovery",
+                        enabled=True,
+                        status="error",
+                        current_action=f"discovery loop failed: {str(e)[:160]}",
+                        interval_sec=interval_sec,
+                        last_error=str(e)[:300],
+                    )
                     try:
                         DB.add_event(
                             event_type="REPO_IMPROVEMENT_LOOP_FAILED",
@@ -1264,25 +1401,76 @@ def _startup_background_threads() -> None:
                         pass
                 time.sleep(interval_sec)
         except Exception:
-            pass
+            _set_repo_improvement_loop_state(
+                "discovery",
+                enabled=True,
+                status="stopped",
+                current_action="discovery loop stopped",
+                interval_sec=interval_sec,
+            )
 
     clt = threading.Thread(target=_self_upgrade_continuous_loop, name="self-upgrade-continuous-loop", daemon=True)
     clt.start()
 
     def _self_upgrade_discussion_loop() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_AUTO", "1"):
+            _set_repo_improvement_loop_state(
+                "discussion",
+                enabled=False,
+                status="disabled",
+                current_action="repo-improvement discussion loop disabled",
+            )
             return
         interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INTERVAL_SEC", "90") or "90"))
         initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
         try:
+            _set_repo_improvement_loop_state(
+                "discussion",
+                enabled=True,
+                status="waiting",
+                current_action=f"waiting {initial_delay_sec}s before first discussion sync",
+                interval_sec=interval_sec,
+                initial_delay_sec=initial_delay_sec,
+            )
             time.sleep(initial_delay_sec)
             while True:
                 try:
                     if not _leader_write_allowed():
+                        _set_repo_improvement_loop_state(
+                            "discussion",
+                            enabled=True,
+                            status="sleeping",
+                            current_action=f"discussion loop waiting {interval_sec}s because this node is not leader",
+                            interval_sec=interval_sec,
+                        )
                         time.sleep(interval_sec)
                         continue
+                    _set_repo_improvement_loop_state(
+                        "discussion",
+                        enabled=True,
+                        status="running",
+                        current_action="running repo-improvement discussion sync",
+                        interval_sec=interval_sec,
+                        last_started_at=_utc_now_iso(),
+                    )
                     _ = _run_self_upgrade_discussion_sync(actor="control-plane.discussion-loop")
+                    _set_repo_improvement_loop_state(
+                        "discussion",
+                        enabled=True,
+                        status="sleeping",
+                        current_action=f"sleeping {interval_sec}s until next discussion sync",
+                        interval_sec=interval_sec,
+                        last_completed_at=_utc_now_iso(),
+                    )
                 except Exception as e:
+                    _set_repo_improvement_loop_state(
+                        "discussion",
+                        enabled=True,
+                        status="error",
+                        current_action=f"discussion loop failed: {str(e)[:160]}",
+                        interval_sec=interval_sec,
+                        last_error=str(e)[:300],
+                    )
                     try:
                         DB.add_event(
                             event_type="REPO_IMPROVEMENT_DISCUSSION_LOOP_FAILED",
@@ -1295,24 +1483,62 @@ def _startup_background_threads() -> None:
                         pass
                 time.sleep(interval_sec)
         except Exception:
-            pass
+            _set_repo_improvement_loop_state(
+                "discussion",
+                enabled=True,
+                status="stopped",
+                current_action="discussion loop stopped",
+                interval_sec=interval_sec,
+            )
 
     dlt = threading.Thread(target=_self_upgrade_discussion_loop, name="self-upgrade-discussion-loop", daemon=True)
     dlt.start()
 
     def _self_upgrade_delivery_loop() -> None:
         if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DELIVERY_AUTO", "1"):
+            _set_repo_improvement_loop_state(
+                "delivery",
+                enabled=False,
+                status="disabled",
+                current_action="repo-improvement delivery loop disabled",
+            )
             return
         interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INTERVAL_SEC", "180") or "180"))
         initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INITIAL_DELAY_SEC", "45") or "45"))
         max_tasks = max(1, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
         try:
+            _set_repo_improvement_loop_state(
+                "delivery",
+                enabled=True,
+                status="waiting",
+                current_action=f"waiting {initial_delay_sec}s before first delivery sweep",
+                interval_sec=interval_sec,
+                initial_delay_sec=initial_delay_sec,
+                max_tasks=max_tasks,
+            )
             time.sleep(initial_delay_sec)
             while True:
                 try:
                     if not _leader_write_allowed():
+                        _set_repo_improvement_loop_state(
+                            "delivery",
+                            enabled=True,
+                            status="sleeping",
+                            current_action=f"delivery loop waiting {interval_sec}s because this node is not leader",
+                            interval_sec=interval_sec,
+                            max_tasks=max_tasks,
+                        )
                         time.sleep(interval_sec)
                         continue
+                    _set_repo_improvement_loop_state(
+                        "delivery",
+                        enabled=True,
+                        status="running",
+                        current_action=f"running delivery sweeps (max_tasks={max_tasks})",
+                        interval_sec=interval_sec,
+                        max_tasks=max_tasks,
+                        last_started_at=_utc_now_iso(),
+                    )
                     for target in _enabled_improvement_targets(auto_mode="delivery"):
                         _ = _run_self_upgrade_delivery_iteration(
                             actor="control-plane.delivery-loop",
@@ -1322,7 +1548,25 @@ def _startup_background_threads() -> None:
                             force=False,
                             max_tasks=max_tasks,
                         )
+                    _set_repo_improvement_loop_state(
+                        "delivery",
+                        enabled=True,
+                        status="sleeping",
+                        current_action=f"sleeping {interval_sec}s until next delivery sweep",
+                        interval_sec=interval_sec,
+                        max_tasks=max_tasks,
+                        last_completed_at=_utc_now_iso(),
+                    )
                 except Exception as e:
+                    _set_repo_improvement_loop_state(
+                        "delivery",
+                        enabled=True,
+                        status="error",
+                        current_action=f"delivery loop failed: {str(e)[:160]}",
+                        interval_sec=interval_sec,
+                        max_tasks=max_tasks,
+                        last_error=str(e)[:300],
+                    )
                     try:
                         DB.add_event(
                             event_type="REPO_IMPROVEMENT_DELIVERY_LOOP_FAILED",
@@ -1335,7 +1579,14 @@ def _startup_background_threads() -> None:
                         pass
                 time.sleep(interval_sec)
         except Exception:
-            pass
+            _set_repo_improvement_loop_state(
+                "delivery",
+                enabled=True,
+                status="stopped",
+                current_action="delivery loop stopped",
+                interval_sec=interval_sec,
+                max_tasks=max_tasks,
+            )
 
     sdt = threading.Thread(target=_self_upgrade_delivery_loop, name="self-upgrade-delivery-loop", daemon=True)
     sdt.start()
@@ -1676,6 +1927,7 @@ def v1_status():
         "default_target_id": default_target_id,
         "last_run": repo_improvement_state.get("last_run") if isinstance(repo_improvement_state.get("last_run"), dict) else {},
         "backoff_until": str(repo_improvement_state.get("backoff_until") or ""),
+        "loops": _repo_improvement_loop_state_snapshot(),
         "proposal_counts": {
             "total": len(proposals),
             "pending": len(pending_proposals),
