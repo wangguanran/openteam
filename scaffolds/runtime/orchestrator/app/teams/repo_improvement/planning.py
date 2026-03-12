@@ -1250,6 +1250,10 @@ def _worktrees_root() -> Path:
     return (_runtime_root() / "workspace" / "worktrees").resolve()
 
 
+def _discovery_worktrees_root() -> Path:
+    return (_worktrees_root() / "discovery").resolve()
+
+
 def _worktree_hint_parts(raw_hint: str) -> list[str]:
     raw = str(raw_hint or "").strip()
     if not raw:
@@ -1272,6 +1276,120 @@ def _normalize_worktree_hint(*, repo_root: Path, lane: str, title: str, raw_hint
     if parts:
         return str((_worktrees_root().joinpath(*parts)).resolve())
     return str((_worktrees_root() / f"{_slug(repo_root.name)}-{_slug(lane)}-{_slug(title)[:24]}").resolve())
+
+
+def _git_ref_exists(repo_root: Path, ref: str) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--verify", f"{str(ref).strip()}^{{commit}}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _remove_tree_force(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _preferred_discovery_ref(*, source_repo_root: Path, target: dict[str, Any]) -> str:
+    default_branch = str(target.get("default_branch") or "").strip()
+    branch, head_ref = _head_ref(source_repo_root)
+    candidates: list[str] = []
+    for branch_name in (default_branch, branch):
+        name = str(branch_name or "").strip()
+        if not name:
+            continue
+        candidates.extend([f"origin/{name}", name])
+    if head_ref:
+        candidates.append(head_ref)
+    candidates.append("HEAD")
+    seen: set[str] = set()
+    for candidate in candidates:
+        ref = str(candidate or "").strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        if ref == "HEAD" or _git_ref_exists(source_repo_root, ref):
+            return ref
+    return "HEAD"
+
+
+def _prepare_discovery_repo(*, source_repo_root: Path, target: dict[str, Any]) -> Path:
+    source_repo_root = source_repo_root.resolve()
+    target_id = str(target.get("target_id") or source_repo_root.name or "target").strip()
+    scan_root = (_discovery_worktrees_root() / _slug(target_id, default="target")).resolve()
+    scan_root.parent.mkdir(parents=True, exist_ok=True)
+    ref = _preferred_discovery_ref(source_repo_root=source_repo_root, target=target)
+
+    def _recreate() -> None:
+        try:
+            subprocess.run(
+                ["git", "-C", str(source_repo_root), "worktree", "remove", "--force", str(scan_root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except Exception:
+            pass
+        _remove_tree_force(scan_root)
+        proc = subprocess.run(
+            ["git", "-C", str(source_repo_root), "worktree", "add", "--force", "--detach", str(scan_root), ref],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise SelfUpgradeError(f"failed to prepare discovery worktree: {detail or 'git worktree add failed'}")
+
+    if not scan_root.exists() or _git_dir(scan_root) is None:
+        _recreate()
+
+    checkout = subprocess.run(
+        ["git", "-C", str(scan_root), "checkout", "--detach", ref],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if checkout.returncode != 0:
+        _recreate()
+
+    for args in (
+        ["git", "-C", str(scan_root), "reset", "--hard", ref],
+        ["git", "-C", str(scan_root), "clean", "-fdx"],
+    ):
+        proc = subprocess.run(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise SelfUpgradeError(f"failed to sync discovery worktree: {detail or 'git reset/clean failed'}")
+    return scan_root
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1517,15 +1635,22 @@ def _resolve_target(*, target_id: str, repo_path: str, repo_url: str, repo_locat
     return improvement_store.materialize_target_repo(target)
 
 
-def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", target_id: str = "") -> dict[str, Any]:
+def collect_repo_context(
+    *,
+    repo_root: Path,
+    explicit_repo_locator: str = "",
+    target_id: str = "",
+    scan_repo_root: Optional[Path] = None,
+) -> dict[str, Any]:
     repo_root = repo_root.resolve()
+    scan_root = (scan_repo_root or repo_root).resolve()
     locator = str(explicit_repo_locator or "").strip()
-    origin = _origin_url(repo_root)
+    origin = _origin_url(repo_root) or _origin_url(scan_root)
     if not locator:
         locator = _parse_repo_locator(origin)
-    branch, head_ref = _head_ref(repo_root)
+    branch, head_ref = _head_ref(scan_root)
     head_commit = ""
-    gd = _git_dir(repo_root)
+    gd = _git_dir(scan_root)
     if gd is not None:
         if head_ref:
             ref_path = gd / head_ref
@@ -1536,7 +1661,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
     status_out = ""
     try:
         p = subprocess.run(
-            ["git", "-C", str(repo_root), "status", "--porcelain"],
+            ["git", "-C", str(scan_root), "status", "--porcelain"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1550,33 +1675,34 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
 
     readme = ""
     for name in ("README.md", "README", "readme.md"):
-        readme = _read_text(repo_root / name, max_chars=3000)
+        readme = _read_text(scan_root / name, max_chars=3000)
         if readme:
             break
 
     dep_files = []
     for rel in ("pyproject.toml", "requirements.txt", "package.json", "setup.py", "setup.cfg"):
-        if (repo_root / rel).exists():
+        if (scan_root / rel).exists():
             dep_files.append(rel)
 
-    workflow_files = _sample_files(repo_root, ".github/workflows/*", limit=20)
-    test_files = _sample_files(repo_root, "tests/test_*.py", limit=25)
+    workflow_files = _sample_files(scan_root, ".github/workflows/*", limit=20)
+    test_files = _sample_files(scan_root, "tests/test_*.py", limit=25)
     if not test_files:
-        test_files = _sample_files(repo_root, "test_*.py", limit=25)
+        test_files = _sample_files(scan_root, "test_*.py", limit=25)
 
     top_level = []
     try:
-        for child in sorted(repo_root.iterdir()):
+        for child in sorted(scan_root.iterdir()):
             top_level.append(child.name + ("/" if child.is_dir() else ""))
             if len(top_level) >= 40:
                 break
     except Exception:
         pass
-    source_inventory = _source_inventory(repo_root)
-    repository_inspection = _repository_inspection(repo_root)
+    source_inventory = _source_inventory(scan_root)
+    repository_inspection = _repository_inspection(scan_root)
 
     return {
         "repo_root": str(repo_root),
+        "scan_repo_root": str(scan_root),
         "repo_name": repo_root.name,
         "repo_locator": locator,
         "origin_url": origin,
@@ -1590,7 +1716,7 @@ def collect_repo_context(*, repo_root: Path, explicit_repo_locator: str = "", ta
         "test_files": test_files,
         "has_github_actions": bool(workflow_files),
         "readme_excerpt": readme,
-        "current_version": _read_current_version(repo_root),
+        "current_version": _read_current_version(scan_root),
         "recent_execution_metrics": _recent_execution_metrics(target_id=str(target_id or "").strip(), limit=8),
         "repository_inspection": repository_inspection,
         **source_inventory,
@@ -4787,7 +4913,13 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     )
     target_id = str(target.get("target_id") or "").strip() or "teamos"
     repo_root = Path(str(target.get("repo_root") or team_os_root())).expanduser().resolve()
-    repo_context = collect_repo_context(repo_root=repo_root, explicit_repo_locator=str(target.get("repo_locator") or ""), target_id=target_id)
+    scan_repo_root = _prepare_discovery_repo(source_repo_root=repo_root, target=target)
+    repo_context = collect_repo_context(
+        repo_root=repo_root,
+        scan_repo_root=scan_repo_root,
+        explicit_repo_locator=str(target.get("repo_locator") or ""),
+        target_id=target_id,
+    )
     repo_locator = str(repo_context.get("repo_locator") or target.get("repo_locator") or "").strip()
     workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
     force = bool(getattr(spec, "force", False))
@@ -4805,6 +4937,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "run_id": run_id,
             "target_id": target_id,
             "repo_root": str(repo_root),
+            "scan_repo_root": str(scan_repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "trigger": trigger,
@@ -4839,6 +4972,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "run_id": run_id,
             "target_id": target_id,
             "repo_root": str(repo_root),
+            "scan_repo_root": str(scan_repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "trigger": trigger,
@@ -4873,6 +5007,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "run_id": run_id,
             "target_id": target_id,
             "repo_root": str(repo_root),
+            "scan_repo_root": str(scan_repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "trigger": trigger,

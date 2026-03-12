@@ -159,6 +159,43 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertGreaterEqual(int(first_chunk.get("included_file_count") or 0), 1)
             self.assertTrue(isinstance(first_chunk.get("files"), list))
 
+    def test_collect_repo_context_uses_isolated_discovery_worktree(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "runtime"
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            (repo / "README.md").write_text("# Clean\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            (repo / "README.md").write_text("# Dirty\n", encoding="utf-8")
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False):
+                scan_repo = crewai_self_upgrade._prepare_discovery_repo(
+                    source_repo_root=repo,
+                    target={"target_id": "demo-target", "default_branch": "master"},
+                )
+                self.assertNotEqual(scan_repo, repo)
+                self.assertEqual((scan_repo / "README.md").read_text(encoding="utf-8"), "# Clean\n")
+                ctx = crewai_self_upgrade.collect_repo_context(
+                    repo_root=repo,
+                    scan_repo_root=scan_repo,
+                    explicit_repo_locator="foo/bar",
+                    target_id="demo-target",
+                )
+
+            self.assertEqual(ctx["repo_root"], str(repo.resolve()))
+            self.assertEqual(ctx["scan_repo_root"], str(scan_repo.resolve()))
+            self.assertIn("# Clean", str(ctx.get("readme_excerpt") or ""))
+            self.assertNotIn("# Dirty", str(ctx.get("readme_excerpt") or ""))
+
     def test_kickoff_upgrade_plan_uses_structured_fast_path_for_bug_only(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
