@@ -148,6 +148,47 @@ class TeamosReplTests(unittest.TestCase):
         self.assertIn("0 bug findings", out)
         self.assertIn("/tmp/repo-improvement/run-123.md", out)
 
+    def test_repo_improvement_watch_prints_sse_stream(self) -> None:
+        class _FakeStream:
+            def __init__(self, chunks: bytes) -> None:
+                self._buf = io.BytesIO(chunks)
+
+            def readline(self) -> bytes:
+                return self._buf.readline()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        sse = b"".join(
+            [
+                b"event: run\n",
+                b'data: {"run":{"run_id":"run-123","state":"RUNNING","project_id":"projectmanager","objective":"watch me"}}\n\n',
+                b"event: agent\n",
+                b'data: {"role_id":"Bug-TestCase-Agent","state":"RUNNING","task_id":"PROJECTMANAGER-0001","current_action":"bootstrapping failing bug test case"}\n\n',
+                b"event: runtime_event\n",
+                b'data: {"ts":"2026-03-12T08:21:15Z","event_type":"REPO_IMPROVEMENT_PLANNING_TASK_OUTPUT","actor":"repo_improvement_api","payload":{"agent":"Test-Manager","task_name":"qa_bug_scan_src-ai-llm","raw":"found one bug"}}\n\n',
+                b"event: end\n",
+                b'data: {"run":{"run_id":"run-123","state":"DONE"}}\n\n',
+            ]
+        )
+
+        args = argparse.Namespace(profile=None, project_id="projectmanager", run_id="", timeout=30, json=False)
+        stdout = io.StringIO()
+        with mock.patch.object(self.teamos, "_base_url", return_value=("http://cp.local", {"name": "local"})), mock.patch.object(
+            self.teamos, "_resolve_repo_improvement_watch_run_id", return_value="run-123"
+        ), mock.patch.object(self.teamos.urllib.request, "urlopen", return_value=_FakeStream(sse)), contextlib.redirect_stdout(stdout):
+            self.teamos.cmd_repo_improvement_watch(args)
+
+        out = stdout.getvalue()
+        self.assertIn("[run] run_id=run-123 state=RUNNING project_id=projectmanager", out)
+        self.assertIn("[agent] Bug-TestCase-Agent state=RUNNING task=PROJECTMANAGER-0001", out)
+        self.assertIn("[planning] Test-Manager :: qa_bug_scan_src-ai-llm", out)
+        self.assertIn("found one bug", out)
+        self.assertIn("[end] run_id=run-123 state=DONE", out)
+
 
 if __name__ == "__main__":
     unittest.main()

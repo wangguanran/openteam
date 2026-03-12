@@ -595,6 +595,80 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertTrue(reports)
             self.assertEqual(str(reports[0].get("run_id") or ""), "run-projectmanager")
 
+    def test_run_self_upgrade_emits_planning_task_output_events(self):
+        db = _FakeDB()
+        empty_plan = crewai_self_upgrade.UpgradePlan(summary="planned", findings=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "team-os-runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir()
+            (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+            spec = SimpleNamespace(
+                project_id="projectmanager",
+                workstream_id="general",
+                repo_path=str(repo),
+                repo_locator="wangguanran/ProjectManager",
+                force=True,
+                dry_run=True,
+                trigger="test",
+                task_id="",
+            )
+
+            def _fake_kickoff(*, progress_callback=None, **kwargs):
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "summary": "partial",
+                            "findings": [],
+                            "ci_actions": [],
+                            "notes": [],
+                            "module": "Src-Ai-Llm",
+                            "crew_debug": {
+                                "task_outputs": [
+                                    {
+                                        "name": "qa_bug_scan_src-ai-llm",
+                                        "agent": crewai_self_upgrade.ROLE_TEST_MANAGER,
+                                        "raw": "found one bug candidate",
+                                    }
+                                ]
+                            },
+                        }
+                    )
+                return empty_plan, {"task_outputs": []}
+
+            with mock.patch.dict(os.environ, {"TEAMOS_RUNTIME_ROOT": str(runtime_root)}, clear=False), mock.patch(
+                "app.crewai_self_upgrade.collect_repo_context",
+                return_value={
+                    **self._repo_context(repo, head_commit="abc123"),
+                    "repo_locator": "wangguanran/ProjectManager",
+                },
+            ), mock.patch(
+                "app.crewai_self_upgrade.kickoff_upgrade_plan",
+                side_effect=_fake_kickoff,
+            ), mock.patch(
+                "app.crewai_self_upgrade.GitHubProjectsPanelSync.sync",
+                return_value={"ok": False, "dry_run": True, "error": "not configured"},
+            ):
+                out = crewai_self_upgrade.run_self_upgrade(
+                    db=db,
+                    spec=spec,
+                    actor="test",
+                    run_id="run-watch",
+                    crewai_info={"importable": True},
+                )
+
+            self.assertTrue(out["ok"])
+            task_output_events = [e for e in db.events if e.get("event_type") == "REPO_IMPROVEMENT_PLANNING_TASK_OUTPUT"]
+            self.assertEqual(len(task_output_events), 1)
+            payload = task_output_events[0]["payload"]
+            self.assertEqual(payload["run_id"], "run-watch")
+            self.assertEqual(payload["agent"], crewai_self_upgrade.ROLE_TEST_MANAGER)
+            self.assertEqual(payload["task_name"], "qa_bug_scan_src-ai-llm")
+            self.assertIn("found one bug candidate", payload["raw"])
+
     def test_decide_proposal_updates_version_metadata(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"

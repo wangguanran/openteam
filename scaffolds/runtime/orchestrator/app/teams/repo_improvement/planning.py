@@ -4888,6 +4888,7 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "crew_debug": {"task_outputs": []},
     }
     seen_bug_modules: set[str] = set()
+    emitted_task_output_count = 0
 
     def _persist_running_report(*, state: str, error: str = "") -> None:
         report = {
@@ -4924,12 +4925,46 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             pass
 
     def _persist_planning_progress(update: dict[str, Any]) -> None:
+        nonlocal emitted_task_output_count
         partial_progress["summary"] = str(update.get("summary") or partial_progress.get("summary") or "").strip()
         partial_progress["findings"] = list(update.get("findings") or partial_progress.get("findings") or [])
         partial_progress["ci_actions"] = list(update.get("ci_actions") or partial_progress.get("ci_actions") or [])
         partial_progress["notes"] = list(update.get("notes") or partial_progress.get("notes") or [])
         partial_progress["planned_version"] = str(update.get("planned_version") or partial_progress.get("planned_version") or "").strip()
         partial_progress["crew_debug"] = dict(update.get("crew_debug") or partial_progress.get("crew_debug") or {"task_outputs": []})
+        current_outputs = list((partial_progress.get("crew_debug") or {}).get("task_outputs") or [])
+        while emitted_task_output_count < len(current_outputs):
+            item = current_outputs[emitted_task_output_count]
+            emitted_task_output_count += 1
+            if not isinstance(item, dict):
+                continue
+            task_name = str(item.get("name") or "").strip()
+            role_id = str(item.get("agent") or "").strip()
+            raw = str(item.get("raw") or "")
+            if role_id and role_id in agent_ids:
+                try:
+                    db.update_assignment(
+                        agent_id=agent_ids[role_id],
+                        state="RUNNING",
+                        current_action=(f"completed {task_name}" if task_name else "completed planning task"),
+                    )
+                except Exception:
+                    pass
+            db.add_event(
+                event_type="REPO_IMPROVEMENT_PLANNING_TASK_OUTPUT",
+                actor=actor,
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload={
+                    "run_id": run_id,
+                    "target_id": target_id,
+                    "task_name": task_name,
+                    "agent": role_id,
+                    "raw": raw[:8000],
+                    "summary": str(item.get("summary") or "")[:500],
+                    "index": emitted_task_output_count,
+                },
+            )
         module = str(update.get("module") or "").strip()
         if module and module not in seen_bug_modules:
             seen_bug_modules.add(module)

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -27,7 +28,7 @@ from .requirements_store import (
     verify_requirements_raw_first,
     propose_baseline_v2,
 )
-from .runtime_db import RuntimeDB
+from .runtime_db import RunRow, RuntimeDB
 from . import cluster_manager
 from . import crewai_orchestrator
 from . import crewai_self_upgrade
@@ -128,6 +129,116 @@ def _task_id_from_run_id(run_id: str) -> str:
         if sep in tail:
             return tail.split(sep, 1)[0].strip()
     return tail
+
+
+def _task_id_from_run_objective(objective: Any) -> str:
+    text = str(objective or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"\btask\s+([A-Za-z0-9._:-]+)\b", text, re.IGNORECASE)
+    if not match:
+        return ""
+    return str(match.group(1) or "").strip()
+
+
+def _repo_improvement_task_id_for_run(run: RunRow | dict[str, Any]) -> str:
+    run_id = str((run.run_id if isinstance(run, RunRow) else run.get("run_id")) or "").strip()
+    task_id = _task_id_from_run_id(run_id)
+    if task_id:
+        return task_id
+    objective = run.objective if isinstance(run, RunRow) else run.get("objective")
+    return _task_id_from_run_objective(objective)
+
+
+def _serialize_agent_row(agent: Any) -> dict[str, Any]:
+    return {
+        "agent_id": str(getattr(agent, "agent_id", "") or ""),
+        "role_id": str(getattr(agent, "role_id", "") or ""),
+        "project_id": str(getattr(agent, "project_id", "") or ""),
+        "workstream_id": str(getattr(agent, "workstream_id", "") or ""),
+        "task_id": str(getattr(agent, "task_id", "") or ""),
+        "state": str(getattr(agent, "state", "") or ""),
+        "started_at": str(getattr(agent, "started_at", "") or ""),
+        "last_heartbeat": str(getattr(agent, "last_heartbeat", "") or ""),
+        "current_action": str(getattr(agent, "current_action", "") or ""),
+    }
+
+
+def _repo_improvement_agents_for_run(run: RunRow) -> list[dict[str, Any]]:
+    task_id = _repo_improvement_task_id_for_run(run)
+    rows = DB.list_agents(project_id=str(run.project_id or ""), workstream_id=str(run.workstream_id or ""))
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if task_id:
+            if str(row.task_id or "").strip() != task_id:
+                continue
+        else:
+            if str(row.task_id or "").strip():
+                continue
+            if str(row.started_at or "").strip() < str(run.started_at or "").strip():
+                continue
+        out.append(_serialize_agent_row(row))
+    out.sort(key=lambda item: (str(item.get("started_at") or ""), str(item.get("role_id") or ""), str(item.get("agent_id") or "")))
+    return out
+
+
+def _repo_improvement_event_matches_run(event: Any, *, run: RunRow, task_id: str) -> bool:
+    if str(getattr(event, "project_id", "") or "") != str(run.project_id or ""):
+        return False
+    if str(getattr(event, "workstream_id", "") or "") != str(run.workstream_id or ""):
+        return False
+    payload = getattr(event, "payload", {}) if isinstance(getattr(event, "payload", {}), dict) else {}
+    if str(payload.get("run_id") or "").strip() == str(run.run_id or "").strip():
+        return True
+    if task_id and str(payload.get("task_id") or "").strip() == task_id:
+        return True
+    return False
+
+
+def _repo_improvement_events_since(*, run: RunRow, after_id: int, limit: int = 200) -> tuple[list[dict[str, Any]], int]:
+    task_id = _repo_improvement_task_id_for_run(run)
+    rows: list[dict[str, Any]] = []
+    cursor = max(0, int(after_id or 0))
+    latest_seen = cursor
+    max_rows = max(1, min(int(limit or 200), 1000))
+    while len(rows) < max_rows:
+        batch = DB.list_events(after_id=cursor, limit=1000)
+        if not batch:
+            break
+        for item in batch:
+            latest_seen = max(latest_seen, int(getattr(item, "id", 0) or 0))
+            cursor = latest_seen
+            if not _repo_improvement_event_matches_run(item, run=run, task_id=task_id):
+                continue
+            rows.append(
+                {
+                    "id": int(getattr(item, "id", 0) or 0),
+                    "ts": str(getattr(item, "ts", "") or ""),
+                    "event_type": str(getattr(item, "event_type", "") or ""),
+                    "actor": str(getattr(item, "actor", "") or ""),
+                    "project_id": str(getattr(item, "project_id", "") or ""),
+                    "workstream_id": str(getattr(item, "workstream_id", "") or ""),
+                    "payload": dict(getattr(item, "payload", {}) or {}),
+                }
+            )
+            if len(rows) >= max_rows:
+                break
+        if len(batch) < 1000:
+            break
+    return rows[-max_rows:], latest_seen
+
+
+def _sse_chunk(*, event: str, data: dict[str, Any], event_id: Optional[int] = None) -> bytes:
+    lines: list[str] = []
+    if event_id is not None:
+        lines.append(f"id: {int(event_id)}")
+    if event:
+        lines.append(f"event: {event}")
+    encoded = json.dumps(data, ensure_ascii=False)
+    for line in encoded.splitlines() or ["{}"]:
+        lines.append(f"data: {line}")
+    lines.append("")
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def _task_run_sync_summary(*, tasks: list[dict[str, Any]], runs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1662,6 +1773,83 @@ def _repo_improvement_run_logs_payload(run_id: str, *, limit: int = 200) -> dict
 @app.get("/v1/runs/{run_id}/logs")
 def v1_run_logs(run_id: str, limit: int = Query(default=200, ge=1, le=1000)):
     return _repo_improvement_run_logs_payload(run_id, limit=limit)
+
+
+@app.get("/v1/repo_improvement/runs/{run_id}/stream")
+@app.get("/v1/runs/{run_id}/stream")
+def v1_run_stream(
+    run_id: str,
+    after_id: int = Query(default=0, ge=0),
+    event_limit: int = Query(default=200, ge=1, le=1000),
+    poll_sec: float = Query(default=1.0, ge=0.2, le=10.0),
+):
+    row = DB.get_run(run_id)
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found", "run_id": run_id})
+
+    async def gen():
+        import asyncio
+
+        current_run = row
+        task_id = _repo_improvement_task_id_for_run(current_run)
+        last_event_id = max(0, int(after_id or 0))
+        last_run_state = str(current_run.state or "").strip().upper()
+        yield _sse_chunk(
+            event="run",
+            data={"run": current_run.__dict__, "task_id": task_id},
+        )
+        backlog, last_event_id = _repo_improvement_events_since(run=current_run, after_id=last_event_id, limit=event_limit)
+        for item in backlog:
+            yield _sse_chunk(event="runtime_event", data=item, event_id=int(item.get("id") or 0))
+        agent_snapshots = _repo_improvement_agents_for_run(current_run)
+        last_agent_signatures = {
+            str(item.get("agent_id") or ""): (
+                str(item.get("state") or ""),
+                str(item.get("current_action") or ""),
+                str(item.get("last_heartbeat") or ""),
+            )
+            for item in agent_snapshots
+        }
+        for item in agent_snapshots:
+            yield _sse_chunk(event="agent", data=item)
+
+        while True:
+            current_run = DB.get_run(run_id)
+            if not current_run:
+                yield _sse_chunk(event="end", data={"run_id": run_id, "state": "MISSING"})
+                break
+            current_state = str(current_run.state or "").strip().upper()
+            if current_state != last_run_state:
+                task_id = _repo_improvement_task_id_for_run(current_run)
+                yield _sse_chunk(event="run", data={"run": current_run.__dict__, "task_id": task_id})
+                last_run_state = current_state
+
+            events, last_event_id = _repo_improvement_events_since(run=current_run, after_id=last_event_id, limit=event_limit)
+            for item in events:
+                yield _sse_chunk(event="runtime_event", data=item, event_id=int(item.get("id") or 0))
+
+            current_agents = _repo_improvement_agents_for_run(current_run)
+            current_signatures = {}
+            for item in current_agents:
+                agent_id = str(item.get("agent_id") or "")
+                signature = (
+                    str(item.get("state") or ""),
+                    str(item.get("current_action") or ""),
+                    str(item.get("last_heartbeat") or ""),
+                )
+                current_signatures[agent_id] = signature
+                if last_agent_signatures.get(agent_id) != signature:
+                    yield _sse_chunk(event="agent", data=item)
+            last_agent_signatures = current_signatures
+
+            if current_state not in _RUN_STATE_ACTIVE:
+                yield _sse_chunk(event="end", data={"run": current_run.__dict__, "task_id": _repo_improvement_task_id_for_run(current_run)})
+                break
+
+            yield b": keep-alive\n\n"
+            await asyncio.sleep(float(poll_sec))
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/v1/runs/start")
