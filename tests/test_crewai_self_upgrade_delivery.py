@@ -159,6 +159,57 @@ extra trailing commentary that should be ignored
         self.assertEqual(out.summary, "bootstrapped")
         self.assertEqual(out.changed_files, ["tests/test_demo.py"])
 
+    def test_close_issue_if_possible_posts_bug_close_reason_comment(self):
+        task_doc = _base_task_doc(repo_root=Path(tempfile.mkdtemp()))
+        with mock.patch(
+            "app.crewai_self_upgrade_delivery.create_issue_comment",
+            return_value=mock.Mock(url="https://github.com/foo/bar/issues/101#issuecomment-1"),
+        ) as comment_mock, mock.patch(
+            "app.crewai_self_upgrade_delivery.update_issue",
+            return_value=mock.Mock(url="https://github.com/foo/bar/issues/101"),
+        ) as update_mock:
+            issue_url = crewai_self_upgrade_delivery._close_issue_if_possible(
+                task_doc,
+                close_reason="bug_not_reproducible",
+                summary="Issue Audit Agent confirmed the bug no longer reproduces.",
+                feedback=["Reproduction command now passes on the current head."],
+            )
+
+        self.assertEqual(issue_url, "https://github.com/foo/bar/issues/101")
+        comment_body = comment_mock.call_args.kwargs["body"]
+        self.assertIn("Reason: `bug_not_reproducible`", comment_body)
+        self.assertIn("Issue Audit Agent confirmed the bug no longer reproduces.", comment_body)
+        self.assertIn("Reproduction command now passes on the current head.", comment_body)
+        update_mock.assert_called_once_with("foo/bar", 101, state="closed")
+
+    def test_close_issue_if_possible_posts_release_reason_comment(self):
+        task_doc = _base_task_doc(repo_root=Path(tempfile.mkdtemp()))
+        with mock.patch(
+            "app.crewai_self_upgrade_delivery.create_issue_comment",
+            return_value=mock.Mock(url="https://github.com/foo/bar/issues/101#issuecomment-1"),
+        ) as comment_mock, mock.patch(
+            "app.crewai_self_upgrade_delivery.update_issue",
+            return_value=mock.Mock(url="https://github.com/foo/bar/issues/101"),
+        ) as update_mock:
+            issue_url = crewai_self_upgrade_delivery._close_issue_if_possible(
+                task_doc,
+                close_reason="completed_and_released",
+                summary="Validated fix released and issue can be closed.",
+                release_result={
+                    "branch": "codex/repo-improvement/demo",
+                    "commit_sha": "abc123",
+                    "pull_request_url": "https://github.com/foo/bar/pull/7",
+                    "issue_url": "https://github.com/foo/bar/issues/101",
+                },
+            )
+
+        self.assertEqual(issue_url, "https://github.com/foo/bar/issues/101")
+        comment_body = comment_mock.call_args.kwargs["body"]
+        self.assertIn("Reason: `completed_and_released`", comment_body)
+        self.assertIn("Commit: `abc123`", comment_body)
+        self.assertIn("PR: https://github.com/foo/bar/pull/7", comment_body)
+        update_mock.assert_called_once_with("foo/bar", 101, state="closed")
+
     def test_list_delivery_tasks_only_returns_self_upgrade_ledgers(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "team-os-runtime"

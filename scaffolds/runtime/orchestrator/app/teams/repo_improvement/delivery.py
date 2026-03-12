@@ -32,7 +32,7 @@ from app.crewai_task_models import (
     DeliveryQAResult,
     DeliveryReviewResult,
 )
-from app.github_issues_bus import GitHubAuthError, GitHubIssuesBusError, get_issue, update_issue
+from app.github_issues_bus import GitHubAuthError, GitHubIssuesBusError, create_issue_comment, get_issue, update_issue
 from app.state_store import ensure_instance_id
 
 
@@ -1033,7 +1033,57 @@ def _safe_test_command(command: str, *, allowlist: list[str]) -> bool:
     return any(cmd.startswith(prefix) for prefix in _SAFE_TEST_PREFIXES)
 
 
-def _close_issue_if_possible(doc: dict[str, Any]) -> str:
+def _issue_close_comment_body(
+    doc: dict[str, Any],
+    *,
+    close_reason: str = "",
+    summary: str = "",
+    feedback: Optional[list[str]] = None,
+    release_result: Optional[dict[str, Any]] = None,
+) -> str:
+    task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
+    reason = str(close_reason or "").strip() or "completed_and_released"
+    lines = [
+        "Team OS is closing this repo-improvement issue.",
+        "",
+        f"Task: {task_id or '(unknown)'}",
+        f"Reason: `{reason}`",
+    ]
+    summary_text = str(summary or "").strip()
+    if summary_text:
+        lines.extend(["", "Summary:", f"- {summary_text}"])
+    cleaned_feedback = [str(x).strip() for x in (feedback or []) if str(x).strip()]
+    if cleaned_feedback:
+        lines.extend(["", "Details:"])
+        lines.extend(f"- {item}" for item in cleaned_feedback[:10])
+    if release_result:
+        branch = str(release_result.get("branch") or "").strip()
+        commit_sha = str(release_result.get("commit_sha") or "").strip()
+        pull_request_url = str(release_result.get("pull_request_url") or "").strip()
+        issue_url = str(release_result.get("issue_url") or "").strip()
+        release_lines = []
+        if branch:
+            release_lines.append(f"- Branch: `{branch}`")
+        if commit_sha:
+            release_lines.append(f"- Commit: `{commit_sha}`")
+        if pull_request_url:
+            release_lines.append(f"- PR: {pull_request_url}")
+        if issue_url:
+            release_lines.append(f"- Issue: {issue_url}")
+        if release_lines:
+            lines.extend(["", "Release:"])
+            lines.extend(release_lines)
+    return "\n".join(lines).strip() + "\n"
+
+
+def _close_issue_if_possible(
+    doc: dict[str, Any],
+    *,
+    close_reason: str = "",
+    summary: str = "",
+    feedback: Optional[list[str]] = None,
+    release_result: Optional[dict[str, Any]] = None,
+) -> str:
     issue_url = _issue_url(doc)
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
@@ -1048,6 +1098,20 @@ def _close_issue_if_possible(doc: dict[str, Any]) -> str:
         issue_number = int(m.group(1))
     except Exception:
         return ""
+    try:
+        create_issue_comment(
+            repo_locator,
+            issue_number,
+            body=_issue_close_comment_body(
+                doc,
+                close_reason=close_reason,
+                summary=summary,
+                feedback=feedback,
+                release_result=release_result,
+            ),
+        )
+    except (GitHubAuthError, GitHubIssuesBusError):
+        return issue_url
     try:
         issue = update_issue(repo_locator, issue_number, state="closed")
         return str(issue.url or issue_url)
@@ -1955,7 +2019,17 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
             pr_out = _run(["gh", "pr", "create", "--title", commit_message, "--body", body, "--base", base_branch, "--head", branch_name], cwd=worktree_root, timeout_sec=120)
             if int(pr_out.get("returncode", 1)) == 0:
                 pr_url = str(pr_out.get("stdout") or "").strip().splitlines()[-1].strip() if str(pr_out.get("stdout") or "").strip() else ""
-    closed_issue_url = _close_issue_if_possible(task_doc)
+    closed_issue_url = _close_issue_if_possible(
+        task_doc,
+        close_reason="completed_and_released",
+        summary="Validated fix released and issue can be closed.",
+        release_result={
+            "branch": branch_name,
+            "commit_sha": commit_sha,
+            "pull_request_url": pr_url,
+            "issue_url": issue_url,
+        },
+    )
     return {
         "branch": branch_name,
         "base_branch": base_branch,
@@ -2084,12 +2158,19 @@ def _close_bug_task(
         task_doc=doc,
         payload={"task_id": task_id, "reason": close_reason, "feedback": feedback, "summary": summary},
     )
+    closed_issue_url = _close_issue_if_possible(
+        doc,
+        close_reason=close_reason,
+        summary=summary,
+        feedback=feedback,
+    )
     return {
         "ok": True,
         "task_id": task_id,
         "status": "closed",
         "reason": close_reason,
         "feedback": feedback,
+        "issue_url": closed_issue_url or _issue_url(doc),
         "worktree": str(_worktree_repo_root(doc) or _source_repo_root(doc)),
         "project_id": project_id,
     }
