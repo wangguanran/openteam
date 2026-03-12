@@ -652,6 +652,20 @@ def _validation_evidence_payload(doc: dict[str, Any]) -> dict[str, list[dict[str
     return {stage: items for stage, items in evidence.items() if items}
 
 
+def _has_post_fix_candidate_changes(doc: dict[str, Any], *, worktree_root: Path) -> bool:
+    evidence = _validation_evidence(doc)
+    if (evidence.get("coding") or []) or (evidence.get("qa") or []):
+        return True
+    execution = _execution_state(doc)
+    if int(execution.get("attempt_count") or 0) <= 0:
+        return False
+    changed = _changed_files(worktree_root)
+    if not changed:
+        return False
+    code_paths = _allowed_paths(doc)
+    return bool(code_paths and any(_is_allowed_path(path, code_paths) for path in changed))
+
+
 def _clear_validation_evidence(doc: dict[str, Any]) -> dict[str, Any]:
     execution = _execution_state(doc)
     execution["validation_evidence"] = {}
@@ -2128,6 +2142,7 @@ def execute_task_delivery(
         doc, worktree_root, _ = _ensure_task_worktree(ledger_path, doc)
         agent_ids = _register_delivery_agents(db=db, task_doc=doc)
         prior_status = status
+        resume_with_existing_fix = False
         _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
         _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
         _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
@@ -2377,59 +2392,103 @@ def execute_task_delivery(
             doc["self_upgrade_audit"] = audit_doc
             _write_yaml(ledger_path, doc)
             if not bug_repro_result.approved:
-                return _close_bug_task(
-                    db=db,
-                    agent_ids=agent_ids,
-                    ledger_path=ledger_path,
-                    doc=doc,
-                    logs_dir=logs_dir,
+                if _has_post_fix_candidate_changes(doc, worktree_root=worktree_root):
+                    resume_with_existing_fix = True
+                    doc = _update_task_state(
+                        ledger_path,
+                        doc,
+                        status="doing",
+                        stage="coding",
+                        owner_role=owner_role,
+                        extra_execution={
+                            "active_role": "Scheduler-Agent",
+                            "last_error": "",
+                            "last_feedback": [str(x).strip() for x in (bug_repro_result.feedback or []) if str(x).strip()],
+                        },
+                    )
+                    _set_agent_state(db, agent_ids, planning.ROLE_BUG_REPRO_AGENT, state="DONE", action="bug no longer reproduces against current fix")
+                    _append_markdown(
+                        logs_dir,
+                        "02_plan.md",
+                        "Bug Reproduction Cleared After Fix",
+                        [
+                            bug_repro_result.summary or "Current worktree no longer reproduces the bug; continuing with review and release gates.",
+                            *[f"feedback: {x}" for x in bug_repro_result.feedback],
+                            *_validation_evidence_lines(list(bug_repro_result.reproduction_evidence or [])),
+                        ],
+                    )
+                    _append_metric(
+                        logs_dir,
+                        event_type="REPO_IMPROVEMENT_BUG_REPRO_CLEARED_AFTER_FIX",
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        message="bug no longer reproduces against current worktree; continuing to release gates",
+                        payload=bug_repro_result.model_dump(),
+                    )
+                    _emit_event(
+                        db,
+                        event_type="REPO_IMPROVEMENT_TASK_BUG_REPRO_CLEARED_AFTER_FIX",
+                        actor=actor,
+                        task_doc=doc,
+                        payload={"task_id": task_id, **bug_repro_result.model_dump()},
+                    )
+                else:
+                    return _close_bug_task(
+                        db=db,
+                        agent_ids=agent_ids,
+                        ledger_path=ledger_path,
+                        doc=doc,
+                        logs_dir=logs_dir,
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        owner_role=owner_role,
+                        active_role=planning.ROLE_BUG_REPRO_AGENT,
+                        close_reason="bug_not_reproducible",
+                        summary=bug_repro_result.summary or "Bug-Repro-Agent 未能证明 bug 仍然存在，任务关闭。",
+                        feedback=bug_repro_result.feedback,
+                        evidence=list(bug_repro_result.reproduction_evidence or []),
+                    )
+            else:
+                doc = _update_task_state(
+                    ledger_path,
+                    doc,
+                    status="doing",
+                    stage="bug_repro",
+                    owner_role=owner_role,
+                    extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
+                )
+                _set_agent_state(db, agent_ids, planning.ROLE_BUG_REPRO_AGENT, state="DONE", action="confirmed bug is reproducible")
+                _append_markdown(
+                    logs_dir,
+                    "02_plan.md",
+                    "Bug Reproduction",
+                    [
+                        bug_repro_result.summary or "Bug-Repro-Agent 已确认 bug 当前可复现。",
+                        *[f"feedback: {x}" for x in bug_repro_result.feedback],
+                        *_validation_evidence_lines(list(bug_repro_result.reproduction_evidence or [])),
+                    ],
+                )
+                _append_metric(
+                    logs_dir,
+                    event_type="REPO_IMPROVEMENT_BUG_REPRO_CONFIRMED",
                     actor=actor,
                     task_id=task_id,
                     project_id=project_id,
                     workstream_id=workstream_id,
-                    owner_role=owner_role,
-                    active_role=planning.ROLE_BUG_REPRO_AGENT,
-                    close_reason="bug_not_reproducible",
-                    summary=bug_repro_result.summary or "Bug-Repro-Agent 未能证明 bug 仍然存在，任务关闭。",
-                    feedback=bug_repro_result.feedback,
-                    evidence=list(bug_repro_result.reproduction_evidence or []),
+                    message="bug reproduction confirmed before coding",
+                    payload=bug_repro_result.model_dump(),
                 )
-            doc = _update_task_state(
-                ledger_path,
-                doc,
-                status="doing",
-                stage="bug_repro",
-                owner_role=owner_role,
-                extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
-            )
-            _set_agent_state(db, agent_ids, planning.ROLE_BUG_REPRO_AGENT, state="DONE", action="confirmed bug is reproducible")
-            _append_markdown(
-                logs_dir,
-                "02_plan.md",
-                "Bug Reproduction",
-                [
-                    bug_repro_result.summary or "Bug-Repro-Agent 已确认 bug 当前可复现。",
-                    *[f"feedback: {x}" for x in bug_repro_result.feedback],
-                    *_validation_evidence_lines(list(bug_repro_result.reproduction_evidence or [])),
-                ],
-            )
-            _append_metric(
-                logs_dir,
-                event_type="REPO_IMPROVEMENT_BUG_REPRO_CONFIRMED",
-                actor=actor,
-                task_id=task_id,
-                project_id=project_id,
-                workstream_id=workstream_id,
-                message="bug reproduction confirmed before coding",
-                payload=bug_repro_result.model_dump(),
-            )
-            _emit_event(
-                db,
-                event_type="REPO_IMPROVEMENT_TASK_BUG_REPRO_CONFIRMED",
-                actor=actor,
-                task_doc=doc,
-                payload={"task_id": task_id, **bug_repro_result.model_dump()},
-            )
+                _emit_event(
+                    db,
+                    event_type="REPO_IMPROVEMENT_TASK_BUG_REPRO_CONFIRMED",
+                    actor=actor,
+                    task_doc=doc,
+                    payload={"task_id": task_id, **bug_repro_result.model_dump()},
+                )
 
         _update_task_state(
             ledger_path,
@@ -2473,8 +2532,10 @@ def execute_task_delivery(
         last_review = DeliveryReviewResult(approved=False, code_approved=False, docs_approved=not bool(_documentation_policy(doc).get("required")))
         last_qa = DeliveryQAResult(approved=False)
         last_docs = DeliveryDocumentationResult(approved=not bool(_documentation_policy(doc).get("required")), updated=False, summary="")
-        attempt = 0
-        needs_coding = True
+        attempt = max(0, int((_execution_state(doc).get("attempt_count") or 0)))
+        needs_coding = not resume_with_existing_fix
+        if resume_with_existing_fix and attempt <= 0:
+            attempt = 1
         docs_retry_exhausted = False
         while attempt < max_attempts:
             doc = _load_yaml(ledger_path)

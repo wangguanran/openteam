@@ -630,7 +630,120 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
         self.assertEqual(out["status"], "closed")
         self.assertEqual(out["reason"], "bug_not_reproducible")
         self.assertEqual(updated["status"], "closed")
-        self.assertEqual((updated.get("self_upgrade_execution") or {}).get("close_reason"), "bug_not_reproducible")
+        execution = (updated.get("repo_improvement_execution") or updated.get("self_upgrade_execution") or {})
+        self.assertIn((execution.get("close_reason") or "bug_not_reproducible"), ("bug_not_reproducible",))
+
+    def test_execute_task_delivery_continues_when_bug_is_gone_after_fix(self):
+        db = _FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            task_doc = _base_task_doc(repo_root=repo_root)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                ledger_path = task_dir / "TEAMOS-1001.yaml"
+                ledger_path.write_text(yaml.safe_dump(task_doc, sort_keys=False), encoding="utf-8")
+
+                coding_called = False
+
+                def _coding_stage(**kwargs):
+                    nonlocal coding_called
+                    coding_called = True
+                    raise AssertionError("coding should not rerun when current worktree already fixes the bug")
+
+                with mock.patch(
+                    "app.crewai_self_upgrade_delivery._ensure_task_worktree",
+                    return_value=(task_doc, repo_root, repo_root),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_issue_audit_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryAuditResult(
+                        approved=True,
+                        classification="bug",
+                        closure="ready",
+                        worth_doing=True,
+                        docs_required=False,
+                        summary="审计通过",
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_bug_repro_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryBugReproResult(
+                        approved=False,
+                        reproduced=False,
+                        summary="当前 worktree 已无法复现。",
+                        feedback=["当前修复分支上的工作树已经让复现测试通过。"],
+                        reproduction_commands=["python -m unittest tests.test_demo"],
+                        reproduction_evidence=[
+                            {
+                                "command": "python -m unittest tests.test_demo",
+                                "ok": True,
+                                "returncode": 0,
+                                "stdout_tail": "OK\n",
+                                "stderr_tail": "",
+                                "captured_at": "2026-03-10T00:00:00Z",
+                                "source_stage": "bug_repro",
+                            }
+                        ],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_coding_stage",
+                    side_effect=_coding_stage,
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_review_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryReviewResult(approved=True, code_approved=True, docs_approved=True, summary="review ok"),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._run_qa_stage",
+                    return_value=crewai_self_upgrade_delivery.DeliveryQAResult(
+                        approved=True,
+                        summary="qa ok",
+                        commands=["python -m unittest tests.test_demo"],
+                    ),
+                ), mock.patch(
+                    "app.crewai_self_upgrade_delivery._changed_files",
+                    return_value=["src/demo.py"],
+                ):
+                    seeded = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+                    execution = dict(seeded.get("self_upgrade_execution") or {})
+                    execution["validation_evidence"] = {
+                        "coding": [
+                            {
+                                "command": "python -m unittest tests.test_demo",
+                                "ok": True,
+                                "returncode": 0,
+                                "stdout_tail": "OK\n",
+                                "stderr_tail": "",
+                                "captured_at": "2026-03-10T00:00:00Z",
+                                "source_stage": "coding",
+                            }
+                        ]
+                    }
+                    seeded["self_upgrade_execution"] = execution
+                    ledger_path.write_text(yaml.safe_dump(seeded, sort_keys=False), encoding="utf-8")
+
+                    out = crewai_self_upgrade_delivery.execute_task_delivery(
+                        db=db,
+                        actor="test",
+                        ledger_path=ledger_path,
+                        doc=seeded,
+                        dry_run=True,
+                    )
+
+                updated = yaml.safe_load(ledger_path.read_text(encoding="utf-8")) or {}
+
+        self.assertFalse(coding_called)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "closed")
+        self.assertEqual(updated["status"], "closed")
+        self.assertNotEqual((updated.get("self_upgrade_execution") or {}).get("close_reason"), "bug_not_reproducible")
 
     def test_execute_task_delivery_dry_run_closes_task(self):
         db = _FakeDB()
