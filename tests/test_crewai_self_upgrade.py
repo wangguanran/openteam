@@ -152,6 +152,12 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             excerpt_paths = [str(item.get("path") or "") for item in (text_pass.get("entries") or []) if isinstance(item, dict)]
             self.assertIn("README.md", excerpt_paths)
             self.assertIn("src/__main__.py", excerpt_paths)
+            module_chunks = inspection.get("module_chunks") or []
+            self.assertGreaterEqual(len(module_chunks), 1)
+            first_chunk = module_chunks[0]
+            self.assertTrue(str(first_chunk.get("module") or "").strip())
+            self.assertGreaterEqual(int(first_chunk.get("included_file_count") or 0), 1)
+            self.assertTrue(isinstance(first_chunk.get("files"), list))
 
     def test_crewai_llm_matches_codex_oauth_demo_defaults(self):
         captured: dict[str, object] = {}

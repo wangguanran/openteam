@@ -907,6 +907,123 @@ def _repository_text_pass(root: Path, *, tracked_files: list[str]) -> dict[str, 
     }
 
 
+def _module_file_text(content: str, *, max_chars: int = 4000) -> tuple[str, bool]:
+    text = str(content or "")
+    if len(text) <= max_chars:
+        return text, False
+    half = max(1, (max_chars - 32) // 2)
+    return text[:half] + "\n...[TRUNCATED]...\n" + text[-half:], True
+
+
+def _repository_chunk_label(rel: str) -> str:
+    path = str(rel or "").strip().replace("\\", "/").lstrip("/")
+    if not path:
+        return "root"
+    parts = [part for part in path.split("/") if part]
+    if len(parts) == 1:
+        return "root"
+    head = parts[0]
+    if head in ("src", "tests", "projects") and len(parts) >= 2 and "." not in parts[1]:
+        return f"{head}/{parts[1]}"
+    return head
+
+
+def _repository_module_chunks(root: Path, *, tracked_files: list[str]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for rel in tracked_files:
+        path = root / rel
+        suffix = path.suffix.lower()
+        if suffix not in _INSPECTION_TEXT_EXTENSIONS and path.name.lower() not in ("makefile", "dockerfile"):
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        module = _repository_chunk_label(rel)
+        grouped.setdefault(module, []).append(
+            {
+                "path": rel,
+                "category": _classify_repo_path(rel),
+                "content": content,
+            }
+        )
+
+    category_priority = {
+        "source": 0,
+        "test": 1,
+        "config": 2,
+        "workflow": 3,
+        "script": 4,
+        "docs": 5,
+        "other": 6,
+    }
+    chunks: list[dict[str, Any]] = []
+    for module, files in grouped.items():
+        ordered = sorted(
+            files,
+            key=lambda item: (
+                category_priority.get(str(item.get("category") or "other"), 99),
+                str(item.get("path") or ""),
+            ),
+        )
+        file_docs: list[dict[str, Any]] = []
+        marker_totals: dict[str, int] = {}
+        included_chars = 0
+        omitted_count = 0
+        for item in ordered:
+            content = str(item.get("content") or "")
+            rendered, truncated = _module_file_text(content)
+            projected = included_chars + len(rendered)
+            if file_docs and projected > 24000:
+                omitted_count += 1
+                continue
+            marker_hits: dict[str, int] = {}
+            for marker in _TEXT_PASS_MARKERS:
+                hits = int(content.count(marker))
+                if hits:
+                    marker_totals[marker] = int(marker_totals.get(marker, 0)) + hits
+                    marker_hits[marker] = hits
+            file_doc = {
+                "path": str(item.get("path") or ""),
+                "category": str(item.get("category") or "other"),
+                "content": rendered,
+                "truncated": truncated,
+                "original_chars": len(content),
+            }
+            if marker_hits:
+                file_doc["marker_hits"] = marker_hits
+            file_docs.append(file_doc)
+            included_chars += len(rendered)
+        if not file_docs:
+            continue
+        category_counts: dict[str, int] = {}
+        for item in ordered:
+            category = str(item.get("category") or "other")
+            category_counts[category] = int(category_counts.get(category, 0)) + 1
+        chunks.append(
+            {
+                "module": module,
+                "file_count": len(ordered),
+                "included_file_count": len(file_docs),
+                "omitted_file_count": omitted_count,
+                "included_chars": included_chars,
+                "category_counts": category_counts,
+                "marker_totals": marker_totals,
+                "files": file_docs,
+            }
+        )
+
+    return sorted(
+        chunks,
+        key=lambda item: (
+            -int((item.get("category_counts") or {}).get("source") or 0),
+            -int((item.get("category_counts") or {}).get("test") or 0),
+            -int(item.get("file_count") or 0),
+            str(item.get("module") or ""),
+        ),
+    )
+
+
 def _repository_inspection(root: Path) -> dict[str, Any]:
     tracked_files = _git_ls_files(root)
     test_command_candidates = _discover_test_command_candidates(root, tracked_files=tracked_files)
@@ -943,9 +1060,26 @@ def _repository_inspection(root: Path) -> dict[str, Any]:
         "category_samples": {key: value[:20] for key, value in category_samples.items()},
         "focus_file_excerpts": _focus_file_excerpts(root, tracked_files=tracked_files),
         "text_pass": _repository_text_pass(root, tracked_files=tracked_files),
+        "module_chunks": _repository_module_chunks(root, tracked_files=tracked_files),
         "test_command_candidates": test_command_candidates,
         "baseline_checks": _run_repository_baseline_checks(root, command_candidates=test_command_candidates),
     }
+
+
+def _bug_scan_module_chunks(repo_context: dict[str, Any], *, limit: int = 6) -> list[dict[str, Any]]:
+    inspection = dict(repo_context.get("repository_inspection") or {})
+    chunks = inspection.get("module_chunks") if isinstance(inspection.get("module_chunks"), list) else []
+    out: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        category_counts = dict(chunk.get("category_counts") or {})
+        if int(category_counts.get("source") or 0) <= 0 and int(category_counts.get("test") or 0) <= 0:
+            continue
+        out.append(chunk)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
 
 
 _SOURCE_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".sh"}
@@ -2028,33 +2162,82 @@ def kickoff_upgrade_plan(
     if bug_enabled:
         test_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_MANAGER, llm=llm, verbose=verbose)
         enabled_agents.append(test_manager)
-        enabled_scan_tasks.append(
-            Task(
-                name="qa_bug_scan",
-                description=(
-                    "Analyze the repository context as a test manager.\n"
-                    f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
-                    "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
-                    "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
-                    "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
-                    "You must actively inspect the repository_inspection section: review the tracked file inventory, key source/test/config excerpts, and discovered test command candidates before deciding there are 0 bugs.\n"
-                    "repository_inspection.text_pass is a full text pass over tracked text files; use its entries, marker_totals, and suspicious_files as repository-wide reading evidence.\n"
-                    "You must inspect repository_inspection.baseline_checks and treat failed or timed-out baseline checks as primary bug evidence when they are attributable to repository code.\n"
-                    "Do not rely on recent_execution_metrics alone when the repository inspection shows real application code and tests.\n"
-                    "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
-                    + (
-                        "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
-                        if bug_scan_dormant
-                        else ""
+        bug_module_chunks = _bug_scan_module_chunks(repo_context, limit=max(2, int(bug_scan_limit) + 1))
+        bug_shared_context = {
+            "repo_name": repo_context.get("repo_name"),
+            "repo_locator": repo_context.get("repo_locator"),
+            "head_commit": repo_context.get("head_commit"),
+            "recent_execution_metrics": repo_context.get("recent_execution_metrics"),
+            "repository_inspection_summary": {
+                "tracked_file_count": ((repo_context.get("repository_inspection") or {}) if isinstance(repo_context.get("repository_inspection"), dict) else {}).get("tracked_file_count"),
+                "category_counts": ((repo_context.get("repository_inspection") or {}) if isinstance(repo_context.get("repository_inspection"), dict) else {}).get("category_counts"),
+                "baseline_checks": ((repo_context.get("repository_inspection") or {}) if isinstance(repo_context.get("repository_inspection"), dict) else {}).get("baseline_checks"),
+            },
+        }
+        if bug_module_chunks:
+            for idx, chunk in enumerate(bug_module_chunks, start=1):
+                module = str(chunk.get("module") or f"Module-{idx}").strip()
+                module_blob = json.dumps(
+                    {
+                        "shared_context": bug_shared_context,
+                        "module_chunk": chunk,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                enabled_scan_tasks.append(
+                    Task(
+                        name=f"qa_bug_scan_{_module_slug(module)}",
+                        description=(
+                            f"Analyze module `{module}` as a test manager.\n"
+                            "Treat the supplied module_chunk as the full module reading bundle for this scan.\n"
+                            "Return at most 1 bug or regression candidate for this module.\n"
+                            "Returning 0 bug findings is normal when the module currently has no proven defect signal.\n"
+                            "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, executable reproduction path, or failed/timed-out baseline check attributable to this module.\n"
+                            "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
+                            "Use module_chunk.files as the primary module reading evidence. Review the included file contents before deciding there are 0 bugs.\n"
+                            "Use repository_inspection_summary.baseline_checks and module marker hits as supporting evidence, but do not convert marker hits alone into bugs.\n"
+                            + (
+                                "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
+                                if bug_scan_dormant
+                                else ""
+                            )
+                            + "Use only the supplied context.\n\n"
+                            + f"Module scan context:\n{module_blob}"
+                        ),
+                        expected_output=f"A module-scoped bug finding for `{module}` with concrete evidence, or an explicit empty result.",
+                        agent=test_manager,
+                        markdown=True,
                     )
-                    + "Use only the supplied context.\n\n"
-                    + f"Repository context:\n{repo_blob}"
-                ),
-                expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
-                agent=test_manager,
-                markdown=True,
+                )
+        else:
+            enabled_scan_tasks.append(
+                Task(
+                    name="qa_bug_scan",
+                    description=(
+                        "Analyze the repository context as a test manager.\n"
+                        f"Return at most {int(bug_scan_limit)} bug or regression candidates.\n"
+                        "Returning 0 bug findings is normal when the repository currently has no proven defect signal.\n"
+                        "Only report bugs backed by a current failing behavior, CI/test failure, stack trace, or executable reproduction path.\n"
+                        "Do not invent speculative bugs. Missing tests, uncovered paths, code smells, and hypothetical risks belong to quality/test-gap findings instead of bugs.\n"
+                        "You must actively inspect the repository_inspection section: review the tracked file inventory, key source/test/config excerpts, and discovered test command candidates before deciding there are 0 bugs.\n"
+                        "repository_inspection.text_pass is a full text pass over tracked text files; use its entries, marker_totals, and suspicious_files as repository-wide reading evidence.\n"
+                        "You must inspect repository_inspection.baseline_checks and treat failed or timed-out baseline checks as primary bug evidence when they are attributable to repository code.\n"
+                        "Do not rely on recent_execution_metrics alone when the repository inspection shows real application code and tests.\n"
+                        "If the repository looks stable and no current defect can be proven, return an empty bug list.\n"
+                        + (
+                            "The bug lane is currently dormant on the current HEAD; be even more conservative and only return a bug when the supplied context contains an explicit current failing signal.\n"
+                            if bug_scan_dormant
+                            else ""
+                        )
+                        + "Use only the supplied context.\n\n"
+                        + f"Repository context:\n{repo_blob}"
+                    ),
+                    expected_output="A shortlist of bug findings with concrete evidence and reproducible defect signals.",
+                    agent=test_manager,
+                    markdown=True,
+                )
             )
-        )
     if quality_enabled:
         test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, llm=llm, verbose=verbose)
         code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, llm=llm, verbose=verbose)
