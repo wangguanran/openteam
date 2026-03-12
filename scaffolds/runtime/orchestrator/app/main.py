@@ -904,10 +904,7 @@ def _default_local_improvement_target() -> Optional[dict[str, Any]]:
 def _enabled_improvement_targets(*, auto_mode: str) -> list[dict[str, Any]]:
     targets = improvement_store.list_targets(enabled_only=True)
     selected: list[dict[str, Any]] = []
-    flag_name = "auto_delivery" if auto_mode == "delivery" else "auto_discovery"
     for target in targets:
-        if not bool(target.get(flag_name)):
-            continue
         if not _target_repo_configured(target):
             continue
         selected.append(target)
@@ -1885,8 +1882,8 @@ class ImprovementTargetIn(BaseModel):
     repo_locator: Optional[str] = None
     default_branch: Optional[str] = None
     enabled: bool = True
-    auto_discovery: bool = False
-    auto_delivery: bool = False
+    auto_discovery: bool = False  # deprecated compatibility field; scheduler ignores it
+    auto_delivery: bool = False  # deprecated compatibility field; scheduler ignores it
     ship_enabled: bool = False
     workstream_id: str = "general"
 
