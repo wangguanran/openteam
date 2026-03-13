@@ -115,6 +115,18 @@ _REPO_IMPROVEMENT_LOOP_STARTUP = "repo_improvement_startup"
 _REPO_IMPROVEMENT_LOOP_DISCOVERY = "repo_improvement_discovery"
 _REPO_IMPROVEMENT_LOOP_DISCUSSION = "repo_improvement_discussion"
 _REPO_IMPROVEMENT_LOOP_DELIVERY = "repo_improvement_delivery"
+_REPO_IMPROVEMENT_PUBLIC_WORKFLOW_PHASES: tuple[tuple[str, str, str], ...] = (
+    ("bug-finding", "bug", "discovery"),
+    ("bug-coding", "bug", "delivery"),
+    ("feature-finding", "feature", "discovery"),
+    ("feature-discussion", "feature", "discussion"),
+    ("feature-coding", "feature", "delivery"),
+    ("quality-finding", "quality", "discovery"),
+    ("quality-discussion", "quality", "discussion"),
+    ("quality-coding", "quality", "delivery"),
+    ("process-finding", "process", "discovery"),
+    ("process-coding", "process", "delivery"),
+)
 
 
 def _repo_improvement_loop_worker_concurrency(env_name: str, default: int = 10) -> int:
@@ -195,7 +207,7 @@ def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: st
         "quality": crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
         "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
     }
-    statuses: dict[str, dict[str, Any]] = {}
+    lane_statuses: dict[str, dict[str, Any]] = {}
     for lane, workflow_id in lanes.items():
         try:
             spec = repo_improvement_workflows.workflow_spec(workflow_id, project_id=project_id)
@@ -228,7 +240,7 @@ def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: st
             elif active_phase:
                 status = str(active_phase.get("status") or "").strip().lower() or "ready"
                 current_action = str(active_phase.get("current_action") or "").strip() or current_action
-        statuses[lane] = {
+        lane_statuses[lane] = {
             "workflow_id": workflow_id,
             "lane": lane,
             "display_name_zh": str(spec.display_name_zh or "").strip(),
@@ -245,6 +257,47 @@ def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: st
             "phases": phases,
             "runtime_state": runtime_state,
         }
+    statuses: dict[str, dict[str, Any]] = {}
+    phase_loop_map = {
+        "discovery": discovery_loop,
+        "discussion": discussion_loop,
+        "delivery": delivery_loop,
+    }
+    for public_id, lane, phase in _REPO_IMPROVEMENT_PUBLIC_WORKFLOW_PHASES:
+        lane_status = dict(lane_statuses.get(lane) or {})
+        if not lane_status:
+            continue
+        phase_payload = dict(phase_loop_map.get(phase) or {})
+        if phase == "discussion" and not bool((lane_status.get("runtime_state") or {}).get("status")) and not bool(lane_status.get("phases", {}).get("discussion")):
+            if not bool(phase_payload):
+                phase_payload = {}
+        if phase == "discussion" and phase_payload == {} and lane not in ("feature", "quality"):
+            continue
+        phase_enabled = bool(lane_status.get("enabled"))
+        if phase == "discussion":
+            phase_enabled = phase_enabled and lane in ("feature", "quality")
+        phase_status = str(phase_payload.get("status") or "").strip().lower() or ("ready" if phase_enabled else "disabled")
+        current_action = str(phase_payload.get("current_action") or "").strip()
+        if not current_action:
+            current_action = {
+                "discovery": f"{lane} finding workflow ready",
+                "discussion": f"{lane} discussion workflow ready",
+                "delivery": f"{lane} coding workflow ready",
+            }.get(phase, "workflow ready")
+        status_row = dict(lane_status)
+        status_row.update(
+            {
+                "public_workflow_id": public_id,
+                "workflow_id": public_id,
+                "phase": phase,
+                "status": phase_status,
+                "current_action": current_action,
+                "enabled": phase_enabled,
+                "disabled_reason": "" if phase_enabled else (str(lane_status.get("disabled_reason") or "").strip() or f"{public_id}_disabled"),
+                "workflow_root": lane,
+            }
+        )
+        statuses[public_id] = status_row
     return statuses
 
 

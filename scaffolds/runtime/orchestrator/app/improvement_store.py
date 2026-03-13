@@ -199,7 +199,7 @@ def materialize_target_repo(target: dict[str, Any], *, fetch: bool = True) -> di
     repo_url = str(doc.get("repo_url") or "").strip()
     checkout_policy = str(doc.get("checkout_policy") or "").strip() or ("clone" if repo_url else "existing")
 
-    scaffold = workspace_store.ensure_target_scaffold(target_id)
+    scaffold = workspace_store.ensure_target_scaffold(target_id, project_id=project_id)
     scaffold_repo_root = Path(str(scaffold.get("repo_dir") or "")).resolve()
     project_repo_root = workspace_store.project_repo_dir(project_id).resolve()
     repo_candidates: list[Path] = []

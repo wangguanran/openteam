@@ -78,3 +78,29 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
         self.assertFalse(errors)
         self.assertCountEqual(results, ["a", "b"])
         self.assertGreaterEqual(peak, 2)
+
+    def test_public_repo_improvement_workflow_status_uses_finding_and_coding_names(self) -> None:
+        app_main._set_repo_improvement_loop_state(
+            app_main._REPO_IMPROVEMENT_LOOP_DISCOVERY,
+            enabled=True,
+            status="running",
+            current_action="running repo-improvement discovery workers",
+        )
+        app_main._set_repo_improvement_loop_state(
+            app_main._REPO_IMPROVEMENT_LOOP_DELIVERY,
+            enabled=True,
+            status="sleeping",
+            current_action="sleeping until next delivery sweep",
+        )
+
+        statuses = app_main._repo_improvement_workflow_status_snapshot(
+            target_id="demo-target",
+            project_id="teamos",
+        )
+
+        self.assertIn("bug-finding", statuses)
+        self.assertIn("bug-coding", statuses)
+        self.assertIn("feature-discussion", statuses)
+        self.assertEqual(statuses["bug-finding"]["phase"], "discovery")
+        self.assertEqual(statuses["bug-coding"]["phase"], "delivery")
+        self.assertEqual(statuses["bug-coding"]["workflow_root"], "bug")

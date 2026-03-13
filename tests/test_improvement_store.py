@@ -255,22 +255,57 @@ class ImprovementStoreTests(unittest.TestCase):
 
             self.assertTrue((repo_root / ".git").exists())
             self.assertEqual(materialized["target_id"], "demo-target")
-            expected_root = (Path(td) / "workspace" / "targets" / "demo-target").resolve()
+            expected_root = (Path(td) / "workspace" / "projects" / "demo" / "targets" / "demo-target").resolve()
             self.assertTrue(str(repo_root).startswith(str(expected_root)))
             self.assertEqual(improvement_store.get_target("demo-target")["repo_root"], str(repo_root))
+
+    def test_materialize_target_repo_migrates_legacy_target_layout_into_project_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self._configure_runtime(td)
+
+            legacy_root = Path(td) / "workspace" / "targets" / "demo-target"
+            legacy_repo = legacy_root / "repo"
+            legacy_state = legacy_root / "state"
+            legacy_repo.mkdir(parents=True, exist_ok=True)
+            legacy_state.mkdir(parents=True, exist_ok=True)
+            _git(["init"], cwd=legacy_repo)
+            _git(["config", "user.name", "Team OS"], cwd=legacy_repo)
+            _git(["config", "user.email", "team-os@example.com"], cwd=legacy_repo)
+            (legacy_repo / "README.md").write_text("# legacy\n", encoding="utf-8")
+            _git(["add", "README.md"], cwd=legacy_repo)
+            _git(["commit", "-m", "init"], cwd=legacy_repo)
+            (legacy_state / "marker.txt").write_text("legacy-state\n", encoding="utf-8")
+
+            target = improvement_store.upsert_target(
+                {
+                    "target_id": "demo-target",
+                    "project_id": "demo",
+                    "display_name": "Demo Target",
+                    "repo_locator": "owner/demo",
+                    "enabled": True,
+                }
+            )
+
+            materialized = improvement_store.materialize_target_repo(target, fetch=False)
+            repo_root = Path(materialized["repo_root"])
+            expected_root = (Path(td) / "workspace" / "projects" / "demo" / "targets" / "demo-target").resolve()
+
+            self.assertEqual(repo_root, expected_root / "repo")
+            self.assertTrue((expected_root / "state" / "marker.txt").exists())
+            self.assertFalse(legacy_root.exists(), "legacy top-level target dir should be migrated away")
 
     def test_materialize_target_repo_repairs_stale_repo_root_using_target_scaffold_repo(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             self._configure_runtime(td)
 
-            repaired_repo = Path(td) / "workspace" / "targets" / "demo-target" / "repo"
-            repaired_repo.mkdir(parents=True, exist_ok=True)
-            _git(["init"], cwd=repaired_repo)
-            _git(["config", "user.name", "Team OS"], cwd=repaired_repo)
-            _git(["config", "user.email", "team-os@example.com"], cwd=repaired_repo)
-            (repaired_repo / "README.md").write_text("# repaired\n", encoding="utf-8")
-            _git(["add", "README.md"], cwd=repaired_repo)
-            _git(["commit", "-m", "init"], cwd=repaired_repo)
+            legacy_repo = Path(td) / "workspace" / "targets" / "demo-target" / "repo"
+            legacy_repo.mkdir(parents=True, exist_ok=True)
+            _git(["init"], cwd=legacy_repo)
+            _git(["config", "user.name", "Team OS"], cwd=legacy_repo)
+            _git(["config", "user.email", "team-os@example.com"], cwd=legacy_repo)
+            (legacy_repo / "README.md").write_text("# repaired\n", encoding="utf-8")
+            _git(["add", "README.md"], cwd=legacy_repo)
+            _git(["commit", "-m", "init"], cwd=legacy_repo)
 
             target = improvement_store.upsert_target(
                 {
@@ -284,6 +319,7 @@ class ImprovementStoreTests(unittest.TestCase):
             )
 
             materialized = improvement_store.materialize_target_repo(target, fetch=False)
+            repaired_repo = (Path(td) / "workspace" / "projects" / "demo" / "targets" / "demo-target" / "repo").resolve()
 
             self.assertEqual(materialized["repo_root"], str(repaired_repo.resolve()))
             self.assertEqual(improvement_store.get_target("demo-target")["repo_root"], str(repaired_repo.resolve()))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -68,7 +69,6 @@ def ensure_workspace_scaffold(root: Optional[Path] = None) -> Path:
     """
     r = (root or workspace_root()).resolve()
     (r / "projects").mkdir(parents=True, exist_ok=True)
-    (r / "targets").mkdir(parents=True, exist_ok=True)
     (r / "shared" / "cache").mkdir(parents=True, exist_ok=True)
     (r / "shared" / "tmp").mkdir(parents=True, exist_ok=True)
     (r / "config").mkdir(parents=True, exist_ok=True)
@@ -113,18 +113,31 @@ def project_repo_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
     return project_dir(project_id, root=root) / "repo"
 
 
-def targets_dir(*, root: Optional[Path] = None) -> Path:
+def legacy_targets_dir(*, root: Optional[Path] = None) -> Path:
     r = (root or workspace_root()).resolve()
     return (r / "targets").resolve()
 
 
-def target_dir(target_id: str, *, root: Optional[Path] = None) -> Path:
+def project_targets_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
+    return project_dir(project_id, root=root) / "targets"
+
+
+def legacy_target_dir(target_id: str, *, root: Optional[Path] = None) -> Path:
     tid = _safe_project_id(target_id)
-    return (targets_dir(root=root) / tid).resolve()
+    return (legacy_targets_dir(root=root) / tid).resolve()
 
 
-def target_repo_dir(target_id: str, *, root: Optional[Path] = None) -> Path:
-    return target_dir(target_id, root=root) / "repo"
+def target_dir(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> Path:
+    tid = _safe_project_id(target_id)
+    return (project_targets_dir(project_id, root=root) / tid).resolve()
+
+
+def target_repo_dir(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> Path:
+    return target_dir(target_id, project_id=project_id, root=root) / "repo"
+
+
+def target_state_dir(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> Path:
+    return target_dir(target_id, project_id=project_id, root=root) / "state"
 
 
 def project_state_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
@@ -177,6 +190,7 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     pid = _safe_project_id(project_id)
     pdir = project_dir(pid, root=r)
     (pdir / "repo").mkdir(parents=True, exist_ok=True)
+    (pdir / "targets").mkdir(parents=True, exist_ok=True)
 
     s = pdir / "state"
     (s / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
@@ -210,13 +224,62 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     return {"workspace_root": str(r), "project_id": pid, "project_dir": str(pdir), "state_dir": str(s)}
 
 
-def ensure_target_scaffold(target_id: str, *, root: Optional[Path] = None) -> dict[str, Any]:
+def _merge_tree(src: Path, dst: Path) -> None:
+    if not src.exists():
+        return
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            _merge_tree(item, target)
+        elif not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(item), str(target))
+    try:
+        src.rmdir()
+    except Exception:
+        pass
+
+
+def _migrate_legacy_target_layout(*, project_id: str, target_id: str, root: Optional[Path] = None) -> None:
+    legacy = legacy_target_dir(target_id, root=root)
+    current = target_dir(target_id, project_id=project_id, root=root)
+    if not legacy.exists() or legacy.resolve() == current.resolve():
+        return
+    current.parent.mkdir(parents=True, exist_ok=True)
+    if not current.exists():
+        shutil.move(str(legacy), str(current))
+        return
+    for name in ("repo", "state"):
+        _merge_tree(legacy / name, current / name)
+    for item in list(legacy.iterdir()) if legacy.exists() else []:
+        _merge_tree(item, current / item.name)
+    try:
+        legacy.rmdir()
+    except Exception:
+        pass
+
+
+def ensure_target_scaffold(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> dict[str, Any]:
     r = ensure_workspace_scaffold(root)
+    pid = _safe_project_id(project_id)
     tid = _safe_project_id(target_id)
-    tdir = target_dir(tid, root=r)
+    ensure_project_scaffold(pid, root=r)
+    _migrate_legacy_target_layout(project_id=pid, target_id=tid, root=r)
+    tdir = target_dir(tid, project_id=pid, root=r)
     (tdir / "repo").mkdir(parents=True, exist_ok=True)
     (tdir / "state").mkdir(parents=True, exist_ok=True)
-    return {"workspace_root": str(r), "target_id": tid, "target_dir": str(tdir), "repo_dir": str((tdir / "repo").resolve())}
+    return {
+        "workspace_root": str(r),
+        "project_id": pid,
+        "target_id": tid,
+        "target_dir": str(tdir),
+        "repo_dir": str((tdir / "repo").resolve()),
+        "state_dir": str((tdir / "state").resolve()),
+    }
 
 
 def list_projects(*, root: Optional[Path] = None) -> list[str]:
