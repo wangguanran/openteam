@@ -4,6 +4,7 @@ import re
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 
@@ -114,6 +115,43 @@ _REPO_IMPROVEMENT_LOOP_STARTUP = "repo_improvement_startup"
 _REPO_IMPROVEMENT_LOOP_DISCOVERY = "repo_improvement_discovery"
 _REPO_IMPROVEMENT_LOOP_DISCUSSION = "repo_improvement_discussion"
 _REPO_IMPROVEMENT_LOOP_DELIVERY = "repo_improvement_delivery"
+
+
+def _repo_improvement_loop_worker_concurrency(env_name: str, default: int = 10) -> int:
+    value = str(_repo_improvement_env(env_name, str(default)) or str(default)).strip()
+    try:
+        return max(1, int(value))
+    except Exception:
+        return max(1, int(default))
+
+
+def _run_repo_improvement_target_jobs_in_pool(
+    *,
+    targets: list[dict[str, Any]],
+    worker_concurrency: int,
+    thread_name_prefix: str,
+    job_fn,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    if not targets:
+        return [], []
+    results: list[Any] = []
+    errors: list[dict[str, Any]] = []
+    max_workers = max(1, min(int(worker_concurrency), len(targets)))
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name_prefix) as executor:
+        future_to_target = {executor.submit(job_fn, target): target for target in targets}
+        for future in as_completed(future_to_target):
+            target = future_to_target[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                errors.append(
+                    {
+                        "target_id": str(target.get("target_id") or "").strip(),
+                        "project_id": str(target.get("project_id") or "").strip(),
+                        "error": str(exc)[:300],
+                    }
+                )
+    return results, errors
 
 
 def _normalize_task_state(state: Any) -> str:
@@ -1019,13 +1057,15 @@ def _run_self_upgrade_iteration(
         _REPO_IMPROVEMENT_LOCKS.release(lock_key)
 
 
-def _run_self_upgrade_discussion_sync(*, actor: str) -> dict[str, Any]:
+def _run_self_upgrade_discussion_sync(*, actor: str, project_id: str = "", target_id: str = "") -> dict[str, Any]:
     out = crewai_self_upgrade.reconcile_feature_discussions(
         db=DB,
         actor=actor,
         verbose=_env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0"),
+        project_id=project_id,
+        target_id=target_id,
     )
-    _mark_panel_dirty("teamos")
+    _mark_panel_dirty(str(project_id or "teamos").strip() or "teamos")
     return out
 
 
@@ -1090,6 +1130,10 @@ def _run_self_upgrade_delivery_iteration(
             force=bool(force),
             concurrency=concurrency,
         )
+        if isinstance(out, dict):
+            out.setdefault("project_id", current_project_id)
+            out.setdefault("target_id", str(target_id or "").strip())
+            out.setdefault("run_id", run_id)
         run_state = "DONE" if bool(out.get("ok")) else "FAILED"
         DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state=run_state)
         _mark_panel_dirty(current_project_id)
@@ -1324,6 +1368,10 @@ def _startup_background_threads() -> None:
                 current_action="startup repo-improvement sweep disabled",
             )
             return
+        worker_concurrency = _repo_improvement_loop_worker_concurrency(
+            "TEAMOS_REPO_IMPROVEMENT_STARTUP_CONCURRENCY",
+            10,
+        )
         try:
             _set_repo_improvement_loop_state(
                 _REPO_IMPROVEMENT_LOOP_STARTUP,
@@ -1331,6 +1379,7 @@ def _startup_background_threads() -> None:
                 status="waiting",
                 current_action="waiting 4s before startup repo-improvement sweep",
                 initial_delay_sec=4,
+                worker_concurrency=worker_concurrency,
             )
             time.sleep(4)
             if not _leader_write_allowed():
@@ -1339,17 +1388,21 @@ def _startup_background_threads() -> None:
                     enabled=True,
                     status="skipped",
                     current_action="startup repo-improvement sweep skipped because this node is not leader",
+                    worker_concurrency=worker_concurrency,
                 )
                 return
             _set_repo_improvement_loop_state(
                 _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=True,
                 status="running",
-                current_action="running startup repo-improvement sweeps",
+                current_action=f"running startup repo-improvement workers (concurrency={worker_concurrency})",
                 last_started_at=_utc_now_iso(),
+                worker_concurrency=worker_concurrency,
             )
-            for target in _enabled_improvement_targets(auto_mode="discovery"):
-                _ = _run_self_upgrade_iteration(
+            targets = _enabled_improvement_targets(auto_mode="discovery")
+
+            def _startup_job(target: dict[str, Any]) -> dict[str, Any]:
+                return _run_self_upgrade_iteration(
                     actor="control-plane.startup",
                     project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
                     workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
@@ -1361,12 +1414,24 @@ def _startup_background_threads() -> None:
                     force=False,
                     trigger="startup_auto",
                 )
+            _, errors = _run_repo_improvement_target_jobs_in_pool(
+                targets=targets,
+                worker_concurrency=worker_concurrency,
+                thread_name_prefix="repo-improvement-startup",
+                job_fn=_startup_job,
+            )
             _set_repo_improvement_loop_state(
                 _REPO_IMPROVEMENT_LOOP_STARTUP,
                 enabled=True,
                 status="done",
-                current_action="startup repo-improvement sweeps completed",
+                current_action=(
+                    "startup repo-improvement sweeps completed"
+                    if not errors
+                    else f"startup repo-improvement sweeps completed with {len(errors)} errors"
+                ),
                 last_completed_at=_utc_now_iso(),
+                worker_concurrency=worker_concurrency,
+                last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
             )
         except Exception as e:
             _set_repo_improvement_loop_state(
@@ -1375,6 +1440,7 @@ def _startup_background_threads() -> None:
                 status="error",
                 current_action=f"startup repo-improvement sweep failed: {str(e)[:160]}",
                 last_error=str(e)[:300],
+                worker_concurrency=worker_concurrency,
             )
             try:
                 DB.add_event(
@@ -1401,6 +1467,10 @@ def _startup_background_threads() -> None:
             return
         interval_sec = max(0, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INTERVAL_SEC", "300") or "300"))
         initial_delay_sec = max(0, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
+        worker_concurrency = _repo_improvement_loop_worker_concurrency(
+            "TEAMOS_REPO_IMPROVEMENT_DISCOVERY_CONCURRENCY",
+            10,
+        )
         retry_sleep_sec = max(1, interval_sec)
         try:
             _set_repo_improvement_loop_state(
@@ -1410,6 +1480,7 @@ def _startup_background_threads() -> None:
                 current_action=f"waiting {initial_delay_sec}s before first discovery sweep",
                 interval_sec=interval_sec,
                 initial_delay_sec=initial_delay_sec,
+                worker_concurrency=worker_concurrency,
             )
             time.sleep(initial_delay_sec)
             while True:
@@ -1423,6 +1494,7 @@ def _startup_background_threads() -> None:
                                 f"discovery loop waiting {retry_sleep_sec}s because this node is not leader"
                             ),
                             interval_sec=interval_sec,
+                            worker_concurrency=worker_concurrency,
                         )
                         time.sleep(retry_sleep_sec)
                         continue
@@ -1430,12 +1502,15 @@ def _startup_background_threads() -> None:
                         _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                         enabled=True,
                         status="running",
-                        current_action="running continuous repo-improvement discovery sweeps",
+                        current_action=f"running repo-improvement discovery workers (concurrency={worker_concurrency})",
                         interval_sec=interval_sec,
                         last_started_at=_utc_now_iso(),
+                        worker_concurrency=worker_concurrency,
                     )
-                    for target in _enabled_improvement_targets(auto_mode="discovery"):
-                        _ = _run_self_upgrade_iteration(
+                    targets = _enabled_improvement_targets(auto_mode="discovery")
+
+                    def _discovery_job(target: dict[str, Any]) -> dict[str, Any]:
+                        return _run_self_upgrade_iteration(
                             actor="control-plane.loop",
                             project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
                             workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
@@ -1447,6 +1522,12 @@ def _startup_background_threads() -> None:
                             force=False,
                             trigger="continuous_loop",
                         )
+                    _, errors = _run_repo_improvement_target_jobs_in_pool(
+                        targets=targets,
+                        worker_concurrency=worker_concurrency,
+                        thread_name_prefix="repo-improvement-discovery",
+                        job_fn=_discovery_job,
+                    )
                     _set_repo_improvement_loop_state(
                         _REPO_IMPROVEMENT_LOOP_DISCOVERY,
                         enabled=True,
@@ -1458,6 +1539,8 @@ def _startup_background_threads() -> None:
                         ),
                         interval_sec=interval_sec,
                         last_completed_at=_utc_now_iso(),
+                        worker_concurrency=worker_concurrency,
+                        last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
                     )
                 except Exception as e:
                     _set_repo_improvement_loop_state(
@@ -1467,6 +1550,7 @@ def _startup_background_threads() -> None:
                         current_action=f"discovery loop failed: {str(e)[:160]}",
                         interval_sec=interval_sec,
                         last_error=str(e)[:300],
+                        worker_concurrency=worker_concurrency,
                     )
                     try:
                         DB.add_event(
@@ -1486,6 +1570,7 @@ def _startup_background_threads() -> None:
                 status="stopped",
                 current_action="discovery loop stopped",
                 interval_sec=interval_sec,
+                worker_concurrency=worker_concurrency,
             )
 
     clt = threading.Thread(target=_self_upgrade_continuous_loop, name="self-upgrade-continuous-loop", daemon=True)
@@ -1502,6 +1587,10 @@ def _startup_background_threads() -> None:
             return
         interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INTERVAL_SEC", "90") or "90"))
         initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
+        worker_concurrency = _repo_improvement_loop_worker_concurrency(
+            "TEAMOS_REPO_IMPROVEMENT_DISCUSSION_CONCURRENCY",
+            10,
+        )
         try:
             _set_repo_improvement_loop_state(
                 _REPO_IMPROVEMENT_LOOP_DISCUSSION,
@@ -1510,6 +1599,7 @@ def _startup_background_threads() -> None:
                 current_action=f"waiting {initial_delay_sec}s before first discussion sync",
                 interval_sec=interval_sec,
                 initial_delay_sec=initial_delay_sec,
+                worker_concurrency=worker_concurrency,
             )
             time.sleep(initial_delay_sec)
             while True:
@@ -1521,6 +1611,7 @@ def _startup_background_threads() -> None:
                             status="sleeping",
                             current_action=f"discussion loop waiting {interval_sec}s because this node is not leader",
                             interval_sec=interval_sec,
+                            worker_concurrency=worker_concurrency,
                         )
                         time.sleep(interval_sec)
                         continue
@@ -1528,11 +1619,26 @@ def _startup_background_threads() -> None:
                         _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                         enabled=True,
                         status="running",
-                        current_action="running repo-improvement discussion sync",
+                        current_action=f"running repo-improvement discussion workers (concurrency={worker_concurrency})",
                         interval_sec=interval_sec,
                         last_started_at=_utc_now_iso(),
+                        worker_concurrency=worker_concurrency,
                     )
-                    _ = _run_self_upgrade_discussion_sync(actor="control-plane.discussion-loop")
+                    targets = _enabled_improvement_targets(auto_mode="discussion")
+
+                    def _discussion_job(target: dict[str, Any]) -> dict[str, Any]:
+                        return _run_self_upgrade_discussion_sync(
+                            actor="control-plane.discussion-loop",
+                            project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
+                            target_id=str(target.get("target_id") or "").strip(),
+                        )
+
+                    _, errors = _run_repo_improvement_target_jobs_in_pool(
+                        targets=targets,
+                        worker_concurrency=worker_concurrency,
+                        thread_name_prefix="repo-improvement-discussion",
+                        job_fn=_discussion_job,
+                    )
                     _set_repo_improvement_loop_state(
                         _REPO_IMPROVEMENT_LOOP_DISCUSSION,
                         enabled=True,
@@ -1540,6 +1646,8 @@ def _startup_background_threads() -> None:
                         current_action=f"sleeping {interval_sec}s until next discussion sync",
                         interval_sec=interval_sec,
                         last_completed_at=_utc_now_iso(),
+                        worker_concurrency=worker_concurrency,
+                        last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
                     )
                 except Exception as e:
                     _set_repo_improvement_loop_state(
@@ -1549,6 +1657,7 @@ def _startup_background_threads() -> None:
                         current_action=f"discussion loop failed: {str(e)[:160]}",
                         interval_sec=interval_sec,
                         last_error=str(e)[:300],
+                        worker_concurrency=worker_concurrency,
                     )
                     try:
                         DB.add_event(
@@ -1568,6 +1677,7 @@ def _startup_background_threads() -> None:
                 status="stopped",
                 current_action="discussion loop stopped",
                 interval_sec=interval_sec,
+                worker_concurrency=worker_concurrency,
             )
 
     dlt = threading.Thread(target=_self_upgrade_discussion_loop, name="self-upgrade-discussion-loop", daemon=True)

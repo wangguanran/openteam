@@ -3999,8 +3999,25 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
     return ProposalDiscussionResponse.model_validate(json.loads(match.group(0)))
 
 
-def reconcile_feature_discussions(*, db=None, actor: str = "self_upgrade_discussion_loop", verbose: bool = False) -> dict[str, Any]:
-    proposals = [p for p in list_proposals() if str(p.get("lane") or "").strip().lower() in ("feature", "quality")]
+def reconcile_feature_discussions(
+    *,
+    db=None,
+    actor: str = "self_upgrade_discussion_loop",
+    verbose: bool = False,
+    project_id: str = "",
+    target_id: str = "",
+) -> dict[str, Any]:
+    normalized_project_id = str(project_id or "").strip()
+    normalized_target_id = str(target_id or "").strip()
+    proposals = []
+    for proposal in list_proposals():
+        if str(proposal.get("lane") or "").strip().lower() not in ("feature", "quality"):
+            continue
+        if normalized_project_id and str(proposal.get("project_id") or "").strip() != normalized_project_id:
+            continue
+        if normalized_target_id and str(proposal.get("target_id") or "").strip() != normalized_target_id:
+            continue
+        proposals.append(proposal)
     stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0, "skipped_runtime": 0}
     for proposal in proposals:
         lane = str(proposal.get("lane") or "").strip().lower() or "feature"
