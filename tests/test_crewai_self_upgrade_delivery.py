@@ -3,6 +3,7 @@ import datetime as dt
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1601,7 +1602,7 @@ extra trailing commentary that should be ignored
                         actor="test-worker",
                         project_id="teamos",
                         dry_run=True,
-                        max_tasks=1,
+                        concurrency=1,
                     )
 
                 self.assertEqual(execute_mock.call_count, 1)
@@ -1664,13 +1665,67 @@ extra trailing commentary that should be ignored
                         actor="test-worker",
                         project_id="teamos",
                         dry_run=True,
-                        max_tasks=1,
+                        concurrency=1,
                     )
 
                 self.assertEqual(out["processed"], 0)
                 self.assertEqual(out["scanned"], 1)
                 self.assertEqual(out["tasks"][0]["reason"], "outside_active_window")
                 self.assertEqual(out["tasks"][0]["workflow_id"], "bug-fix")
+
+    def test_run_delivery_sweep_processes_multiple_tasks_concurrently(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "team-os-runtime"
+            workspace_root = Path(td) / "workspace"
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            db_path = runtime_root / "state" / "runtime.db"
+            task_one = _base_task_doc(repo_root=repo_root, task_id="TEAMOS-3001", status="todo")
+            task_two = _base_task_doc(repo_root=repo_root, task_id="TEAMOS-3002", status="todo")
+            task_two["title"] = "Concurrent task"
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TEAMOS_RUNTIME_ROOT": str(runtime_root),
+                    "TEAMOS_WORKSPACE_ROOT": str(workspace_root),
+                    "RUNTIME_DB_PATH": str(db_path),
+                },
+                clear=False,
+            ):
+                task_dir = crewai_self_upgrade_delivery._task_ledger_dir("teamos")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                (task_dir / "TEAMOS-3001.yaml").write_text(yaml.safe_dump(task_one, sort_keys=False), encoding="utf-8")
+                (task_dir / "TEAMOS-3002.yaml").write_text(yaml.safe_dump(task_two, sort_keys=False), encoding="utf-8")
+                db = RuntimeDB(str(db_path))
+
+                first_waiting = threading.Event()
+                second_started = threading.Event()
+                overlap = threading.Event()
+
+                def _fake_execute(*, ledger_path, **kwargs):
+                    task_id = Path(str(ledger_path)).stem
+                    if task_id == "TEAMOS-3001":
+                        first_waiting.set()
+                        if second_started.wait(1.0):
+                            overlap.set()
+                    else:
+                        second_started.set()
+                        if first_waiting.is_set():
+                            overlap.set()
+                    return {"ok": True, "task_id": task_id, "status": "closed", "project_id": "teamos"}
+
+                with mock.patch("app.crewai_self_upgrade_delivery.execute_task_delivery", side_effect=_fake_execute):
+                    out = crewai_self_upgrade_delivery.run_delivery_sweep(
+                        db=db,
+                        actor="test-worker",
+                        project_id="teamos",
+                        dry_run=True,
+                        concurrency=2,
+                    )
+
+                self.assertEqual(out["processed"], 2)
+                self.assertTrue(overlap.is_set(), "expected delivery tasks to overlap under worker concurrency")
 
 
 if __name__ == "__main__":

@@ -1931,7 +1931,7 @@ def cmd_self_upgrade_delivery(args: argparse.Namespace) -> None:
         "task_id": str(getattr(args, "task_id", "") or "").strip() or None,
         "dry_run": bool(getattr(args, "dry_run", False)),
         "force": bool(getattr(args, "force", False)),
-        "max_tasks": int(getattr(args, "max_tasks", 1) or 1),
+        "concurrency": int(getattr(args, "concurrency", 10) or 10),
     }
     out = _http_json("POST", base + "/v1/repo_improvement/delivery/run", payload)
     if bool(getattr(args, "json", False)):
@@ -3421,7 +3421,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ridr.add_argument("--task-id", default="", help="resume or force a specific task id")
     ridr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
     ridr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
-    ridr.add_argument("--max-tasks", type=int, default=1, help="max tasks to process in one sweep")
+    ridr.add_argument("--concurrency", type=int, default=10, help="single-node concurrent delivery workers")
     ridr.add_argument("--json", action="store_true", help="print raw JSON")
     ridr.set_defaults(fn=cmd_self_upgrade_delivery)
 
@@ -3430,7 +3430,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sudr.add_argument("--task-id", default="", help="resume or force a specific task id")
     sudr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
     sudr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
-    sudr.add_argument("--max-tasks", type=int, default=1, help="max tasks to process in one sweep")
+    sudr.add_argument("--concurrency", type=int, default=10, help="single-node concurrent delivery workers")
     sudr.add_argument("--json", action="store_true", help="print raw JSON")
     sudr.set_defaults(fn=cmd_self_upgrade_delivery)
 
@@ -3439,7 +3439,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sidr.add_argument("--task-id", default="", help="resume or force a specific task id")
     sidr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
     sidr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
-    sidr.add_argument("--max-tasks", type=int, default=1, help="max tasks to process in one sweep")
+    sidr.add_argument("--concurrency", type=int, default=10, help="single-node concurrent delivery workers")
     sidr.add_argument("--json", action="store_true", help="print raw JSON")
     sidr.set_defaults(fn=cmd_self_upgrade_delivery)
 

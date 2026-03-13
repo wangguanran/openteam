@@ -1037,7 +1037,7 @@ def _run_self_upgrade_delivery_iteration(
     task_id: str = "",
     dry_run: bool = False,
     force: bool = False,
-    max_tasks: Optional[int] = None,
+    concurrency: Optional[int] = None,
 ) -> dict[str, Any]:
     _cleanup_stale_repo_improvement_activity()
     current_project_id = _effective_repo_improvement_project_id(
@@ -1088,7 +1088,7 @@ def _run_self_upgrade_delivery_iteration(
             task_id=str(task_id or "").strip(),
             dry_run=bool(dry_run),
             force=bool(force),
-            max_tasks=max_tasks,
+            concurrency=concurrency,
         )
         run_state = "DONE" if bool(out.get("ok")) else "FAILED"
         DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state=run_state)
@@ -1584,7 +1584,16 @@ def _startup_background_threads() -> None:
             return
         interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INTERVAL_SEC", "180") or "180"))
         initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INITIAL_DELAY_SEC", "45") or "45"))
-        max_tasks = max(1, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "1") or "1"))
+        worker_concurrency = max(
+            1,
+            int(
+                _repo_improvement_env(
+                    "TEAMOS_REPO_IMPROVEMENT_DELIVERY_CONCURRENCY",
+                    _repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "10"),
+                )
+                or "10"
+            ),
+        )
         try:
             _set_repo_improvement_loop_state(
                 _REPO_IMPROVEMENT_LOOP_DELIVERY,
@@ -1593,7 +1602,7 @@ def _startup_background_threads() -> None:
                 current_action=f"waiting {initial_delay_sec}s before first delivery sweep",
                 interval_sec=interval_sec,
                 initial_delay_sec=initial_delay_sec,
-                max_tasks=max_tasks,
+                worker_concurrency=worker_concurrency,
             )
             time.sleep(initial_delay_sec)
             while True:
@@ -1605,7 +1614,7 @@ def _startup_background_threads() -> None:
                             status="sleeping",
                             current_action=f"delivery loop waiting {interval_sec}s because this node is not leader",
                             interval_sec=interval_sec,
-                            max_tasks=max_tasks,
+                            worker_concurrency=worker_concurrency,
                         )
                         time.sleep(interval_sec)
                         continue
@@ -1613,9 +1622,9 @@ def _startup_background_threads() -> None:
                         _REPO_IMPROVEMENT_LOOP_DELIVERY,
                         enabled=True,
                         status="running",
-                        current_action=f"running delivery sweeps (max_tasks={max_tasks})",
+                        current_action=f"running delivery workers (concurrency={worker_concurrency})",
                         interval_sec=interval_sec,
-                        max_tasks=max_tasks,
+                        worker_concurrency=worker_concurrency,
                         last_started_at=_utc_now_iso(),
                     )
                     for target in _enabled_improvement_targets(auto_mode="delivery"):
@@ -1625,7 +1634,7 @@ def _startup_background_threads() -> None:
                             target_id=str(target.get("target_id") or "").strip(),
                             dry_run=False,
                             force=False,
-                            max_tasks=max_tasks,
+                            concurrency=worker_concurrency,
                         )
                     _set_repo_improvement_loop_state(
                         _REPO_IMPROVEMENT_LOOP_DELIVERY,
@@ -1633,7 +1642,7 @@ def _startup_background_threads() -> None:
                         status="sleeping",
                         current_action=f"sleeping {interval_sec}s until next delivery sweep",
                         interval_sec=interval_sec,
-                        max_tasks=max_tasks,
+                        worker_concurrency=worker_concurrency,
                         last_completed_at=_utc_now_iso(),
                     )
                 except Exception as e:
@@ -1643,7 +1652,7 @@ def _startup_background_threads() -> None:
                         status="error",
                         current_action=f"delivery loop failed: {str(e)[:160]}",
                         interval_sec=interval_sec,
-                        max_tasks=max_tasks,
+                        worker_concurrency=worker_concurrency,
                         last_error=str(e)[:300],
                     )
                     try:
@@ -1664,7 +1673,7 @@ def _startup_background_threads() -> None:
                 status="stopped",
                 current_action="delivery loop stopped",
                 interval_sec=interval_sec,
-                max_tasks=max_tasks,
+                worker_concurrency=worker_concurrency,
             )
 
     sdt = threading.Thread(target=_self_upgrade_delivery_loop, name="self-upgrade-delivery-loop", daemon=True)
@@ -1814,7 +1823,8 @@ class SelfUpgradeDeliveryIn(BaseModel):
     project_id: str = "teamos"
     target_id: Optional[str] = None
     task_id: Optional[str] = None
-    max_tasks: Optional[int] = Field(default=None, ge=1, le=20)
+    concurrency: Optional[int] = Field(default=None, ge=1, le=50)
+    max_tasks: Optional[int] = Field(default=None, ge=1, le=50, description="deprecated compatibility field")
 
 
 class SelfUpgradeProposalDecisionIn(BaseModel):
@@ -3084,7 +3094,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
                 task_id=str(t.get("task_id") or ""),
                 dry_run=False,
                 force=True,
-                max_tasks=1,
+                concurrency=1,
             )
             resumed.append(str(t.get("task_id") or ""))
             resumed_details.append(
@@ -3293,7 +3303,7 @@ def v1_repo_improvement_delivery_run(payload: SelfUpgradeDeliveryIn):
         task_id=str(payload.task_id or "").strip(),
         dry_run=bool(payload.dry_run),
         force=bool(payload.force),
-        max_tasks=payload.max_tasks,
+        concurrency=payload.concurrency or payload.max_tasks,
     )
     return out
 
