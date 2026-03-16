@@ -94,7 +94,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
+            TEAMOS_CREWAI_GIT_URL=https://github.com/crewAIInc/crewAI.git
             TEAMOS_CREWAI_GIT_REF=main
             TEAMOS_CREWAI_GIT_SHA=${{ steps.crewai.outputs.sha }}
             TEAMOS_OPENCLAW_VERSION=${{ steps.openclaw.outputs.version }}

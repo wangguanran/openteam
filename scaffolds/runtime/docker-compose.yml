@@ -51,7 +51,8 @@ services:
       TEAMOS_RUNTIME_ROOT: /teamos-runtime
       # Workspace root (project truth sources live here; must be outside the team-os git repo).
       TEAMOS_WORKSPACE_ROOT: /teamos-workspace
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TEAMOS_LLM_API_KEY: ${TEAMOS_LLM_API_KEY:-}
+      TEAMOS_LLM_BASE_URL: ${TEAMOS_LLM_BASE_URL:-}
       # GitHub auth: recommended to set from `gh auth token` (OAuth); do not commit real values.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
@@ -82,7 +83,7 @@ services:
       TEAMOS_REPO_IMPROVEMENT_MAX_FINDINGS: ${TEAMOS_REPO_IMPROVEMENT_MAX_FINDINGS:-3}
       TEAMOS_RUNTIME_FILE_MIRROR: ${TEAMOS_RUNTIME_FILE_MIRROR:-1}
       CREWAI_OPENAI_AUTH_MODE: ${CREWAI_OPENAI_AUTH_MODE:-oauth_codex}
-      TEAMOS_CREWAI_MODEL: ${TEAMOS_CREWAI_MODEL:-openai-codex/gpt-5.4}
+      TEAMOS_LLM_MODEL: ${TEAMOS_LLM_MODEL:-openrouter/openai/gpt-5.4}
       TEAMOS_CREWAI_REASONING_EFFORT: ${TEAMOS_CREWAI_REASONING_EFFORT:-xhigh}
       TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX: ${TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX:-1}
       TEAMOS_OPENCLAW_AUTO: ${TEAMOS_OPENCLAW_AUTO:-0}
@@ -105,11 +106,11 @@ services:
       HTTP_PROXY: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
       HTTPS_PROXY: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
       ALL_PROXY: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com}
+      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com,openrouter.ai,api.openrouter.ai,api.openrouter.com}
       http_proxy: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
       https_proxy: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
       all_proxy: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com}
+      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com,openrouter.ai,api.openrouter.ai,api.openrouter.com}
       # GitHub Projects panel sync (view-layer)
       TEAMOS_PANEL_GH_AUTO_SYNC: ${TEAMOS_PANEL_GH_AUTO_SYNC:-0}
       TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}

@@ -387,15 +387,15 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
 
 
 def _lane_requires_user_confirmation(lane: str) -> bool:
-    return crewai_workflow_registry.workflow_for_lane(lane).requires_user_confirmation
+    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).requires_user_confirmation
 
 
 def _lane_max_candidates(lane: str, *, project_id: str = "teamos") -> int:
-    return crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id).max_candidates()
+    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING, project_id=project_id).max_candidates()
 
 
 def _lane_max_continuous_runtime_minutes(lane: str, *, project_id: str = "teamos") -> int:
-    return crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id).max_continuous_runtime_minutes()
+    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING, project_id=project_id).max_continuous_runtime_minutes()
 
 
 def _issue_type_token(lane: str) -> str:
@@ -1444,7 +1444,7 @@ def _merge_lane_state(target_id: str, lane: str, payload: dict[str, Any]) -> dic
 
 
 def _bug_dormant_after_zero_scans(*, project_id: str) -> int:
-    return crewai_workflow_registry.workflow_for_lane("bug", project_id=project_id).dormant_after_zero_scans()
+    return crewai_workflow_registry.workflow_for_lane_phase("bug", crewai_workflow_registry.PHASE_FINDING, project_id=project_id).dormant_after_zero_scans()
 
 
 def _has_unresolved_bug_tasks(*, project_id: str, target_id: str) -> bool:
@@ -1724,7 +1724,7 @@ def collect_repo_context(
 
 
 def _codex_structured_model() -> str:
-    return str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.4").strip()
+    return str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
 
 
 def _codex_structured(prompt: str, *, schema_model: type[BaseModel], timeout_sec: int = 120) -> BaseModel:
@@ -2036,16 +2036,16 @@ def _bump_version(version: str, bump: str) -> str:
 
 
 def _lane_default_version_bump(lane: str) -> str:
-    return crewai_workflow_registry.workflow_for_lane(lane).default_version_bump
+    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).default_version_bump
 
 
 def _lane_default_cooldown_hours(lane: str, *, requires_user_confirmation: bool) -> int:
     _ = requires_user_confirmation
-    return crewai_workflow_registry.workflow_for_lane(lane).cooldown_hours()
+    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).cooldown_hours()
 
 
 def _lane_default_baseline_action(lane: str, version_bump: str) -> str:
-    return crewai_workflow_registry.workflow_for_lane(lane).default_baseline_action(version_bump)
+    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).default_baseline_action(version_bump)
 
 
 def _coding_owner_role(lane: str) -> str:
@@ -2146,14 +2146,21 @@ def _ensure_codex_proxy_bypass() -> None:
     os.environ["no_proxy"] = resolved
 
 
-def _crewai_llm():
+def _crewai_llm(*, workflow: Any | None = None):
     os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
     crewai_runtime.require_crewai_importable(refresh=True)
     from crewai.llm import LLM
 
-    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.4").strip()
-    base_url = str(os.getenv("TEAMOS_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
-    api_key = str(os.getenv("TEAMOS_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
+    model = str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
+    base_url = str(os.getenv("TEAMOS_LLM_BASE_URL") or "").strip()
+    api_key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
+    if workflow is not None:
+        override_base_url = str(getattr(workflow, "llm_url", "") or "").strip()
+        override_api_key = str(getattr(workflow, "llm_api_key", "") or "").strip()
+        if override_base_url:
+            base_url = override_base_url
+        if override_api_key:
+            api_key = override_api_key
     auth_mode = str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower()
 
     logged_in = False
@@ -2163,9 +2170,10 @@ def _crewai_llm():
         except codex_llm.CodexUnavailable:
             logged_in = False
 
-    if logged_in and "codex" in model.lower():
+    explicit_llm_credentials = bool(api_key) or bool(base_url)
+
+    if logged_in and "codex" in model.lower() and not explicit_llm_credentials:
         os.environ["CREWAI_OPENAI_AUTH_MODE"] = "oauth_codex"
-        os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("OPENAI_OAUTH_ACCESS_TOKEN", None)
         os.environ.pop("OPENAI_ACCESS_TOKEN", None)
         api_key = ""
@@ -2188,9 +2196,15 @@ def _crewai_llm():
     kwargs: dict[str, Any] = {
         "model": model,
         "api": "responses",
-        "is_litellm": False,
+        "is_litellm": "openrouter" in model.lower(),
         "max_tokens": 4000,
     }
+    max_retries_raw = str(os.getenv("TEAMOS_CREWAI_MAX_RETRIES") or "").strip()
+    if max_retries_raw:
+        try:
+            kwargs["max_retries"] = max(0, int(max_retries_raw))
+        except Exception:
+            pass
     if any(token in model.lower() for token in ("gpt-5", "codex", "o1", "o3", "o4")):
         kwargs["reasoning_effort"] = reasoning_effort
     if base_url:
@@ -2821,10 +2835,10 @@ def kickoff_upgrade_plan(
     bug_scan_limit = _scan_limit(max_findings, _lane_max_candidates("bug", project_id=project_id))
     quality_scan_limit = _scan_limit(max_findings, _lane_max_candidates("quality", project_id=project_id))
     enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
-    feature_enabled = crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT in enabled_workflows
-    bug_enabled = crewai_role_registry.WORKFLOW_BUG_FIX in enabled_workflows
-    quality_enabled = crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT in enabled_workflows
-    process_enabled = crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT in enabled_workflows
+    feature_enabled = crewai_role_registry.WORKFLOW_FEATURE_FINDING in enabled_workflows
+    bug_enabled = crewai_role_registry.WORKFLOW_BUG_FINDING in enabled_workflows
+    quality_enabled = crewai_role_registry.WORKFLOW_QUALITY_FINDING in enabled_workflows
+    process_enabled = crewai_role_registry.WORKFLOW_PROCESS_FINDING in enabled_workflows
 
     if _use_bug_only_fast_path(project_id=project_id, enabled_workflows=enabled_workflows):
         return _kickoff_bug_only_plan(
@@ -4023,7 +4037,11 @@ def reconcile_feature_discussions(
         lane = str(proposal.get("lane") or "").strip().lower() or "feature"
         project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
         target_id = str(proposal.get("target_id") or "").strip()
-        workflow = crewai_workflow_registry.workflow_for_lane(lane, project_id=project_id)
+        workflow = crewai_workflow_registry.workflow_for_lane_phase(
+            lane,
+            crewai_workflow_registry.PHASE_DISCUSSION,
+            project_id=project_id,
+        )
         if not workflow.enabled:
             stats["skipped_disabled"] += 1
             continue
@@ -4160,7 +4178,11 @@ def _upsert_proposal(
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     finding = _localize_finding_to_zh(finding)
-    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
+    workflow = crewai_workflow_registry.workflow_for_lane_phase(
+        finding.lane,
+        crewai_workflow_registry.PHASE_FINDING,
+        project_id=project_id,
+    )
     if finding.work_items:
         finding = finding.model_copy(
             update={
@@ -4324,6 +4346,33 @@ def _find_existing_task(*, project_id: str, title: str, repo_locator: str, repo_
             improvement_store.upsert_delivery_task(doc)
             return {"task_id": str(doc.get("id") or "").strip(), "ledger_path": str(p), "doc": doc}
     return None
+
+
+def _task_issue_comment_reason(doc: dict[str, Any]) -> str:
+    status = str(doc.get("status") or "").strip().lower()
+    checkpoint = doc.get("checkpoint") or {}
+    if not isinstance(checkpoint, dict):
+        checkpoint = {}
+    stage = str(checkpoint.get("stage") or "").strip().lower()
+    execution = doc.get("self_upgrade_execution") or doc.get("repo_improvement_execution") or {}
+    if not isinstance(execution, dict):
+        execution = {}
+    feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
+    last_error = str(execution.get("last_error") or "").strip()
+    title = str(doc.get("title") or doc.get("summary") or doc.get("id") or "task").strip()
+    reason = f"Syncing Team OS issue metadata for `{title}`."
+    details: list[str] = []
+    if status:
+        details.append(f"status={status}")
+    if stage:
+        details.append(f"stage={stage}")
+    if feedback:
+        details.append(f"feedback={feedback[0]}")
+    elif last_error:
+        details.append(f"error={last_error}")
+    if details:
+        reason += " Reason: " + "; ".join(details[:3])
+    return reason
 
 
 def _ensure_task_record(
@@ -4776,12 +4825,14 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     issue_state = "closed" if str(doc.get("status") or "").strip().lower() in ("closed", "done") else "open"
     try:
         if issue_number > 0:
+            create_issue_comment(repo_locator, issue_number, body=_task_issue_comment_reason(doc))
             issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state=issue_state, milestone=milestone)
         else:
             created = _ensure_issue_record(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
             if created.error or not created.url:
                 return {"ok": False, "reason": created.error or "issue_create_failed", "title": created.title}
             issue_number = _issue_number_from_url(created.url)
+            create_issue_comment(repo_locator, issue_number, body=_task_issue_comment_reason(doc))
             issue = update_issue(repo_locator, issue_number, title=title, body=body, labels=labels, state=issue_state, milestone=milestone)
             links["issue"] = str(issue.url or created.url)
             doc["links"] = links
@@ -4962,10 +5013,10 @@ def _sync_panel(*, db, project_id: str) -> dict[str, Any]:
 def _enabled_planning_workflow_ids(*, project_id: str) -> set[str]:
     enabled: set[str] = set()
     for workflow_id in (
-        crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
-        crewai_role_registry.WORKFLOW_BUG_FIX,
-        crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
-        crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
+        crewai_role_registry.WORKFLOW_FEATURE_FINDING,
+        crewai_role_registry.WORKFLOW_BUG_FINDING,
+        crewai_role_registry.WORKFLOW_QUALITY_FINDING,
+        crewai_role_registry.WORKFLOW_PROCESS_FINDING,
     ):
         try:
             spec = crewai_workflow_registry.workflow_spec(workflow_id, project_id=project_id)
@@ -4978,7 +5029,7 @@ def _enabled_planning_workflow_ids(*, project_id: str) -> set[str]:
 
 def _use_bug_only_fast_path(*, project_id: str, enabled_workflows: set[str] | None = None) -> bool:
     workflows = enabled_workflows if enabled_workflows is not None else _enabled_planning_workflow_ids(project_id=project_id)
-    return workflows == {crewai_role_registry.WORKFLOW_BUG_FIX}
+    return workflows == {crewai_role_registry.WORKFLOW_BUG_FINDING}
 
 
 def _planning_role_ids(*, project_id: str) -> set[str]:
@@ -4990,13 +5041,13 @@ def _planning_role_ids(*, project_id: str) -> set[str]:
         ROLE_PLAN_REVIEW_AGENT,
         ROLE_PLAN_QA_AGENT,
     }
-    if crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT in enabled_workflows:
+    if crewai_role_registry.WORKFLOW_FEATURE_FINDING in enabled_workflows:
         roles.update({ROLE_PRODUCT_MANAGER, ROLE_MILESTONE_MANAGER})
-    if crewai_role_registry.WORKFLOW_BUG_FIX in enabled_workflows:
+    if crewai_role_registry.WORKFLOW_BUG_FINDING in enabled_workflows:
         roles.add(ROLE_TEST_MANAGER)
-    if crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT in enabled_workflows:
+    if crewai_role_registry.WORKFLOW_QUALITY_FINDING in enabled_workflows:
         roles.update({ROLE_TEST_CASE_GAP_AGENT, ROLE_CODE_QUALITY_ANALYST})
-    if crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT in enabled_workflows:
+    if crewai_role_registry.WORKFLOW_PROCESS_FINDING in enabled_workflows:
         roles.add(ROLE_PROCESS_OPTIMIZATION_ANALYST)
     return roles
 
@@ -5036,7 +5087,11 @@ def _record_from_materialized_item(
     proposal_id: str,
     dry_run: bool,
 ) -> dict[str, Any]:
-    workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
+    workflow = crewai_workflow_registry.workflow_for_lane_phase(
+        finding.lane,
+        crewai_workflow_registry.PHASE_CODING,
+        project_id=project_id,
+    )
     if dry_run:
         return {
             "workflow_id": workflow.workflow_id,
@@ -5406,7 +5461,11 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     bug_finding_count = len([f for f in list(plan.findings or []) if str(f.lane or "").strip().lower() == "bug"])
     for finding in plan.findings:
-        workflow = crewai_workflow_registry.workflow_for_lane(finding.lane, project_id=project_id)
+        workflow = crewai_workflow_registry.workflow_for_lane_phase(
+            finding.lane,
+            crewai_workflow_registry.PHASE_FINDING,
+            project_id=project_id,
+        )
         if not workflow.enabled:
             db.add_event(
                 event_type="REPO_IMPROVEMENT_FINDING_SKIPPED",
