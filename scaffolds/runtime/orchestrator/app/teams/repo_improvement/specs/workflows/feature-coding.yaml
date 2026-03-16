@@ -1,0 +1,50 @@
+workflow_id: feature-coding
+lane: feature
+phase: coding
+display_name_zh: 功能交付流程
+enabled: true
+description: Deliver approved feature tasks through coding, review, QA, and release.
+task_source: proposal
+requires_user_confirmation: true
+materialize_requires_approval: true
+default_version_bump: minor
+baseline_action_default: feature_followup
+baseline_action_by_bump:
+  major: new_baseline
+  minor: new_baseline
+stages:
+  - delivery
+runtime_policy:
+  max_candidates: 1
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+  cooldown_hours: 1
+loop:
+  enabled: true
+  run_on_startup: false
+  interval_sec: 180
+  initial_delay_sec: 45
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+agents:
+  - agent_id: scheduler
+    role_id: Scheduler-Agent
+  - agent_id: owner
+    role_id: Feature-Coding-Agent
+  - agent_id: reviewer
+    role_id: Review-Agent
+  - agent_id: qa_gate
+    role_id: QA-Agent
+  - agent_id: docs
+    role_id: Documentation-Agent
+  - agent_id: release
+    role_id: Release-Agent
+tasks:
+  - task_id: delivery_pipeline
+    kind: skill
+    skill_id: delivery.run-task-pipeline

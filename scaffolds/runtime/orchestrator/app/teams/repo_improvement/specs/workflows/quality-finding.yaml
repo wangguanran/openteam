@@ -1,0 +1,159 @@
+workflow_id: quality-finding
+lane: quality
+phase: finding
+display_name_zh: 质量发现流程
+enabled: true
+description: Discover code-quality improvements and create reviewable proposals.
+task_source: proposal
+requires_user_confirmation: true
+materialize_requires_approval: true
+default_version_bump: none
+baseline_action_default: quality_improvement
+stages:
+  - planning
+runtime_policy:
+  max_candidates: 4
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+  cooldown_hours: 1
+loop:
+  enabled: true
+  run_on_startup: true
+  interval_sec: 300
+  initial_delay_sec: 60
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+agents:
+  - agent_id: test_gap
+    role_id: Test-Case-Gap-Agent
+  - agent_id: quality_scan
+    role_id: Code-Quality-Analyst
+  - agent_id: drafter
+    role_id: Issue-Drafter
+  - agent_id: reviewer
+    role_id: Plan-Review-Agent
+  - agent_id: qa_gate
+    role_id: Plan-QA-Agent
+tasks:
+  - task_id: prepare_context
+    kind: skill
+    skill_id: repo.collect-context
+  - task_id: test_gap_scan
+    kind: crewai_task
+    agent_id: test_gap
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+    description_template: |
+      Analyze the repository context as a dedicated test-gap analyst.
+      Rules:
+      - Return at most {max_findings} high-value blackbox or whitebox test-gap candidates.
+      - For each candidate, distinguish blackbox vs whitebox and identify target_paths, missing_paths, suggested_test_files, and why the path is currently uncovered.
+      - Keep the response concise and use Simplified Chinese for user-facing text.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: A concise shortlist of test-gap findings.
+  - task_id: code_quality_scan
+    kind: crewai_task
+    agent_id: quality_scan
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+    description_template: |
+      Review the repository context as a code-quality analyst.
+      Rules:
+      - Return at most {max_findings} concrete code-quality candidates.
+      - Focus on duplicated logic, stale code, oversized modules, safer deletions, and reuse boundaries.
+      - Do not spend candidates on pure product features.
+      - Keep the response concise and use Simplified Chinese for user-facing text.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: A concise shortlist of code-quality findings.
+  - task_id: draft_plan
+    kind: crewai_task
+    agent_id: drafter
+    output_model: UpgradePlan
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      test_gap_scan: $tasks.test_gap_scan.outputs.raw
+      code_quality_scan: $tasks.code_quality_scan.outputs.raw
+      current_version: $tasks.prepare_context.outputs.current_version
+    description_template: |
+      Transform the quality scan results into an UpgradePlan JSON.
+      Rules:
+      - Only create lane=quality and kind=CODE_QUALITY findings.
+      - version_bump must be none.
+      - requires_user_confirmation must be true.
+      - Test-gap findings must preserve test_gap_type, target_paths, missing_paths, suggested_test_files, and why_not_covered.
+      - Every work_item must stay small, executable, and include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint.
+      - Keep all user-facing natural language fields in Simplified Chinese.
+
+      Current version: {current_version}
+
+      Test-gap scan:
+      {test_gap_scan}
+
+      Code-quality scan:
+      {code_quality_scan}
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: UpgradePlan JSON for quality finding.
+  - task_id: review_plan
+    kind: crewai_task
+    agent_id: reviewer
+    output_model: UpgradePlan
+    inputs:
+      draft_plan: $tasks.draft_plan.outputs.raw
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+    description_template: |
+      Review the drafted quality UpgradePlan and return corrected UpgradePlan JSON.
+      Rules:
+      - Reject vague cleanup work and unscoped refactors.
+      - Keep only lane=quality findings.
+      - Preserve test-gap typing and path details when present.
+      - Keep all user-facing natural language fields in Simplified Chinese.
+
+      Draft plan:
+      {draft_plan}
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: Reviewed UpgradePlan JSON.
+  - task_id: qa_gate
+    kind: crewai_task
+    agent_id: qa_gate
+    output_model: UpgradePlan
+    inputs:
+      reviewed_plan: $tasks.review_plan.outputs.raw
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+    description_template: |
+      Finalize the reviewed quality UpgradePlan from a QA perspective and return UpgradePlan JSON.
+      Rules:
+      - Ensure every work_item has explicit tests and acceptance.
+      - Quality findings must remain pending approval before coding.
+      - Keep all user-facing natural language fields in Simplified Chinese.
+
+      Reviewed plan:
+      {reviewed_plan}
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: QA-approved UpgradePlan JSON.
+  - task_id: materialize_plan
+    kind: skill
+    skill_id: planning.materialize-findings
+    inputs:
+      plan: $tasks.qa_gate.outputs.json
+      project_id: $tasks.prepare_context.outputs.project_id
+      target_id: $tasks.prepare_context.outputs.target_id
+      repo_root: $tasks.prepare_context.outputs.repo_root
+      repo_locator: $tasks.prepare_context.outputs.repo_locator
+      current_version: $tasks.prepare_context.outputs.current_version

@@ -1,7 +1,7 @@
-"""Compatibility wrapper for repo improvement role registry."""
+"""Compatibility wrapper for role library registry."""
 
 import sys
 
-from .teams.repo_improvement.registries import roles as _impl
+from .role_library import registry as _impl
 
 sys.modules[__name__] = _impl

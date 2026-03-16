@@ -14,7 +14,7 @@ if str(ORCHESTRATOR_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_ROOT))
 
 from app import improvement_store  # noqa: E402
-from app.teams.repo_improvement import planning  # noqa: E402
+from app.domains.repo_improvement import proposal_runtime as planning  # noqa: E402
 
 
 def _print_section(title: str) -> None:

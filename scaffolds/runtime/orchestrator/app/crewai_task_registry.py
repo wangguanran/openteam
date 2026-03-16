@@ -1,7 +1,7 @@
-"""Compatibility wrapper for repo improvement task registry."""
+"""Compatibility wrapper for CrewAI task registry."""
 
 import sys
 
-from .teams.repo_improvement.registries import tasks as _impl
+from .engines.crewai import task_registry as _impl
 
 sys.modules[__name__] = _impl

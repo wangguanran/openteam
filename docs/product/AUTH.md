@@ -35,8 +35,7 @@ codex login status
 如果你明确允许使用 API Key（例如在无法使用 OAuth 的环境），只能通过环境变量提供：
 
 ```bash
-export OPENAI_API_KEY="***"
+export TEAMOS_LLM_API_KEY="***"
 ```
 
-禁止将 `OPENAI_API_KEY` 写入 git 或任何仓库文件；仅允许本地 `.env`（不入库）。
-
+禁止将 `TEAMOS_LLM_API_KEY` 写入 git 或任何仓库文件；仅允许本地 `.env`（不入库）。

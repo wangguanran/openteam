@@ -18,22 +18,6 @@ from app import crewai_workflow_registry  # noqa: E402
 
 
 class CrewAIWorkflowRegistryTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self._orig_env = dict(os.environ)
-        for key in list(os.environ):
-            if key.startswith("TEAMOS_REPO_IMPROVEMENT_BUG_"):
-                os.environ.pop(key, None)
-            if key.startswith("TEAMOS_REPO_IMPROVEMENT_FEATURE_"):
-                os.environ.pop(key, None)
-            if key.startswith("TEAMOS_REPO_IMPROVEMENT_QUALITY_"):
-                os.environ.pop(key, None)
-            if key.startswith("TEAMOS_REPO_IMPROVEMENT_PROCESS_"):
-                os.environ.pop(key, None)
-
-    def tearDown(self) -> None:
-        os.environ.clear()
-        os.environ.update(self._orig_env)
-
     def test_feature_workflow_requires_approval_and_confirmation(self):
         spec = crewai_workflow_registry.workflow_for_lane("feature")
 
@@ -46,13 +30,16 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertEqual(spec.default_baseline_action("patch"), "feature_followup")
         self.assertFalse(spec.should_materialize(status="COLLECTING", due=True))
         self.assertTrue(spec.should_materialize(status="APPROVED", due=True))
+        self.assertTrue(spec.loop.enabled)
+        self.assertEqual(spec.phase, crewai_workflow_registry.PHASE_FINDING)
+        self.assertTrue(spec.tasks)
 
     def test_bug_workflow_directly_materializes(self):
         spec = crewai_workflow_registry.workflow_for_lane("bug")
 
         self.assertFalse(spec.uses_proposal)
         self.assertEqual(spec.default_version_bump, "patch")
-        self.assertEqual(spec.max_candidates(), 0)
+        self.assertEqual(spec.max_candidates(), 3)
         self.assertEqual(spec.dormant_after_zero_scans(), 3)
         self.assertEqual(spec.default_baseline_action("patch"), "patch_release")
         self.assertTrue(spec.should_materialize(status="", due=False))
@@ -65,11 +52,6 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertTrue(spec.should_materialize(status="COLLECTING", due=True))
         self.assertFalse(spec.should_materialize(status="HOLD", due=True))
         self.assertFalse(spec.should_materialize(status="APPROVED", due=False))
-
-    def test_quality_workflow_uses_env_override_for_cooldown(self):
-        with mock.patch.dict(os.environ, {"TEAMOS_REPO_IMPROVEMENT_QUALITY_COOLDOWN_HOURS": "6"}, clear=False):
-            spec = crewai_workflow_registry.workflow_for_lane("quality")
-            self.assertEqual(spec.cooldown_hours(), 6)
 
     def test_project_workflow_override_can_disable_feature_lane(self):
         with mock.patch(
@@ -98,7 +80,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
                 "repo_improvement": {
                     "workflow_settings": {
                         "feature-improvement": {
-                            "max_candidates": 2,
+                            "runtime_policy": {"max_candidates": 2},
                         }
                     }
                 }
@@ -115,7 +97,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
                 "repo_improvement": {
                     "workflow_settings": {
                         "bug-fix": {
-                            "dormant_after_zero_scans": 1,
+                            "runtime_policy": {"dormant_after_zero_scans": 1},
                         }
                     }
                 }
@@ -132,9 +114,11 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
                 "repo_improvement": {
                     "workflow_settings": {
                         "bug-fix": {
-                            "active_window_start_hour": 9,
-                            "active_window_end_hour": 18,
-                            "max_continuous_runtime_minutes": 60,
+                            "runtime_policy": {
+                                "active_window_start_hour": 9,
+                                "active_window_end_hour": 18,
+                                "max_continuous_runtime_minutes": 60,
+                            }
                         }
                     }
                 }
@@ -146,28 +130,20 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertEqual(spec.active_window_end_hour(), 18)
         self.assertEqual(spec.max_continuous_runtime_minutes(), 60)
 
-    def test_lane_named_env_can_disable_bug_workflow(self):
-        with mock.patch.dict(os.environ, {"TEAMOS_REPO_IMPROVEMENT_BUG_ENABLED": "0"}, clear=False):
-            spec = crewai_workflow_registry.workflow_for_lane("bug")
+    def test_list_workflows_loads_agents_tasks_and_loop_config(self):
+        workflows = crewai_workflow_registry.list_workflows(project_id="teamos")
+        ids = {spec.workflow_id for spec in workflows}
 
-        self.assertFalse(spec.enabled)
-        self.assertEqual(spec.disabled_reason, "workflow_disabled_by_env")
+        self.assertIn("bug-finding", ids)
+        self.assertIn("feature-discussion", ids)
+        self.assertIn("process-coding", ids)
 
-    def test_lane_named_env_can_override_quality_runtime_window(self):
-        with mock.patch.dict(
-            os.environ,
-            {
-                "TEAMOS_REPO_IMPROVEMENT_QUALITY_ACTIVE_WINDOW_START_HOUR": "9",
-                "TEAMOS_REPO_IMPROVEMENT_QUALITY_ACTIVE_WINDOW_END_HOUR": "18",
-                "TEAMOS_REPO_IMPROVEMENT_QUALITY_MAX_CONTINUOUS_RUNTIME_MINUTES": "45",
-            },
-            clear=False,
-        ):
-            spec = crewai_workflow_registry.workflow_for_lane("quality")
-
-        self.assertEqual(spec.active_window_start_hour(), 9)
-        self.assertEqual(spec.active_window_end_hour(), 18)
-        self.assertEqual(spec.max_continuous_runtime_minutes(), 45)
+        bug_finding = next(spec for spec in workflows if spec.workflow_id == "bug-finding")
+        self.assertEqual(bug_finding.loop.interval_sec, 300)
+        self.assertEqual(bug_finding.loop.concurrency, 1)
+        self.assertTrue(any(agent.agent_id == "scanner" for agent in bug_finding.agents))
+        self.assertTrue(any(task.task_id == "materialize_plan" for task in bug_finding.tasks))
+        self.assertTrue(any(task.skill_id == "planning.materialize-findings" for task in bug_finding.tasks))
 
     def test_workflow_policy_blocks_outside_active_window(self):
         spec = crewai_workflow_registry.workflow_for_lane("bug")

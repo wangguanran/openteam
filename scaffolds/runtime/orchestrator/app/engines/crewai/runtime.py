@@ -37,8 +37,8 @@ def _normalize_path(raw: str) -> Path:
 def codex_oauth_should_bypass_proxy(*, model: str = "", auth_mode: str = "") -> bool:
     if not _env_truthy("TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX", "1"):
         return False
-    resolved_model = str(model or os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "").strip().lower()
-    resolved_auth_mode = str(auth_mode or os.getenv("TEAMOS_CREWAI_AUTH_MODE") or os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower()
+    resolved_model = str(model or os.getenv("TEAMOS_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "").strip().lower()
+    resolved_auth_mode = str(auth_mode or os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower()
     return "codex" in resolved_model and resolved_auth_mode == "oauth_codex"
 
 

@@ -1,7 +1,7 @@
-"""Compatibility wrapper for repo improvement workflow registry."""
+"""Compatibility wrapper for CrewAI workflow registry."""
 
 import sys
 
-from .teams.repo_improvement.registries import workflows as _impl
+from .engines.crewai import workflow_registry as _impl
 
 sys.modules[__name__] = _impl

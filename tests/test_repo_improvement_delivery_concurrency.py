@@ -15,20 +15,12 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
-from app.teams.repo_improvement import delivery as repo_delivery  # noqa: E402
+from app.domains.repo_improvement import task_runtime as repo_delivery  # noqa: E402
 
 
 class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
     def test_delivery_worker_concurrency_defaults_to_ten(self):
-        with mock.patch.dict(
-            os.environ,
-            {
-                "TEAMOS_REPO_IMPROVEMENT_DELIVERY_CONCURRENCY": "",
-                "TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP": "",
-            },
-            clear=False,
-        ):
-            self.assertEqual(repo_delivery._delivery_worker_concurrency(None), 10)
+        self.assertEqual(repo_delivery._delivery_worker_concurrency(None), 10)
 
     def test_run_delivery_sweep_processes_multiple_tasks_concurrently(self):
         tasks = [
@@ -66,32 +58,32 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
                     overlap.set()
             return {"ok": True, "task_id": task_id, "status": "closed", "project_id": "demo"}
 
-        fake_workflow = mock.Mock(workflow_id="bug-fix")
+        fake_workflow = mock.Mock(workflow_id="bug-coding")
         fake_runtime_policy = mock.Mock(allowed=True, reason="")
 
-        with mock.patch("app.teams.repo_improvement.delivery.list_delivery_tasks", return_value=tasks), mock.patch(
-            "app.teams.repo_improvement.delivery.crewai_workflow_registry.workflow_for_lane",
+        with mock.patch("app.domains.repo_improvement.task_runtime.list_delivery_tasks", return_value=tasks), mock.patch(
+            "app.domains.repo_improvement.task_runtime.crewai_workflow_registry.workflow_for_lane_phase",
             return_value=fake_workflow,
         ), mock.patch(
-            "app.teams.repo_improvement.delivery.crewai_workflow_registry.evaluate_workflow_runtime_policy",
+            "app.domains.repo_improvement.task_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
             return_value=fake_runtime_policy,
         ), mock.patch(
-            "app.teams.repo_improvement.delivery.crewai_workflow_registry.update_workflow_runtime_state",
+            "app.domains.repo_improvement.task_runtime.crewai_workflow_registry.update_workflow_runtime_state",
             return_value={},
         ), mock.patch(
-            "app.teams.repo_improvement.delivery._claim_delivery_task_lease",
+            "app.domains.repo_improvement.task_runtime._claim_delivery_task_lease",
             side_effect=[object(), object()],
         ), mock.patch(
-            "app.teams.repo_improvement.delivery._load_yaml",
+            "app.domains.repo_improvement.task_runtime._load_yaml",
             return_value={},
         ), mock.patch(
-            "app.teams.repo_improvement.delivery.execute_task_delivery",
+            "app.domains.repo_improvement.task_runtime.execute_task_delivery",
             side_effect=_fake_execute,
         ), mock.patch(
-            "app.teams.repo_improvement.delivery._release_delivery_task_lease",
+            "app.domains.repo_improvement.task_runtime._release_delivery_task_lease",
             return_value=None,
         ), mock.patch(
-            "app.teams.repo_improvement.delivery.delivery_summary",
+            "app.domains.repo_improvement.task_runtime.delivery_summary",
             return_value={"total": 2, "queued": 0, "coding": 2},
         ):
             out = repo_delivery.run_delivery_sweep(

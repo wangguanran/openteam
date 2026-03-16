@@ -1,0 +1,23 @@
+skill_id: repo.collect-context
+handler_id: repo.collect-context
+display_name_zh: 采集仓库上下文
+description: Resolve the target repository and collect normalized repo context for downstream workflow tasks.
+category: repository
+idempotent: true
+supports_dry_run: true
+inputs_schema:
+  project_id: string
+  target_id: string
+  repo_path: string
+  repo_url: string
+  repo_locator: string
+outputs_schema:
+  target: object
+  repo_context: object
+  repo_locator: string
+  current_version: string
+  bug_scan_policy: object
+tags:
+  - repo
+  - context
+  - target

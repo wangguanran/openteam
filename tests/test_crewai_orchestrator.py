@@ -131,14 +131,14 @@ class CrewOrchestratorTests(unittest.TestCase):
             "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
         ), mock.patch(
-            "app.crewai_orchestrator.crewai_self_upgrade.run_self_upgrade",
+            "app.crewai_orchestrator.proposal_runtime.run_self_upgrade",
             return_value={
                 "ok": True,
                 "summary": "planned",
                 "records": [{"title": "Add CI", "task_id": "TEAMOS-0001"}],
                 "panel_sync": {"ok": True},
                 "report_path": "/tmp/report.json",
-                "write_delegate": {"writer": "crewai_agents", "write_mode": "crewai_self_upgrade"},
+                "write_delegate": {"writer": "crewai_agents", "write_mode": "workflow_runner"},
             },
         ) as mocked_run:
             out = run_once(db=db, spec=spec, actor="test")
@@ -148,7 +148,7 @@ class CrewOrchestratorTests(unittest.TestCase):
         started = next(e for e in db.events if e["event_type"] == "RUN_STARTED")
         self.assertEqual(started["payload"]["write_delegate"]["writer"], "crewai_agents")
         finished = next(e for e in db.events if e["event_type"] == "RUN_FINISHED")
-        self.assertEqual(finished["payload"]["write_delegate"]["write_mode"], "crewai_self_upgrade")
+        self.assertEqual(finished["payload"]["write_delegate"]["write_mode"], "workflow_runner")
 
 
 if __name__ == "__main__":

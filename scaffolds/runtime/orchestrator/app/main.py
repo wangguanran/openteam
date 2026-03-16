@@ -33,13 +33,13 @@ from .runtime_db import RunRow, RuntimeDB
 from . import cluster_manager
 from . import crewai_orchestrator
 from . import crewai_role_registry
-from . import crewai_self_upgrade
-from . import crewai_self_upgrade_delivery
 from . import crewai_runtime
 from . import improvement_store
 from . import openclaw_reporter
 from . import crew_tools
-from .teams.repo_improvement.registries import workflows as repo_improvement_workflows
+from .domains.repo_improvement import proposal_runtime
+from .domains.repo_improvement import task_runtime
+from .engines.crewai import workflow_registry as repo_improvement_workflows
 from .state_store import (
     StateError,
     ensure_instance_id,
@@ -111,22 +111,6 @@ _RUN_STATE_ACTIVE = frozenset({"RUNNING", "PAUSED"})
 _REPO_IMPROVEMENT_LOOP_STATE_LOCK = threading.Lock()
 _REPO_IMPROVEMENT_LOOP_STATE: dict[str, dict[str, Any]] = {}
 _REPO_IMPROVEMENT_LOOP_CLEANUP = "repo_improvement_cleanup"
-_REPO_IMPROVEMENT_LOOP_STARTUP = "repo_improvement_startup"
-_REPO_IMPROVEMENT_LOOP_DISCOVERY = "repo_improvement_discovery"
-_REPO_IMPROVEMENT_LOOP_DISCUSSION = "repo_improvement_discussion"
-_REPO_IMPROVEMENT_LOOP_DELIVERY = "repo_improvement_delivery"
-_REPO_IMPROVEMENT_PUBLIC_WORKFLOW_PHASES: tuple[tuple[str, str, str], ...] = (
-    ("bug-finding", "bug", "discovery"),
-    ("bug-coding", "bug", "delivery"),
-    ("feature-finding", "feature", "discovery"),
-    ("feature-discussion", "feature", "discussion"),
-    ("feature-coding", "feature", "delivery"),
-    ("quality-finding", "quality", "discovery"),
-    ("quality-discussion", "quality", "discussion"),
-    ("quality-coding", "quality", "delivery"),
-    ("process-finding", "process", "discovery"),
-    ("process-coding", "process", "delivery"),
-)
 
 
 def _repo_improvement_loop_worker_concurrency(env_name: str, default: int = 10) -> int:
@@ -197,56 +181,34 @@ def _repo_improvement_stage_loop_state_snapshot() -> dict[str, dict[str, Any]]:
 
 
 def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: str) -> dict[str, dict[str, Any]]:
+    statuses: dict[str, dict[str, Any]] = {}
     stage_loops = _repo_improvement_stage_loop_state_snapshot()
-    discovery_loop = dict(stage_loops.get(_REPO_IMPROVEMENT_LOOP_DISCOVERY) or {})
-    discussion_loop = dict(stage_loops.get(_REPO_IMPROVEMENT_LOOP_DISCUSSION) or {})
-    delivery_loop = dict(stage_loops.get(_REPO_IMPROVEMENT_LOOP_DELIVERY) or {})
-    lanes = {
-        "bug": crewai_role_registry.WORKFLOW_BUG_FIX,
-        "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
-        "quality": crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
-        "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
-    }
-    lane_statuses: dict[str, dict[str, Any]] = {}
-    for lane, workflow_id in lanes.items():
-        try:
-            spec = repo_improvement_workflows.workflow_spec(workflow_id, project_id=project_id)
-        except Exception:
-            continue
+    for spec in repo_improvement_workflows.list_workflows(project_id=project_id):
+        phase_payload = dict(stage_loops.get(spec.workflow_id) or {})
         runtime_state = (
-            repo_improvement_workflows.workflow_runtime_state(target_id, workflow_id)
+            repo_improvement_workflows.workflow_runtime_state(target_id, spec.workflow_id)
             if str(target_id or "").strip()
             else {}
         )
-        phases: dict[str, dict[str, Any]] = {
-            "discovery": discovery_loop,
-            "delivery": delivery_loop,
-        }
-        if bool(spec.requires_user_confirmation):
-            phases["discussion"] = discussion_loop
-        phase_items = [dict(item) for item in phases.values() if isinstance(item, dict)]
-        active_phase = next((item for item in phase_items if str(item.get("status") or "").strip().lower() == "running"), None)
-        if active_phase is None:
-            active_phase = next((item for item in phase_items if str(item.get("status") or "").strip().lower() in ("waiting", "sleeping", "done")), None)
-        status = "disabled"
-        current_action = str(spec.disabled_reason or "").strip() or "workflow disabled"
-        if bool(spec.enabled):
-            runtime_reason = str(runtime_state.get("last_reason") or "").strip()
-            status = "ready"
-            current_action = "workflow ready for repo-improvement scans"
-            if str(runtime_state.get("status") or "").strip().lower() == "paused":
-                status = "paused"
-                current_action = runtime_reason or "workflow paused by runtime policy"
-            elif active_phase:
-                status = str(active_phase.get("status") or "").strip().lower() or "ready"
-                current_action = str(active_phase.get("current_action") or "").strip() or current_action
-        lane_statuses[lane] = {
-            "workflow_id": workflow_id,
-            "lane": lane,
+        phase_enabled = bool(spec.enabled)
+        phase_status = str(phase_payload.get("status") or "").strip().lower() or ("ready" if phase_enabled else "disabled")
+        current_action = str(phase_payload.get("current_action") or "").strip()
+        runtime_reason = str(runtime_state.get("last_reason") or "").strip()
+        if phase_enabled and str(runtime_state.get("status") or "").strip().lower() == "paused":
+            phase_status = "paused"
+            current_action = runtime_reason or "workflow paused by runtime policy"
+        if not current_action:
+            current_action = f"{spec.workflow_id} ready"
+        status_row = {
+            "public_workflow_id": spec.workflow_id,
+            "workflow_id": spec.workflow_id,
+            "canonical_workflow_id": spec.workflow_id,
+            "phase": spec.phase,
+            "lane": spec.lane,
             "display_name_zh": str(spec.display_name_zh or "").strip(),
-            "enabled": bool(spec.enabled),
-            "disabled_reason": str(spec.disabled_reason or "").strip(),
-            "status": status,
+            "enabled": phase_enabled,
+            "disabled_reason": "" if phase_enabled else (str(spec.disabled_reason or "").strip() or f"{spec.workflow_id}_disabled"),
+            "status": phase_status,
             "current_action": current_action,
             "max_candidates": int(spec.max_candidates()),
             "cooldown_hours": int(spec.cooldown_hours()),
@@ -254,50 +216,10 @@ def _repo_improvement_workflow_status_snapshot(*, target_id: str, project_id: st
             "active_window_end_hour": int(spec.active_window_end_hour()),
             "max_continuous_runtime_minutes": int(spec.max_continuous_runtime_minutes()),
             "dormant_after_zero_scans": int(spec.dormant_after_zero_scans()),
-            "phases": phases,
             "runtime_state": runtime_state,
+            "workflow_root": spec.lane,
         }
-    statuses: dict[str, dict[str, Any]] = {}
-    phase_loop_map = {
-        "discovery": discovery_loop,
-        "discussion": discussion_loop,
-        "delivery": delivery_loop,
-    }
-    for public_id, lane, phase in _REPO_IMPROVEMENT_PUBLIC_WORKFLOW_PHASES:
-        lane_status = dict(lane_statuses.get(lane) or {})
-        if not lane_status:
-            continue
-        phase_payload = dict(phase_loop_map.get(phase) or {})
-        if phase == "discussion" and not bool((lane_status.get("runtime_state") or {}).get("status")) and not bool(lane_status.get("phases", {}).get("discussion")):
-            if not bool(phase_payload):
-                phase_payload = {}
-        if phase == "discussion" and phase_payload == {} and lane not in ("feature", "quality"):
-            continue
-        phase_enabled = bool(lane_status.get("enabled"))
-        if phase == "discussion":
-            phase_enabled = phase_enabled and lane in ("feature", "quality")
-        phase_status = str(phase_payload.get("status") or "").strip().lower() or ("ready" if phase_enabled else "disabled")
-        current_action = str(phase_payload.get("current_action") or "").strip()
-        if not current_action:
-            current_action = {
-                "discovery": f"{lane} finding workflow ready",
-                "discussion": f"{lane} discussion workflow ready",
-                "delivery": f"{lane} coding workflow ready",
-            }.get(phase, "workflow ready")
-        status_row = dict(lane_status)
-        status_row.update(
-            {
-                "public_workflow_id": public_id,
-                "workflow_id": public_id,
-                "phase": phase,
-                "status": phase_status,
-                "current_action": current_action,
-                "enabled": phase_enabled,
-                "disabled_reason": "" if phase_enabled else (str(lane_status.get("disabled_reason") or "").strip() or f"{public_id}_disabled"),
-                "workflow_root": lane,
-            }
-        )
-        statuses[public_id] = status_row
+        statuses[spec.workflow_id] = status_row
     return statuses
 
 
@@ -600,7 +522,7 @@ def _team_os_checks(team_os_path: str) -> dict[str, Any]:
 
 
 def _db() -> RuntimeDB:
-    db_path = os.getenv("RUNTIME_DB_PATH")
+    db_path = os.getenv("TEAMOS_RUNTIME_DB_PATH")
     if not db_path:
         db_path = str(runtime_state_root() / "runtime.db")
     return RuntimeDB(db_path)
@@ -613,15 +535,15 @@ _PANEL_DIRTY: set[str] = set()
 _PANEL_LOCK = threading.Lock()
 _REPO_IMPROVEMENT_STALE_AGENT_ROLES = frozenset(
     {
-        crewai_self_upgrade.ROLE_PRODUCT_MANAGER,
-        crewai_self_upgrade.ROLE_TEST_MANAGER,
-        crewai_self_upgrade.ROLE_TEST_CASE_GAP_AGENT,
-        crewai_self_upgrade.ROLE_ISSUE_DRAFTER,
-        crewai_self_upgrade.ROLE_PLAN_REVIEW_AGENT,
-        crewai_self_upgrade.ROLE_PLAN_QA_AGENT,
-        crewai_self_upgrade.ROLE_MILESTONE_MANAGER,
-        crewai_self_upgrade.ROLE_PROCESS_OPTIMIZATION_ANALYST,
-        crewai_self_upgrade.ROLE_CODE_QUALITY_ANALYST,
+        proposal_runtime.ROLE_PRODUCT_MANAGER,
+        proposal_runtime.ROLE_TEST_MANAGER,
+        proposal_runtime.ROLE_TEST_CASE_GAP_AGENT,
+        proposal_runtime.ROLE_ISSUE_DRAFTER,
+        proposal_runtime.ROLE_PLAN_REVIEW_AGENT,
+        proposal_runtime.ROLE_PLAN_QA_AGENT,
+        proposal_runtime.ROLE_MILESTONE_MANAGER,
+        proposal_runtime.ROLE_PROCESS_OPTIMIZATION_ANALYST,
+        proposal_runtime.ROLE_CODE_QUALITY_ANALYST,
         "Scheduler-Agent",
         "Release-Agent",
         "Process-Metrics-Agent",
@@ -792,14 +714,10 @@ def _iso_age_seconds(ts: Any) -> float:
 
 
 def _repo_improvement_env(name: str, default: str = "", *, legacy_name: str = "") -> str:
+    _ = legacy_name
     raw = os.getenv(name)
     if raw is not None:
         return raw
-    legacy = legacy_name.strip() or name.replace("TEAMOS_REPO_IMPROVEMENT_", "TEAMOS_SELF_UPGRADE_")
-    if legacy and legacy != name:
-        legacy_raw = os.getenv(legacy)
-        if legacy_raw is not None:
-            return legacy_raw
     return default
 
 
@@ -848,7 +766,7 @@ def _is_repo_improvement_run(run: Any, *, known_run_ids: set[str]) -> bool:
 
 
 def _cleanup_stale_repo_improvement_activity() -> None:
-    ttl_sec = max(300, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", "900") or "900"))
+    ttl_sec = max(300, int(os.getenv("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC", "900") or "900"))
     known_run_ids = _repo_improvement_run_id_set()
 
     for run in DB.list_runs():
@@ -1043,6 +961,47 @@ def _repo_improvement_delivery_lock_key(
     return f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
 
 
+def _repo_improvement_active_run_matches(
+    run: Any,
+    *,
+    project_id: str,
+    workstream_id: str,
+    lock_key: str,
+) -> bool:
+    run_state = _normalize_run_state(getattr(run, "state", ""))
+    if run_state not in _RUN_STATE_ACTIVE:
+        return False
+    if str(getattr(run, "project_id", "") or "").strip() != str(project_id or "").strip():
+        return False
+    if str(getattr(run, "workstream_id", "") or "").strip() != str(workstream_id or "").strip():
+        return False
+    existing_key = _repo_improvement_lock_key(
+        project_id=str(getattr(run, "project_id", "") or "").strip(),
+        target_id="",
+        repo_path="",
+        repo_url="",
+        repo_locator="",
+    )
+    run_objective = str(getattr(run, "objective", "") or "").strip().lower()
+    if existing_key == lock_key:
+        return True
+    if "improvement sweep" in run_objective or "repo-improvement" in run_objective or "self-upgrade" in run_objective:
+        return existing_key == f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+    return False
+
+
+def _active_repo_improvement_run_for_scope(
+    *,
+    project_id: str,
+    workstream_id: str,
+    lock_key: str,
+) -> Optional[Any]:
+    for run in DB.list_runs(project_id=project_id, workstream_id=workstream_id):
+        if _repo_improvement_active_run_matches(run, project_id=project_id, workstream_id=workstream_id, lock_key=lock_key):
+            return run
+    return None
+
+
 def _run_self_upgrade_iteration(
     *,
     actor: str,
@@ -1089,6 +1048,38 @@ def _run_self_upgrade_iteration(
             pass
         return payload
 
+    existing_run = _active_repo_improvement_run_for_scope(
+        project_id=effective_project_id,
+        workstream_id=workstream_id,
+        lock_key=lock_key,
+    )
+    if existing_run is not None:
+        payload = {
+            "ok": True,
+            "skipped": True,
+            "reason": "repo_improvement_active_run_exists",
+            "project_id": effective_project_id,
+            "workstream_id": workstream_id,
+            "trigger": trigger,
+            "target_id": str(target_id or "").strip(),
+            "lock_key": lock_key,
+            "existing_run_id": str(getattr(existing_run, "run_id", "") or "").strip(),
+            "existing_run_state": str(getattr(existing_run, "state", "") or "").strip(),
+            "existing_objective": str(getattr(existing_run, "objective", "") or "").strip(),
+        }
+        try:
+            DB.add_event(
+                event_type="REPO_IMPROVEMENT_ALREADY_RUNNING",
+                actor=actor,
+                project_id=effective_project_id,
+                workstream_id=workstream_id,
+                payload=payload,
+            )
+        except Exception:
+            pass
+        _REPO_IMPROVEMENT_LOCKS.release(lock_key)
+        return payload
+
     try:
         spec = crewai_orchestrator.RunSpec(
             project_id=effective_project_id,
@@ -1111,10 +1102,10 @@ def _run_self_upgrade_iteration(
 
 
 def _run_self_upgrade_discussion_sync(*, actor: str, project_id: str = "", target_id: str = "") -> dict[str, Any]:
-    out = crewai_self_upgrade.reconcile_feature_discussions(
+    out = proposal_runtime.reconcile_feature_discussions(
         db=DB,
         actor=actor,
-        verbose=_env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0"),
+        verbose=False,
         project_id=project_id,
         target_id=target_id,
     )
@@ -1173,7 +1164,7 @@ def _run_self_upgrade_delivery_iteration(
     )
     DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state="RUNNING")
     try:
-        out = crewai_self_upgrade_delivery.run_delivery_sweep(
+        out = task_runtime.run_delivery_sweep(
             db=DB,
             actor=actor,
             project_id=current_project_id,
@@ -1309,13 +1300,15 @@ def _panel_auto_sync_loop() -> None:
 
 @app.on_event("startup")
 def _startup_background_threads() -> None:
+    from .engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
+
     try:
         _cleanup_stale_repo_improvement_activity()
     except Exception:
         pass
 
     def _repo_improvement_cleanup_loop() -> None:
-        interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_CLEANUP_INTERVAL_SEC", "60") or "60"))
+        interval_sec = max(30, int(os.getenv("TEAMOS_RUNTIME_REPO_IMPROVEMENT_CLEANUP_INTERVAL_SEC", "60") or "60"))
         _set_repo_improvement_loop_state(
             _REPO_IMPROVEMENT_LOOP_CLEANUP,
             enabled=True,
@@ -1369,7 +1362,7 @@ def _startup_background_threads() -> None:
             time.sleep(1)
             if not _leader_write_allowed():
                 return
-            out = crewai_self_upgrade_delivery.migrate_legacy_worktrees(project_id="teamos")
+            out = task_runtime.migrate_legacy_worktrees(project_id="teamos")
             if int(out.get("updated") or 0) > 0 or int(out.get("moved") or 0) > 0:
                 DB.add_event(
                     event_type="REPO_IMPROVEMENT_WORKTREE_MIGRATED",
@@ -1412,435 +1405,142 @@ def _startup_background_threads() -> None:
     rt = threading.Thread(target=_recovery_auto_once, name="recovery-auto-once", daemon=True)
     rt.start()
 
-    def _self_upgrade_auto_once() -> None:
-        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_AUTO", "1"):
+    def _run_workflow_iteration(target: dict[str, Any], *, workflow_id: str, actor_name: str) -> dict[str, Any]:
+        project_id = str(target.get("project_id") or "teamos").strip() or "teamos"
+        target_id = str(target.get("target_id") or "").strip()
+        workflow = repo_improvement_workflows.workflow_spec(workflow_id, project_id=project_id)
+        runtime_policy = repo_improvement_workflows.evaluate_workflow_runtime_policy(
+            workflow=workflow,
+            target_id=target_id,
+            force=False,
+        )
+        _ = repo_improvement_workflows.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
+        if not workflow.enabled or not runtime_policy.allowed:
+            return {
+                "ok": True,
+                "skipped": True,
+                "workflow_id": workflow.workflow_id,
+                "reason": workflow.disabled_reason or runtime_policy.reason or "workflow_disabled",
+                "project_id": project_id,
+                "target_id": target_id,
+            }
+        return run_workflow(
+            context=WorkflowRunContext(
+                db=DB,
+                workflow=workflow,
+                actor=actor_name,
+                project_id=project_id,
+                workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
+                target_id=target_id,
+                dry_run=False,
+                force=False,
+                extra={
+                    "repo_path": str(target.get("repo_root") or "").strip(),
+                    "repo_url": str(target.get("repo_url") or "").strip(),
+                    "repo_locator": str(target.get("repo_locator") or "").strip(),
+                },
+            )
+        )
+
+    def _workflow_loop(base_workflow_id: str) -> None:
+        base_workflow = repo_improvement_workflows.workflow_spec(base_workflow_id, project_id="teamos")
+        loop_id = base_workflow.workflow_id
+        interval_sec = max(0, int(base_workflow.loop.interval_sec or 0))
+        initial_delay_sec = max(0, int(base_workflow.loop.initial_delay_sec or 0))
+        worker_concurrency = max(1, int(base_workflow.loop.concurrency or 1))
+        if not base_workflow.loop.enabled:
             _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_STARTUP,
+                loop_id,
                 enabled=False,
                 status="disabled",
-                current_action="startup repo-improvement sweep disabled",
+                current_action=f"{loop_id} disabled by workflow spec",
             )
             return
-        worker_concurrency = _repo_improvement_loop_worker_concurrency(
-            "TEAMOS_REPO_IMPROVEMENT_STARTUP_CONCURRENCY",
-            10,
+        _set_repo_improvement_loop_state(
+            loop_id,
+            enabled=True,
+            status="waiting",
+            current_action=f"waiting {initial_delay_sec}s before first {loop_id} sweep",
+            interval_sec=interval_sec,
+            initial_delay_sec=initial_delay_sec,
+            worker_concurrency=worker_concurrency,
         )
-        try:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_STARTUP,
-                enabled=True,
-                status="waiting",
-                current_action="waiting 4s before startup repo-improvement sweep",
-                initial_delay_sec=4,
-                worker_concurrency=worker_concurrency,
-            )
-            time.sleep(4)
-            if not _leader_write_allowed():
-                _set_repo_improvement_loop_state(
-                    _REPO_IMPROVEMENT_LOOP_STARTUP,
-                    enabled=True,
-                    status="skipped",
-                    current_action="startup repo-improvement sweep skipped because this node is not leader",
-                    worker_concurrency=worker_concurrency,
-                )
-                return
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_STARTUP,
-                enabled=True,
-                status="running",
-                current_action=f"running startup repo-improvement workers (concurrency={worker_concurrency})",
-                last_started_at=_utc_now_iso(),
-                worker_concurrency=worker_concurrency,
-            )
-            targets = _enabled_improvement_targets(auto_mode="discovery")
-
-            def _startup_job(target: dict[str, Any]) -> dict[str, Any]:
-                return _run_self_upgrade_iteration(
-                    actor="control-plane.startup",
-                    project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
-                    workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
-                    objective=f"Startup improvement sweep for target {str(target.get('display_name') or target.get('target_id') or 'target')}",
-                    target_id=str(target.get("target_id") or "").strip(),
-                    repo_path=str(target.get("repo_root") or "").strip(),
-                    repo_locator=str(target.get("repo_locator") or "").strip(),
-                    dry_run=False,
-                    force=False,
-                    trigger="startup_auto",
-                )
-            _, errors = _run_repo_improvement_target_jobs_in_pool(
-                targets=targets,
-                worker_concurrency=worker_concurrency,
-                thread_name_prefix="repo-improvement-startup",
-                job_fn=_startup_job,
-            )
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_STARTUP,
-                enabled=True,
-                status="done",
-                current_action=(
-                    "startup repo-improvement sweeps completed"
-                    if not errors
-                    else f"startup repo-improvement sweeps completed with {len(errors)} errors"
-                ),
-                last_completed_at=_utc_now_iso(),
-                worker_concurrency=worker_concurrency,
-                last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
-            )
-        except Exception as e:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_STARTUP,
-                enabled=True,
-                status="error",
-                current_action=f"startup repo-improvement sweep failed: {str(e)[:160]}",
-                last_error=str(e)[:300],
-                worker_concurrency=worker_concurrency,
-            )
+        if initial_delay_sec > 0:
+            time.sleep(initial_delay_sec)
+        while True:
             try:
-                DB.add_event(
-                    event_type="REPO_IMPROVEMENT_AUTO_FAILED",
-                    actor="control-plane.startup",
-                    project_id="teamos",
-                    workstream_id=_default_workstream_id(),
-                    payload={"error": str(e)[:300]},
+                if not _leader_write_allowed():
+                    _set_repo_improvement_loop_state(
+                        loop_id,
+                        enabled=True,
+                        status="sleeping",
+                        current_action=f"{loop_id} waiting {max(1, interval_sec)}s because this node is not leader",
+                        interval_sec=interval_sec,
+                        worker_concurrency=worker_concurrency,
+                    )
+                    time.sleep(max(1, interval_sec))
+                    continue
+                _set_repo_improvement_loop_state(
+                    loop_id,
+                    enabled=True,
+                    status="running",
+                    current_action=f"running {loop_id} workers (concurrency={worker_concurrency})",
+                    interval_sec=interval_sec,
+                    worker_concurrency=worker_concurrency,
+                    last_started_at=_utc_now_iso(),
                 )
-            except Exception:
-                pass
+                targets = _enabled_improvement_targets(auto_mode=base_workflow.workflow_id)
 
-    sut = threading.Thread(target=_self_upgrade_auto_once, name="self-upgrade-auto-once", daemon=True)
-    sut.start()
+                def _job(target: dict[str, Any]) -> dict[str, Any]:
+                    return _run_workflow_iteration(target, workflow_id=base_workflow.workflow_id, actor_name=f"control-plane.{base_workflow.workflow_id}-loop")
 
-    def _self_upgrade_continuous_loop() -> None:
-        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_CONTINUOUS", "1"):
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                enabled=False,
-                status="disabled",
-                current_action="continuous repo-improvement discovery disabled",
-            )
-            return
-        interval_sec = max(0, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INTERVAL_SEC", "300") or "300"))
-        initial_delay_sec = max(0, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_LOOP_INITIAL_DELAY_SEC", "90") or "90"))
-        worker_concurrency = _repo_improvement_loop_worker_concurrency(
-            "TEAMOS_REPO_IMPROVEMENT_DISCOVERY_CONCURRENCY",
-            10,
-        )
-        retry_sleep_sec = max(1, interval_sec)
-        try:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                enabled=True,
-                status="waiting",
-                current_action=f"waiting {initial_delay_sec}s before first discovery sweep",
-                interval_sec=interval_sec,
-                initial_delay_sec=initial_delay_sec,
-                worker_concurrency=worker_concurrency,
-            )
-            time.sleep(initial_delay_sec)
-            while True:
-                try:
-                    if not _leader_write_allowed():
-                        _set_repo_improvement_loop_state(
-                            _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                            enabled=True,
-                            status="sleeping",
-                            current_action=(
-                                f"discovery loop waiting {retry_sleep_sec}s because this node is not leader"
-                            ),
-                            interval_sec=interval_sec,
-                            worker_concurrency=worker_concurrency,
-                        )
-                        time.sleep(retry_sleep_sec)
-                        continue
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                        enabled=True,
-                        status="running",
-                        current_action=f"running repo-improvement discovery workers (concurrency={worker_concurrency})",
-                        interval_sec=interval_sec,
-                        last_started_at=_utc_now_iso(),
-                        worker_concurrency=worker_concurrency,
-                    )
-                    targets = _enabled_improvement_targets(auto_mode="discovery")
-
-                    def _discovery_job(target: dict[str, Any]) -> dict[str, Any]:
-                        return _run_self_upgrade_iteration(
-                            actor="control-plane.loop",
-                            project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
-                            workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
-                            objective=f"Continuous improvement sweep for target {str(target.get('display_name') or target.get('target_id') or 'target')}",
-                            target_id=str(target.get("target_id") or "").strip(),
-                            repo_path=str(target.get("repo_root") or "").strip(),
-                            repo_locator=str(target.get("repo_locator") or "").strip(),
-                            dry_run=False,
-                            force=False,
-                            trigger="continuous_loop",
-                        )
-                    _, errors = _run_repo_improvement_target_jobs_in_pool(
-                        targets=targets,
-                        worker_concurrency=worker_concurrency,
-                        thread_name_prefix="repo-improvement-discovery",
-                        job_fn=_discovery_job,
-                    )
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                        enabled=True,
-                        status="sleeping",
-                        current_action=(
-                            "immediately scheduling next discovery sweep"
-                            if interval_sec <= 0
-                            else f"sleeping {interval_sec}s until next discovery sweep"
-                        ),
-                        interval_sec=interval_sec,
-                        last_completed_at=_utc_now_iso(),
-                        worker_concurrency=worker_concurrency,
-                        last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
-                    )
-                except Exception as e:
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                        enabled=True,
-                        status="error",
-                        current_action=f"discovery loop failed: {str(e)[:160]}",
-                        interval_sec=interval_sec,
-                        last_error=str(e)[:300],
-                        worker_concurrency=worker_concurrency,
-                    )
-                    try:
-                        DB.add_event(
-                            event_type="REPO_IMPROVEMENT_LOOP_FAILED",
-                            actor="control-plane.loop",
-                            project_id="teamos",
-                            workstream_id=_default_workstream_id(),
-                            payload={"error": str(e)[:300]},
-                        )
-                    except Exception:
-                        pass
-                time.sleep(interval_sec)
-        except Exception:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DISCOVERY,
-                enabled=True,
-                status="stopped",
-                current_action="discovery loop stopped",
-                interval_sec=interval_sec,
-                worker_concurrency=worker_concurrency,
-            )
-
-    clt = threading.Thread(target=_self_upgrade_continuous_loop, name="self-upgrade-continuous-loop", daemon=True)
-    clt.start()
-
-    def _self_upgrade_discussion_loop() -> None:
-        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_AUTO", "1"):
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                enabled=False,
-                status="disabled",
-                current_action="repo-improvement discussion loop disabled",
-            )
-            return
-        interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INTERVAL_SEC", "90") or "90"))
-        initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DISCUSSION_INITIAL_DELAY_SEC", "30") or "30"))
-        worker_concurrency = _repo_improvement_loop_worker_concurrency(
-            "TEAMOS_REPO_IMPROVEMENT_DISCUSSION_CONCURRENCY",
-            10,
-        )
-        try:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                enabled=True,
-                status="waiting",
-                current_action=f"waiting {initial_delay_sec}s before first discussion sync",
-                interval_sec=interval_sec,
-                initial_delay_sec=initial_delay_sec,
-                worker_concurrency=worker_concurrency,
-            )
-            time.sleep(initial_delay_sec)
-            while True:
-                try:
-                    if not _leader_write_allowed():
-                        _set_repo_improvement_loop_state(
-                            _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                            enabled=True,
-                            status="sleeping",
-                            current_action=f"discussion loop waiting {interval_sec}s because this node is not leader",
-                            interval_sec=interval_sec,
-                            worker_concurrency=worker_concurrency,
-                        )
-                        time.sleep(interval_sec)
-                        continue
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                        enabled=True,
-                        status="running",
-                        current_action=f"running repo-improvement discussion workers (concurrency={worker_concurrency})",
-                        interval_sec=interval_sec,
-                        last_started_at=_utc_now_iso(),
-                        worker_concurrency=worker_concurrency,
-                    )
-                    targets = _enabled_improvement_targets(auto_mode="discussion")
-
-                    def _discussion_job(target: dict[str, Any]) -> dict[str, Any]:
-                        return _run_self_upgrade_discussion_sync(
-                            actor="control-plane.discussion-loop",
-                            project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
-                            target_id=str(target.get("target_id") or "").strip(),
-                        )
-
-                    _, errors = _run_repo_improvement_target_jobs_in_pool(
-                        targets=targets,
-                        worker_concurrency=worker_concurrency,
-                        thread_name_prefix="repo-improvement-discussion",
-                        job_fn=_discussion_job,
-                    )
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                        enabled=True,
-                        status="sleeping",
-                        current_action=f"sleeping {interval_sec}s until next discussion sync",
-                        interval_sec=interval_sec,
-                        last_completed_at=_utc_now_iso(),
-                        worker_concurrency=worker_concurrency,
-                        last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
-                    )
-                except Exception as e:
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                        enabled=True,
-                        status="error",
-                        current_action=f"discussion loop failed: {str(e)[:160]}",
-                        interval_sec=interval_sec,
-                        last_error=str(e)[:300],
-                        worker_concurrency=worker_concurrency,
-                    )
-                    try:
-                        DB.add_event(
-                            event_type="REPO_IMPROVEMENT_DISCUSSION_LOOP_FAILED",
-                            actor="control-plane.discussion-loop",
-                            project_id="teamos",
-                            workstream_id=_default_workstream_id(),
-                            payload={"error": str(e)[:300]},
-                        )
-                    except Exception:
-                        pass
-                time.sleep(interval_sec)
-        except Exception:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DISCUSSION,
-                enabled=True,
-                status="stopped",
-                current_action="discussion loop stopped",
-                interval_sec=interval_sec,
-                worker_concurrency=worker_concurrency,
-            )
-
-    dlt = threading.Thread(target=_self_upgrade_discussion_loop, name="self-upgrade-discussion-loop", daemon=True)
-    dlt.start()
-
-    def _self_upgrade_delivery_loop() -> None:
-        if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_DELIVERY_AUTO", "1"):
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                enabled=False,
-                status="disabled",
-                current_action="repo-improvement delivery loop disabled",
-            )
-            return
-        interval_sec = max(30, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INTERVAL_SEC", "180") or "180"))
-        initial_delay_sec = max(10, int(_repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_INITIAL_DELAY_SEC", "45") or "45"))
-        worker_concurrency = max(
-            1,
-            int(
-                _repo_improvement_env(
-                    "TEAMOS_REPO_IMPROVEMENT_DELIVERY_CONCURRENCY",
-                    _repo_improvement_env("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "10"),
+                _, errors = _run_repo_improvement_target_jobs_in_pool(
+                    targets=targets,
+                    worker_concurrency=worker_concurrency,
+                    thread_name_prefix=f"repo-improvement-{base_workflow.workflow_id}",
+                    job_fn=_job,
                 )
-                or "10"
-            ),
-        )
-        try:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                enabled=True,
-                status="waiting",
-                current_action=f"waiting {initial_delay_sec}s before first delivery sweep",
-                interval_sec=interval_sec,
-                initial_delay_sec=initial_delay_sec,
-                worker_concurrency=worker_concurrency,
-            )
-            time.sleep(initial_delay_sec)
-            while True:
-                try:
-                    if not _leader_write_allowed():
-                        _set_repo_improvement_loop_state(
-                            _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                            enabled=True,
-                            status="sleeping",
-                            current_action=f"delivery loop waiting {interval_sec}s because this node is not leader",
-                            interval_sec=interval_sec,
-                            worker_concurrency=worker_concurrency,
-                        )
-                        time.sleep(interval_sec)
-                        continue
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                        enabled=True,
-                        status="running",
-                        current_action=f"running delivery workers (concurrency={worker_concurrency})",
-                        interval_sec=interval_sec,
-                        worker_concurrency=worker_concurrency,
-                        last_started_at=_utc_now_iso(),
-                    )
-                    for target in _enabled_improvement_targets(auto_mode="delivery"):
-                        _ = _run_self_upgrade_delivery_iteration(
-                            actor="control-plane.delivery-loop",
-                            project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
-                            target_id=str(target.get("target_id") or "").strip(),
-                            dry_run=False,
-                            force=False,
-                            concurrency=worker_concurrency,
-                        )
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                        enabled=True,
-                        status="sleeping",
-                        current_action=f"sleeping {interval_sec}s until next delivery sweep",
-                        interval_sec=interval_sec,
-                        worker_concurrency=worker_concurrency,
-                        last_completed_at=_utc_now_iso(),
-                    )
-                except Exception as e:
-                    _set_repo_improvement_loop_state(
-                        _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                        enabled=True,
-                        status="error",
-                        current_action=f"delivery loop failed: {str(e)[:160]}",
-                        interval_sec=interval_sec,
-                        worker_concurrency=worker_concurrency,
-                        last_error=str(e)[:300],
-                    )
-                    try:
-                        DB.add_event(
-                            event_type="REPO_IMPROVEMENT_DELIVERY_LOOP_FAILED",
-                            actor="control-plane.delivery-loop",
-                            project_id="teamos",
-                            workstream_id=_default_workstream_id(),
-                            payload={"error": str(e)[:300]},
-                        )
-                    except Exception:
-                        pass
-                time.sleep(interval_sec)
-        except Exception:
-            _set_repo_improvement_loop_state(
-                _REPO_IMPROVEMENT_LOOP_DELIVERY,
-                enabled=True,
-                status="stopped",
-                current_action="delivery loop stopped",
-                interval_sec=interval_sec,
-                worker_concurrency=worker_concurrency,
-            )
+                _set_repo_improvement_loop_state(
+                    loop_id,
+                    enabled=True,
+                    status="sleeping",
+                    current_action=(f"sleeping {interval_sec}s until next {loop_id} sweep" if interval_sec > 0 else f"re-running {loop_id} immediately"),
+                    interval_sec=interval_sec,
+                    worker_concurrency=worker_concurrency,
+                    last_completed_at=_utc_now_iso(),
+                    last_error="; ".join(str(item.get("error") or "") for item in errors[:3]),
+                )
+            except Exception as exc:
+                _set_repo_improvement_loop_state(
+                    loop_id,
+                    enabled=True,
+                    status="error",
+                    current_action=f"{loop_id} failed: {str(exc)[:160]}",
+                    interval_sec=interval_sec,
+                    worker_concurrency=worker_concurrency,
+                    last_error=str(exc)[:300],
+                )
+            time.sleep(max(1, interval_sec))
 
-    sdt = threading.Thread(target=_self_upgrade_delivery_loop, name="self-upgrade-delivery-loop", daemon=True)
-    sdt.start()
+    if _env_truthy("TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED", "1"):
+        for workflow in repo_improvement_workflows.list_workflows(project_id="teamos"):
+            if not workflow.loop.enabled:
+                continue
+            thread = threading.Thread(
+                target=_workflow_loop,
+                args=(workflow.workflow_id,),
+                name=f"repo-improvement-{workflow.workflow_id}-loop",
+                daemon=True,
+            )
+            thread.start()
+    else:
+        for workflow in repo_improvement_workflows.list_workflows(project_id="teamos"):
+            _set_repo_improvement_loop_state(
+                workflow.workflow_id,
+                enabled=False,
+                status="disabled",
+                current_action="workflow loops disabled by runtime config",
+            )
 
     def _openclaw_reporting_loop() -> None:
         if not _env_truthy("TEAMOS_OPENCLAW_AUTO", "0"):
@@ -2136,10 +1836,10 @@ def v1_status():
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = crewai_runtime.probe_crewai()
-    repo_improvement_state = crewai_self_upgrade._read_state(default_target_id) if default_target_id else {}
-    proposals = crewai_self_upgrade.list_proposals()
-    delivery_tasks = crewai_self_upgrade_delivery.list_delivery_tasks()
-    delivery_summary = crewai_self_upgrade_delivery.delivery_summary()
+    repo_improvement_state = proposal_runtime._read_state(default_target_id) if default_target_id else {}
+    proposals = proposal_runtime.list_proposals()
+    delivery_tasks = task_runtime.list_delivery_tasks()
+    delivery_summary = task_runtime.delivery_summary()
     milestones = [m.__dict__ for m in list_milestones("teamos")]
     target_summaries: list[dict[str, Any]] = []
     for target in targets:
@@ -2147,9 +1847,9 @@ def v1_status():
         if not tid:
             continue
         target_project_id = str(target.get("project_id") or "")
-        target_state = crewai_self_upgrade._read_state(tid)
-        target_proposals = crewai_self_upgrade.list_proposals(target_id=tid, project_id=target_project_id)
-        target_tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=target_project_id, target_id=tid)
+        target_state = proposal_runtime._read_state(tid)
+        target_proposals = proposal_runtime.list_proposals(target_id=tid, project_id=target_project_id)
+        target_tasks = task_runtime.list_delivery_tasks(project_id=target_project_id, target_id=tid)
         target_summaries.append(
             {
                 "target_id": tid,
@@ -2161,7 +1861,7 @@ def v1_status():
                     "total": len(target_proposals),
                     "pending": len([p for p in target_proposals if str(p.get("status") or "").strip().upper() not in ("REJECTED", "MATERIALIZED")]),
                 },
-                "delivery_counts": crewai_self_upgrade_delivery.delivery_summary(project_id=target_project_id, target_id=tid),
+                "delivery_counts": task_runtime.delivery_summary(project_id=target_project_id, target_id=tid),
                 "milestones": len([m for m in milestones if str(m.get("target_id") or "").strip() == tid]),
                 "active_tasks": len([t for t in target_tasks if str(t.get("status") or "") in ("todo", "doing", "test", "release", "merge_conflict")]),
             }
@@ -3339,7 +3039,7 @@ def v1_repo_improvement_proposals(
     lane: str = Query(default=""),
     status: str = Query(default=""),
 ):
-    proposals = crewai_self_upgrade.list_proposals(target_id=target_id, project_id=project_id, lane=lane, status=status)
+    proposals = proposal_runtime.list_proposals(target_id=target_id, project_id=project_id, lane=lane, status=status)
     return {"total": len(proposals), "proposals": proposals}
 
 
@@ -3348,14 +3048,14 @@ def v1_repo_improvement_proposals(
 def v1_repo_improvement_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
     _require_leader_write()
     try:
-        proposal = crewai_self_upgrade.decide_proposal(
+        proposal = proposal_runtime.decide_proposal(
             proposal_id=payload.proposal_id,
             action=payload.action,
             title=str(payload.title or "").strip(),
             summary=str(payload.summary or "").strip(),
             version_bump=str(payload.version_bump or "").strip(),
         )
-    except crewai_self_upgrade.SelfUpgradeError as e:
+    except proposal_runtime.SelfUpgradeError as e:
         raise HTTPException(status_code=400, detail={"error": "repo_improvement_proposal_decision_failed", "message": str(e)})
     project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
     workstream_id = str(proposal.get("workstream_id") or "general").strip() or "general"
@@ -3447,11 +3147,11 @@ def v1_repo_improvement_delivery_tasks(
     target_id: str = Query(default=""),
     status: str = Query(default=""),
 ):
-    tasks = crewai_self_upgrade_delivery.list_delivery_tasks(project_id=project_id, target_id=target_id, status=status)
+    tasks = task_runtime.list_delivery_tasks(project_id=project_id, target_id=target_id, status=status)
     return {
         "total": len(tasks),
         "tasks": tasks,
-        "summary": crewai_self_upgrade_delivery.delivery_summary(project_id=project_id, target_id=target_id),
+        "summary": task_runtime.delivery_summary(project_id=project_id, target_id=target_id),
     }
 
 
@@ -3760,7 +3460,7 @@ def _pending_decisions() -> list[dict[str, Any]]:
 
     # 3) Self-upgrade proposals waiting for user input.
     try:
-        for p in crewai_self_upgrade.list_proposals():
+        for p in proposal_runtime.list_proposals():
             status = str(p.get("status") or "").strip().upper()
             lane = str(p.get("lane") or "").strip().lower()
             if lane not in ("feature", "quality") or status not in ("PENDING_CONFIRMATION", "HOLD"):

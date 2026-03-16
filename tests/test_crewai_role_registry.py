@@ -92,17 +92,17 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
         doc = crewai_spec_loader.team_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT)
 
         self.assertEqual(doc.get("team_id"), crewai_role_registry.TEAM_REPO_IMPROVEMENT)
-        self.assertIn(crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT, doc.get("workflow_ids") or [])
+        self.assertIn(crewai_role_registry.WORKFLOW_FEATURE_FINDING, doc.get("workflow_ids") or [])
         self.assertIn(crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT, doc.get("role_pool") or [])
 
     def test_team_stage_and_workflow_docs_load_from_nested_path(self):
         stage = crewai_spec_loader.team_stage_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.STAGE_PLANNING)
-        workflow = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.WORKFLOW_BUG_FIX)
+        workflow = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.WORKFLOW_BUG_CODING)
 
         self.assertEqual(stage.get("stage_id"), crewai_role_registry.STAGE_PLANNING)
         self.assertTrue(stage.get("members"))
-        self.assertEqual(workflow.get("workflow_id"), crewai_role_registry.WORKFLOW_BUG_FIX)
-        self.assertEqual(workflow.get("stages"), [crewai_role_registry.STAGE_PLANNING, crewai_role_registry.STAGE_DELIVERY])
+        self.assertEqual(workflow.get("workflow_id"), crewai_role_registry.WORKFLOW_BUG_CODING)
+        self.assertEqual(workflow.get("stages"), [crewai_role_registry.STAGE_DELIVERY])
         self.assertIn(crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT, [str(x.get("role_id") or "") for x in (stage.get("members") or []) if isinstance(x, dict)])
 
     def test_test_case_gap_role_loads_from_yaml(self):

@@ -129,15 +129,9 @@ def _repo_improvement_check(repo_root: Path) -> dict[str, Any]:
 def _llm_config_check() -> dict[str, Any]:
     base = str(
         os.getenv("TEAMOS_LLM_BASE_URL")
-        or os.getenv("OPENAI_BASE_URL")
-        or os.getenv("OPENAI_API_BASE")
         or ""
     ).strip()
-    key = str(
-        os.getenv("TEAMOS_LLM_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or ""
-    ).strip()
+    key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
     ok = bool(base and key)
     masked = ""
     if key:
@@ -148,7 +142,7 @@ def _llm_config_check() -> dict[str, Any]:
         "api_key_set": bool(key),
         "base_url": base,
         "api_key_masked": masked,
-        "required": ["TEAMOS_LLM_BASE_URL(or OPENAI_BASE_URL/OPENAI_API_BASE)", "TEAMOS_LLM_API_KEY(or OPENAI_API_KEY)"],
+        "required": ["TEAMOS_LLM_BASE_URL", "TEAMOS_LLM_API_KEY"],
     }
     if not ok:
         out["hint"] = "export TEAMOS_LLM_BASE_URL=... and TEAMOS_LLM_API_KEY=..."
@@ -219,23 +213,25 @@ def main(argv: list[str] | None = None) -> int:
 
     # Control plane health + API coverage (best-effort; should pass when runtime matches repo template).
     base = str(args.base_url or "").strip().rstrip("/") or _load_base_url(profile=str(args.profile or ""))
-    report["control_plane"] = {"base_url": base}
+    control_plane: dict[str, Any] = {"base_url": base}
+    report["control_plane"] = control_plane
     try:
         hz = _http_json(base + "/healthz", timeout_sec=5)
         st = _http_json(base + "/v1/status", timeout_sec=5)
-        report["control_plane"].update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
-        repo_improvement = st.get("repo_improvement") if isinstance(st.get("repo_improvement"), dict) else st.get("self_upgrade")
-        if isinstance(repo_improvement, dict):
-            report["repo_improvement"]["last_run"] = dict((repo_improvement or {}).get("last_run") or {})
-            report["repo_improvement"]["control_plane_summary"] = repo_improvement or {}
-        trs = st.get("task_run_sync")
-        if isinstance(trs, dict):
-            report["control_plane"]["task_run_sync"] = trs
+        control_plane.update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
+        repo_improvement_value = st.get("repo_improvement") if isinstance(st.get("repo_improvement"), dict) else st.get("self_upgrade")
+        if isinstance(repo_improvement_value, dict):
+            report["repo_improvement"]["last_run"] = dict((repo_improvement_value or {}).get("last_run") or {})
+            report["repo_improvement"]["control_plane_summary"] = repo_improvement_value or {}
+        trs_value = st.get("task_run_sync")
+        if isinstance(trs_value, dict):
+            trs = dict(trs_value)
+            control_plane["task_run_sync"] = trs
             if not bool(trs.get("ok")):
                 ok = False
         else:
             # Runtime is expected to expose task/run consistency in /v1/status.
-            report["control_plane"]["task_run_sync"] = {"ok": False, "missing": True}
+            control_plane["task_run_sync"] = {"ok": False, "missing": True}
             ok = False
         spec = _http_json(base + "/openapi.json", timeout_sec=5)
         paths = spec.get("paths") or {}
@@ -266,11 +262,11 @@ def main(argv: list[str] | None = None) -> int:
             "/v1/repo_improvement/run",
         ]
         missing = [p for p in required if p not in paths]
-        report["control_plane"]["api_coverage"] = {"ok": not missing, "missing_paths": missing[:50]}
+        control_plane["api_coverage"] = {"ok": not missing, "missing_paths": missing[:50]}
         if missing:
             ok = False
     except Exception as e:
-        report["control_plane"].update({"ok": False, "error": str(e)[:200]})
+        control_plane.update({"ok": False, "error": str(e)[:200]})
         ok = False
 
     if args.json:
@@ -278,16 +274,19 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"repo_purity.ok={str(bool(purity.get('ok'))).lower()} violations={purity.get('violations')}")
         print(f"profile={str(args.profile or '').strip() or 'default'} base_url={base}")
-        cp = report.get("control_plane") or {}
+        cp_value = report.get("control_plane")
+        cp: dict[str, Any] = cp_value if isinstance(cp_value, dict) else {}
         if cp.get("ok"):
             print(f"control_plane: OK instance_id={cp.get('instance_id','')}")
-            cov = (cp.get("api_coverage") or {}) if isinstance(cp.get("api_coverage"), dict) else {}
+            cov_value = cp.get("api_coverage")
+            cov: dict[str, Any] = cov_value if isinstance(cov_value, dict) else {}
             if cov.get("ok"):
                 print("control_plane_api: OK")
             else:
                 miss = cov.get("missing_paths") or []
                 print(f"control_plane_api: FAIL missing_paths={len(miss)} sample={(miss[:3])}")
-            trs = (cp.get("task_run_sync") or {}) if isinstance(cp.get("task_run_sync"), dict) else {}
+            trs_value = cp.get("task_run_sync")
+            trs: dict[str, Any] = trs_value if isinstance(trs_value, dict) else {}
             if trs.get("ok"):
                 print("task_run_sync: OK")
             else:
@@ -305,11 +304,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"control_plane: FAIL {cp.get('error','')}")
         print(f"codex: {'OK' if codex_ok else 'FAIL'} {codex_msg}")
         print(f"gh: {'OK' if gh_ok else 'FAIL'} {gh_msg}")
-        dbs = report.get("postgres_db") or {}
+        dbs_value = report.get("postgres_db")
+        dbs: dict[str, Any] = dbs_value if isinstance(dbs_value, dict) else {}
         print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
-        repo_improvement = report.get("repo_improvement") or {}
-        if isinstance(repo_improvement, dict):
-            last = repo_improvement.get("last_run") if isinstance(repo_improvement.get("last_run"), dict) else {}
+        repo_improvement_value = report.get("repo_improvement")
+        repo_improvement: dict[str, Any] = repo_improvement_value if isinstance(repo_improvement_value, dict) else {}
+        if repo_improvement:
+            last_value = repo_improvement.get("last_run")
+            last: dict[str, Any] = last_value if isinstance(last_value, dict) else {}
             print(
                 "repo_improvement: "
                 f"backend={str(repo_improvement.get('state_backend') or '').strip() or 'unknown'} "

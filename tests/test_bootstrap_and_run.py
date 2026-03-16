@@ -66,7 +66,7 @@ class BootstrapAndRunTests(unittest.TestCase):
     def test_llm_config_accepts_codex_oauth_without_api_key(self):
         with mock.patch.object(self.mod, "_codex_login_status", return_value=(True, "Logged in using ChatGPT")), mock.patch.dict(
             os.environ,
-            {"TEAMOS_CREWAI_MODEL": "openai-codex/gpt-5.4"},
+            {"TEAMOS_LLM_MODEL": "openai-codex/gpt-5.4"},
             clear=True,
         ):
             cfg = self.mod._llm_config()

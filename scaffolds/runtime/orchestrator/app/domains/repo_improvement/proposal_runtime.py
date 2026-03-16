@@ -28,96 +28,16 @@ from app.panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from app.panel_mapping import PanelMappingError, get_project_cfg, load_mapping
 from app.plan_store import upsert_runtime_milestone
 from app.state_store import ledger_tasks_dir, runtime_state_root, team_os_root
+from app.domains.repo_improvement.models import ProposalDiscussionResponse
+from app.domains.repo_improvement.models import StructuredBugCandidate
+from app.domains.repo_improvement.models import StructuredBugScanResult
+from app.domains.repo_improvement.models import UpgradeFinding
+from app.domains.repo_improvement.models import UpgradePlan
+from app.domains.repo_improvement.models import UpgradeWorkItem
 
 
 class SelfUpgradeError(RuntimeError):
     pass
-
-
-class UpgradeWorkItem(BaseModel):
-    title: str
-    summary: str = ""
-    owner_role: str = "Feature-Coding-Agent"
-    review_role: str = "Review-Agent"
-    qa_role: str = "QA-Agent"
-    workstream_id: str = "general"
-    allowed_paths: list[str] = Field(default_factory=list)
-    tests: list[str] = Field(default_factory=list)
-    acceptance: list[str] = Field(default_factory=list)
-    reproduction_steps: list[str] = Field(default_factory=list)
-    test_case_files: list[str] = Field(default_factory=list)
-    verification_steps: list[str] = Field(default_factory=list)
-    test_gap_type: str = ""
-    target_paths: list[str] = Field(default_factory=list)
-    missing_paths: list[str] = Field(default_factory=list)
-    suggested_test_files: list[str] = Field(default_factory=list)
-    why_not_covered: str = ""
-    worktree_hint: str = ""
-    module: str = ""
-
-
-class UpgradeFinding(BaseModel):
-    kind: str
-    lane: str = "bug"
-    title: str
-    summary: str
-    module: str = ""
-    rationale: str = ""
-    impact: str = "MED"
-    workstream_id: str = "general"
-    files: list[str] = Field(default_factory=list)
-    tests: list[str] = Field(default_factory=list)
-    acceptance: list[str] = Field(default_factory=list)
-    test_gap_type: str = ""
-    target_paths: list[str] = Field(default_factory=list)
-    missing_paths: list[str] = Field(default_factory=list)
-    suggested_test_files: list[str] = Field(default_factory=list)
-    why_not_covered: str = ""
-    version_bump: str = "patch"
-    target_version: str = ""
-    baseline_action: str = ""
-    requires_user_confirmation: bool = False
-    cooldown_hours: int = 0
-    work_items: list[UpgradeWorkItem] = Field(default_factory=list)
-
-
-class UpgradePlan(BaseModel):
-    summary: str
-    findings: list[UpgradeFinding] = Field(default_factory=list)
-    ci_actions: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-    current_version: str = ""
-    planned_version: str = ""
-
-
-class StructuredBugCandidate(BaseModel):
-    title: str
-    summary: str = ""
-    rationale: str = ""
-    impact: str = "MED"
-    module: str = ""
-    files: list[str] = Field(default_factory=list)
-    tests: list[str] = Field(default_factory=list)
-    acceptance: list[str] = Field(default_factory=list)
-    reproduction_steps: list[str] = Field(default_factory=list)
-    test_case_files: list[str] = Field(default_factory=list)
-    verification_steps: list[str] = Field(default_factory=list)
-
-
-class StructuredBugScanResult(BaseModel):
-    summary: str = ""
-    findings: list[StructuredBugCandidate] = Field(default_factory=list)
-    ci_actions: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-
-
-class ProposalDiscussionResponse(BaseModel):
-    reply_body: str
-    action: str = "pending"
-    title: str = ""
-    summary: str = ""
-    version_bump: str = ""
-    module: str = ""
 
 
 class _IssueRecord(BaseModel):
@@ -223,8 +143,6 @@ class LocalizedTaskText(BaseModel):
 
 def _env_truthy(name: str, default: str = "0") -> bool:
     raw = os.getenv(name)
-    if (raw is None or not str(raw).strip()) and str(name).startswith("TEAMOS_REPO_IMPROVEMENT_"):
-        raw = os.getenv(name.replace("TEAMOS_REPO_IMPROVEMENT_", "TEAMOS_SELF_UPGRADE_"))
     return str(raw if raw is not None else default).strip().lower() not in ("", "0", "false", "no", "off")
 
 
@@ -524,7 +442,7 @@ def _normalize_issue_text(text: str, *, empty_fallback: str = "(空)") -> str:
 
 
 def _zh_localization_enabled() -> bool:
-    if not _env_truthy("TEAMOS_REPO_IMPROVEMENT_LOCALIZE_ZH", "1"):
+    if not _env_truthy("TEAMOS_RUNTIME_LOCALIZE_ZH", "1"):
         return False
     return shutil.which("codex") is not None
 
@@ -2161,7 +2079,7 @@ def _crewai_llm(*, workflow: Any | None = None):
             base_url = override_base_url
         if override_api_key:
             api_key = override_api_key
-    auth_mode = str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower()
+    auth_mode = str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower()
 
     logged_in = False
     if "codex" in model.lower():
@@ -2173,15 +2091,15 @@ def _crewai_llm(*, workflow: Any | None = None):
     explicit_llm_credentials = bool(api_key) or bool(base_url)
 
     if logged_in and "codex" in model.lower() and not explicit_llm_credentials:
-        os.environ["CREWAI_OPENAI_AUTH_MODE"] = "oauth_codex"
+        os.environ["TEAMOS_CREWAI_AUTH_MODE"] = "oauth_codex"
         os.environ.pop("OPENAI_OAUTH_ACCESS_TOKEN", None)
         os.environ.pop("OPENAI_ACCESS_TOKEN", None)
         api_key = ""
         base_url = ""
     elif (not auth_mode) and ("codex" in model.lower()) and (not api_key):
-        os.environ["CREWAI_OPENAI_AUTH_MODE"] = "oauth_codex"
+        os.environ["TEAMOS_CREWAI_AUTH_MODE"] = "oauth_codex"
 
-    if "codex" in model.lower() and str(os.getenv("CREWAI_OPENAI_AUTH_MODE") or "").strip().lower() == "oauth_codex":
+    if "codex" in model.lower() and str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower() == "oauth_codex":
         _ensure_codex_proxy_bypass()
 
     reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "xhigh").strip().lower()
@@ -2496,7 +2414,7 @@ def _prompt_safe_repo_context(repo_context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_bug_scan_tools(*, repo_root: Path, repo_context: dict[str, Any]) -> dict[str, list[Any]]:
-    from app.teams.repo_improvement import delivery
+    from app.domains.repo_improvement import task_runtime as delivery
 
     inspection = repo_context.get("repository_inspection") if isinstance(repo_context.get("repository_inspection"), dict) else {}
     tests_allowlist = [str(x).strip() for x in (inspection.get("test_command_candidates") or []) if str(x).strip()]
@@ -4021,149 +3939,48 @@ def reconcile_feature_discussions(
     project_id: str = "",
     target_id: str = "",
 ) -> dict[str, Any]:
-    normalized_project_id = str(project_id or "").strip()
-    normalized_target_id = str(target_id or "").strip()
-    proposals = []
-    for proposal in list_proposals():
-        if str(proposal.get("lane") or "").strip().lower() not in ("feature", "quality"):
-            continue
-        if normalized_project_id and str(proposal.get("project_id") or "").strip() != normalized_project_id:
-            continue
-        if normalized_target_id and str(proposal.get("target_id") or "").strip() != normalized_target_id:
-            continue
-        proposals.append(proposal)
+    from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
+
     stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0, "skipped_runtime": 0}
-    for proposal in proposals:
-        lane = str(proposal.get("lane") or "").strip().lower() or "feature"
-        project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
-        target_id = str(proposal.get("target_id") or "").strip()
-        workflow = crewai_workflow_registry.workflow_for_lane_phase(
-            lane,
-            crewai_workflow_registry.PHASE_DISCUSSION,
-            project_id=project_id,
-        )
-        if not workflow.enabled:
-            stats["skipped_disabled"] += 1
-            continue
+    normalized_project_id = str(project_id or "teamos").strip() or "teamos"
+    normalized_target_id = str(target_id or "").strip()
+    workflows = [
+        workflow
+        for workflow in crewai_workflow_registry.list_workflows(project_id=normalized_project_id)
+        if workflow.phase == crewai_workflow_registry.PHASE_DISCUSSION and workflow.enabled
+    ]
+    for workflow in workflows:
         runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
             workflow=workflow,
-            target_id=target_id,
+            target_id=normalized_target_id,
             force=False,
         )
-        _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
+        _ = crewai_workflow_registry.update_workflow_runtime_state(normalized_target_id, workflow.workflow_id, runtime_policy)
         if not runtime_policy.allowed:
             stats["skipped_runtime"] += 1
-            if db is not None:
-                try:
-                    db.add_event(
-                        event_type="REPO_IMPROVEMENT_WORKFLOW_SKIPPED",
-                        actor=actor,
-                        project_id=project_id,
-                        workstream_id=str(proposal.get("workstream_id") or "general").strip() or "general",
-                        payload={
-                            "target_id": target_id,
-                            "workflow_id": workflow.workflow_id,
-                            "lane": lane,
-                            "reason": runtime_policy.reason,
-                        },
-                    )
-                except Exception:
-                    pass
             continue
-        status = str(proposal.get("status") or "").strip().upper()
-        if status in ("REJECTED", "MATERIALIZED"):
-            continue
-        stats["scanned"] += 1
-        try:
-            proposal = _ensure_proposal_discussion_issue(proposal)
-            issue_number = _discussion_issue_number(proposal)
-            repo_locator = str(proposal.get("repo_locator") or "").strip()
-            if issue_number <= 0 or not repo_locator:
-                continue
-            last_seen = int(proposal.get("discussion_last_comment_id") or 0)
-            comments = list_issue_comments(repo_locator, issue_number)
-            new_comments = [c for c in comments if int(getattr(c, "id", 0) or 0) > last_seen and _comment_is_user_comment(c)]
-            if not new_comments:
-                continue
-            latest_comment_id = max(int(getattr(c, "id", 0) or 0) for c in new_comments)
-            comments_text = "\n\n".join([str(getattr(c, "body", "") or "").strip() for c in new_comments if str(getattr(c, "body", "") or "").strip()])
-            explicit_action = _proposal_action_from_comment_text(comments_text)
-            try:
-                reply = kickoff_proposal_discussion(proposal=proposal, comments=new_comments, verbose=verbose)
-            except Exception:
-                reply = _discussion_fallback_reply(proposal=proposal, comments_text=comments_text, explicit_action=explicit_action)
-            reply = _localize_discussion_response_to_zh(reply)
-            action = explicit_action or str(reply.action or "").strip().lower()
-            if action in ("approve", "reject", "hold"):
-                proposal = decide_proposal(
-                    proposal_id=str(proposal.get("proposal_id") or ""),
-                    action=action,
-                    title=str(reply.title or "").strip(),
-                    summary=str(reply.summary or "").strip(),
-                    version_bump=str(reply.version_bump or "").strip(),
-                )
-                if str(reply.module or "").strip():
-                    proposal = _update_proposal_record(
-                        str(proposal.get("proposal_id") or ""),
-                        extra={"module": str(reply.module or "").strip()},
-                    )
-            else:
-                proposal = _update_proposal_record(
-                    str(proposal.get("proposal_id") or ""),
-                    title=str(reply.title or "").strip(),
-                    summary=str(reply.summary or "").strip(),
-                    version_bump=str(reply.version_bump or "").strip(),
-                    extra={"status": "PENDING_CONFIRMATION", "module": str(reply.module or "").strip()},
-                )
-            proposal = _ensure_proposal_discussion_issue(proposal)
-            marker = f"<!-- teamos:proposal-reply:{str(proposal.get('proposal_id') or '').strip()}:{latest_comment_id} -->"
-            upsert_comment_with_marker(
-                repo_locator,
-                issue_number,
-                marker=marker,
-                body=marker + "\n" + str(reply.reply_body or "").strip() + "\n",
-                allow_create=True,
+        result = run_workflow(
+            context=WorkflowRunContext(
+                db=db,
+                workflow=workflow,
+                actor=actor,
+                project_id=normalized_project_id,
+                workstream_id="general",
+                target_id=normalized_target_id,
+                dry_run=False,
+                force=False,
+                extra={"verbose": bool(verbose)},
             )
-            proposal = _update_proposal_record(
-                str(proposal.get("proposal_id") or ""),
-                extra={
-                    "discussion_last_comment_id": latest_comment_id,
-                    "discussion_last_user_comment_at": max([str(getattr(c, "updated_at", "") or getattr(c, "created_at", "") or "") for c in new_comments], default=""),
-                    "discussion_reply_updated_at": _utc_now_iso(),
-                    "awaiting_user_reply": False if action in ("approve", "reject") else True,
-                },
-            )
+        )
+        claim_outputs = dict((((result.get("state") or {}).get("tasks") or {}).get("claim_discussion") or {}).get("outputs") or {})
+        if claim_outputs.get("proposal"):
+            stats["scanned"] += 1
+        apply_outputs = dict((((result.get("state") or {}).get("tasks") or {}).get("apply_discussion") or {}).get("outputs") or {})
+        if apply_outputs.get("updated"):
             stats["updated"] += 1
             stats["replied"] += 1
-            if db is not None:
-                try:
-                    db.add_event(
-                        event_type="REPO_IMPROVEMENT_PROPOSAL_DISCUSSION_UPDATED",
-                        actor=actor,
-                        project_id=str(proposal.get("project_id") or "teamos"),
-                        workstream_id=str(proposal.get("workstream_id") or "general"),
-                        payload={
-                            "proposal_id": proposal.get("proposal_id"),
-                            "discussion_issue_url": proposal.get("discussion_issue_url") or "",
-                            "status": proposal.get("status") or "",
-                            "last_comment_id": latest_comment_id,
-                        },
-                    )
-                except Exception:
-                    pass
-        except Exception as e:
+        if not bool(result.get("ok", True)):
             stats["errors"] += 1
-            if db is not None:
-                try:
-                    db.add_event(
-                        event_type="REPO_IMPROVEMENT_PROPOSAL_DISCUSSION_FAILED",
-                        actor=actor,
-                        project_id=str(proposal.get("project_id") or "teamos"),
-                        workstream_id=str(proposal.get("workstream_id") or "general"),
-                        payload={"proposal_id": proposal.get("proposal_id"), "error": str(e)[:300]},
-                    )
-                except Exception:
-                    pass
     return stats
 
 
@@ -5159,10 +4976,10 @@ def _mark_proposal_materialized(proposal_id: str) -> None:
 
 
 def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
-    # Repo-improvement runtime state must stay scoped to the requested project_id.
-    # GitHub panel mappings are optional view-layer config and must not collapse
-    # project-local workflow settings/state back to the global "teamos" project.
+    from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
+
     project_id = _safe_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
+    workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
     target = _resolve_target(
         target_id=str(getattr(spec, "target_id", "") or ""),
         repo_path=str(getattr(spec, "repo_path", "") or ""),
@@ -5172,24 +4989,17 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
     )
     target_id = str(target.get("target_id") or "").strip() or "teamos"
     repo_root = Path(str(target.get("repo_root") or team_os_root())).expanduser().resolve()
-    scan_repo_root = _prepare_discovery_repo(source_repo_root=repo_root, target=target)
-    repo_context = collect_repo_context(
-        repo_root=repo_root,
-        scan_repo_root=scan_repo_root,
-        explicit_repo_locator=str(target.get("repo_locator") or ""),
-        target_id=target_id,
-    )
-    repo_locator = str(repo_context.get("repo_locator") or target.get("repo_locator") or "").strip()
-    workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
-    force = bool(getattr(spec, "force", False))
-    dry_run = bool(getattr(spec, "dry_run", False))
+    repo_locator = str(target.get("repo_locator") or "").strip()
     trigger = str(getattr(spec, "trigger", "") or "manual").strip() or "manual"
-    max_findings_raw = int(os.getenv("TEAMOS_REPO_IMPROVEMENT_MAX_FINDINGS", "3") or "3")
-    max_findings = 0 if max_findings_raw <= 0 else min(max_findings_raw, 10)
-    run_started_at = _utc_now_iso()
-    enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
+    dry_run = bool(getattr(spec, "dry_run", False))
+    force = bool(getattr(spec, "force", False))
 
-    if not enabled_workflows:
+    workflows = [
+        workflow
+        for workflow in crewai_workflow_registry.list_workflows(project_id=project_id)
+        if workflow.phase == crewai_workflow_registry.PHASE_FINDING and workflow.enabled
+    ]
+    if not workflows:
         payload = {
             "ok": True,
             "skipped": True,
@@ -5197,7 +5007,6 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "run_id": run_id,
             "target_id": target_id,
             "repo_root": str(repo_root),
-            "scan_repo_root": str(scan_repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "trigger": trigger,
@@ -5223,41 +5032,6 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         )
         return payload
 
-    should_skip, skip_reason = _should_skip(target_id=target_id, repo_root=repo_root, force=force)
-    if should_skip:
-        payload = {
-            "ok": True,
-            "skipped": True,
-            "reason": skip_reason,
-            "run_id": run_id,
-            "target_id": target_id,
-            "repo_root": str(repo_root),
-            "scan_repo_root": str(scan_repo_root),
-            "repo_locator": repo_locator,
-            "project_id": project_id,
-            "trigger": trigger,
-            "crewai": crewai_info,
-        }
-        _merge_state_last_run(
-            target_id,
-            {"ts": _utc_now_iso(), "target_id": target_id, "repo_root": str(repo_root), "repo_locator": repo_locator, "status": "SKIPPED", "reason": skip_reason},
-        )
-        db.add_event(
-            event_type="REPO_IMPROVEMENT_SKIPPED",
-            actor=actor,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            payload=payload,
-        )
-        return payload
-
-    agent_ids = _register_agents(
-        db=db,
-        project_id=project_id,
-        workstream_id=workstream_id,
-        task_id=str(getattr(spec, "task_id", "") or ""),
-        role_filter=_planning_role_ids(project_id=project_id),
-    )
     db.add_event(
         event_type="REPO_IMPROVEMENT_STARTED",
         actor=actor,
@@ -5267,7 +5041,6 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "run_id": run_id,
             "target_id": target_id,
             "repo_root": str(repo_root),
-            "scan_repo_root": str(scan_repo_root),
             "repo_locator": repo_locator,
             "project_id": project_id,
             "trigger": trigger,
@@ -5275,212 +5048,20 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         },
     )
 
-    partial_progress: dict[str, Any] = {
-        "summary": "",
-        "findings": [],
-        "ci_actions": [],
-        "notes": [],
-        "crew_debug": {"task_outputs": []},
-    }
-    seen_bug_modules: set[str] = set()
-    emitted_task_output_count = 0
-
-    def _persist_running_report(*, state: str, error: str = "") -> None:
-        report = {
-            "state": state,
-            "ts": _utc_now_iso(),
-            "run_id": run_id,
-            "target_id": target_id,
-            "actor": actor,
-            "trigger": trigger,
-            "target": target,
-            "repo_context": repo_context,
-            "summary": str(partial_progress.get("summary") or "").strip(),
-            "bug_findings": len(list(partial_progress.get("findings") or [])),
-            "plan": {
-                "summary": str(partial_progress.get("summary") or "").strip(),
-                "findings": list(partial_progress.get("findings") or []),
-                "ci_actions": list(partial_progress.get("ci_actions") or []),
-                "notes": list(partial_progress.get("notes") or []),
-                "current_version": str(repo_context.get("current_version") or "0.1.0"),
-                "planned_version": str(partial_progress.get("planned_version") or repo_context.get("current_version") or "0.1.0"),
-            },
-            "records": [],
-            "pending_proposals": [],
-            "panel_sync": {},
-            "crewai": crewai_info,
-            "crew_debug": dict(partial_progress.get("crew_debug") or {}),
-        }
-        if error:
-            report["error"] = str(error)[:500]
-        improvement_store.save_report(target_id=target_id, project_id=project_id, report=report)
-        try:
-            improvement_store.persist_repo_improvement_run_logs(db=db, run_id=run_id, limit=500)
-        except Exception:
-            pass
-
-    def _persist_planning_progress(update: dict[str, Any]) -> None:
-        nonlocal emitted_task_output_count
-        partial_progress["summary"] = str(update.get("summary") or partial_progress.get("summary") or "").strip()
-        partial_progress["findings"] = list(update.get("findings") or partial_progress.get("findings") or [])
-        partial_progress["ci_actions"] = list(update.get("ci_actions") or partial_progress.get("ci_actions") or [])
-        partial_progress["notes"] = list(update.get("notes") or partial_progress.get("notes") or [])
-        partial_progress["planned_version"] = str(update.get("planned_version") or partial_progress.get("planned_version") or "").strip()
-        partial_progress["crew_debug"] = dict(update.get("crew_debug") or partial_progress.get("crew_debug") or {"task_outputs": []})
-        current_outputs = list((partial_progress.get("crew_debug") or {}).get("task_outputs") or [])
-        while emitted_task_output_count < len(current_outputs):
-            item = current_outputs[emitted_task_output_count]
-            emitted_task_output_count += 1
-            if not isinstance(item, dict):
-                continue
-            task_name = str(item.get("name") or "").strip()
-            role_id = str(item.get("agent") or "").strip()
-            raw = str(item.get("raw") or "")
-            if role_id and role_id in agent_ids:
-                try:
-                    db.update_assignment(
-                        agent_id=agent_ids[role_id],
-                        state="RUNNING",
-                        current_action=(f"completed {task_name}" if task_name else "completed planning task"),
-                    )
-                except Exception:
-                    pass
-            db.add_event(
-                event_type="REPO_IMPROVEMENT_PLANNING_TASK_OUTPUT",
-                actor=actor,
-                project_id=project_id,
-                workstream_id=workstream_id,
-                payload={
-                    "run_id": run_id,
-                    "target_id": target_id,
-                    "task_name": task_name,
-                    "agent": role_id,
-                    "raw": raw[:8000],
-                    "summary": str(item.get("summary") or "")[:500],
-                    "index": emitted_task_output_count,
-                },
-            )
-        module = str(update.get("module") or "").strip()
-        if module and module not in seen_bug_modules:
-            seen_bug_modules.add(module)
-            db.add_event(
-                event_type="REPO_IMPROVEMENT_BUG_MODULE_SCANNED",
-                actor=actor,
-                project_id=project_id,
-                workstream_id=workstream_id,
-                payload={
-                    "run_id": run_id,
-                    "target_id": target_id,
-                    "module": module,
-                    "bug_findings": len(list(partial_progress.get("findings") or [])),
-                    "summary": str(partial_progress.get("summary") or "")[:500],
-                },
-            )
-        _persist_running_report(state="RUNNING")
-
-    bug_scan_policy = _bug_scan_policy(
-        target_id=target_id,
-        project_id=project_id,
-        repo_context=repo_context,
-        force=force,
-    )
-    if bug_scan_policy.get("dormant"):
-        db.add_event(
-            event_type="REPO_IMPROVEMENT_BUG_LANE_SKIPPED",
-            actor=actor,
-            project_id=project_id,
-            workstream_id=workstream_id,
-            payload={
-                "run_id": run_id,
-                "target_id": target_id,
-                "head_commit": str(bug_scan_policy.get("head_commit") or ""),
-                "reason": str(bug_scan_policy.get("reason") or "bug_lane_dormant"),
-                "threshold": int(bug_scan_policy.get("threshold") or 0),
-            },
-        )
-
-    try:
-        plan, crew_debug = kickoff_upgrade_plan(
-            repo_context=repo_context,
-            project_id=project_id,
-            max_findings=max_findings,
-            verbose=_env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0"),
-            bug_scan_dormant=bool(bug_scan_policy.get("dormant")),
-            progress_callback=_persist_planning_progress,
-        )
-        current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
-        if bug_scan_policy.get("dormant"):
-            filtered_findings = [f for f in list(plan.findings or []) if str(f.lane or "").strip().lower() != "bug"]
-            if len(filtered_findings) != len(list(plan.findings or [])):
-                plan = plan.model_copy(
-                    update={
-                        "findings": filtered_findings,
-                        "planned_version": _planned_version(current_version, filtered_findings),
-                    }
-                )
-    except Exception as e:
-        _finish_agents(db=db, agent_ids=agent_ids, state="FAILED", current_action="repo-improvement failed")
-        _persist_running_report(state="FAILED", error=str(e))
-        backoff_until = ""
-        err_text = str(e)
-        if any(x in err_text.lower() for x in ("insufficient_quota", "429", "rate limit")):
-            import datetime as _dt
-
-            backoff_hours = max(1, int(os.getenv("TEAMOS_REPO_IMPROVEMENT_FAILURE_BACKOFF_HOURS", "1") or "1"))
-            backoff_until = (
-                _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=backoff_hours)
-            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        _merge_state_last_run(
-            target_id,
-            {
-                "ts": _utc_now_iso(),
-                "target_id": target_id,
-                "repo_root": str(repo_root),
-                "repo_locator": repo_locator,
-                "status": "FAILED",
-                "error": err_text[:500],
-            },
-            backoff_until=backoff_until,
-        )
-        _append_run_history(
-            target_id,
-            {
-                "ts": _utc_now_iso(),
-                "run_id": run_id,
-                "target_id": target_id,
-                "status": "FAILED",
-                "repo_root": str(repo_root),
-                "repo_locator": repo_locator,
-                "error": err_text[:300],
-            }
-        )
-        raise SelfUpgradeError(str(e)) from e
-
     records: list[dict[str, Any]] = []
     pending_proposals: list[dict[str, Any]] = []
-    current_version = str(plan.current_version or repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
-    bug_finding_count = len([f for f in list(plan.findings or []) if str(f.lane or "").strip().lower() == "bug"])
-    for finding in plan.findings:
-        workflow = crewai_workflow_registry.workflow_for_lane_phase(
-            finding.lane,
-            crewai_workflow_registry.PHASE_FINDING,
-            project_id=project_id,
-        )
-        if not workflow.enabled:
-            db.add_event(
-                event_type="REPO_IMPROVEMENT_FINDING_SKIPPED",
-                actor=actor,
-                project_id=project_id,
-                workstream_id=finding.workstream_id or workstream_id,
-                payload={
-                    "run_id": run_id,
-                    "lane": finding.lane,
-                    "workflow_id": workflow.workflow_id,
-                    "title": finding.title,
-                    "reason": workflow.disabled_reason or "workflow_disabled",
-                },
-            )
-            continue
+    workflow_results: list[dict[str, Any]] = []
+    summaries: list[str] = []
+    ci_actions: list[str] = []
+    notes: list[str] = []
+    panel_sync: dict[str, Any] = {}
+    current_version = "0.1.0"
+    planned_version = "0.1.0"
+    bug_finding_count = 0
+    repo_context_for_bug_state: dict[str, Any] = {}
+    bug_scan_policy: dict[str, Any] = {}
+
+    for workflow in workflows:
         runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
             workflow=workflow,
             target_id=target_id,
@@ -5488,120 +5069,67 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         )
         _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
         if not runtime_policy.allowed:
-            db.add_event(
-                event_type="REPO_IMPROVEMENT_FINDING_SKIPPED",
+            workflow_results.append(
+                {
+                    "workflow_id": workflow.workflow_id,
+                    "ok": True,
+                    "skipped": True,
+                    "reason": runtime_policy.reason,
+                }
+            )
+            continue
+
+        result = run_workflow(
+            context=WorkflowRunContext(
+                db=db,
+                workflow=workflow,
                 actor=actor,
                 project_id=project_id,
-                workstream_id=finding.workstream_id or workstream_id,
-                payload={
-                    "run_id": run_id,
-                    "lane": finding.lane,
-                    "workflow_id": workflow.workflow_id,
-                    "title": finding.title,
-                    "reason": runtime_policy.reason,
+                workstream_id=workstream_id,
+                target_id=target_id,
+                dry_run=dry_run,
+                force=force,
+                run_id=run_id,
+                crewai_info=crewai_info,
+                extra={
+                    "repo_path": str(getattr(spec, "repo_path", "") or ""),
+                    "repo_url": str(getattr(spec, "repo_url", "") or ""),
+                    "repo_locator": str(getattr(spec, "repo_locator", "") or ""),
                 },
             )
-            continue
-        requires_confirmation = workflow.requires_user_confirmation or bool(finding.requires_user_confirmation)
-        work_items = list(finding.work_items or []) or _default_work_items(repo_root=repo_root, finding=finding)
-        if not workflow.uses_proposal:
-            for work_item in work_items:
-                record = _record_from_materialized_item(
-                    target_id=target_id,
-                    repo_root=repo_root,
-                    repo_locator=repo_locator,
-                    project_id=project_id,
-                    finding=finding,
-                    work_item=work_item,
-                    proposal_id="",
-                    dry_run=dry_run,
-                )
-                records.append(record)
-                db.add_event(
-                    event_type="REPO_IMPROVEMENT_RECORD_CREATED",
-                    actor=actor,
-                    project_id=project_id,
-                    workstream_id=work_item.workstream_id or finding.workstream_id or workstream_id,
-                    payload={"run_id": run_id, **record},
-                )
-            continue
-
-        proposal = _upsert_proposal(
-            target_id=target_id,
-            repo_root=repo_root,
-            repo_locator=repo_locator,
-            project_id=project_id,
-            finding=finding,
-            current_version=current_version,
         )
-        if requires_confirmation:
-            proposal = _ensure_proposal_discussion_issue(proposal)
-        proposal_id = str(proposal.get("proposal_id") or "")
-        status = str(proposal.get("status") or "").strip().upper()
-        due = _proposal_due(proposal)
-        should_materialize = workflow.should_materialize(status=status, due=due)
-
-        if should_materialize:
-            for work_item in work_items:
-                record = _record_from_materialized_item(
-                    target_id=target_id,
-                    repo_root=repo_root,
-                    repo_locator=repo_locator,
-                    project_id=project_id,
-                    finding=finding,
-                    work_item=work_item,
-                    proposal_id=proposal_id,
-                    dry_run=dry_run,
-                )
-                records.append(record)
-                db.add_event(
-                    event_type="REPO_IMPROVEMENT_RECORD_CREATED",
-                    actor=actor,
-                    project_id=project_id,
-                    workstream_id=work_item.workstream_id or finding.workstream_id or workstream_id,
-                    payload={"run_id": run_id, **record},
-                )
-            if not dry_run:
-                _mark_proposal_materialized(proposal_id)
-            db.add_event(
-                event_type="REPO_IMPROVEMENT_PROPOSAL_MATERIALIZED",
-                actor=actor,
-                project_id=project_id,
-                workstream_id=finding.workstream_id or workstream_id,
-                payload={"run_id": run_id, "proposal_id": proposal_id, "lane": finding.lane, "title": finding.title, "records": len(work_items)},
-            )
+        workflow_results.append(result)
+        materialized = dict((((result.get("state") or {}).get("tasks") or {}).get("materialize_plan") or {}).get("outputs") or {})
+        if not materialized:
             continue
+        summaries.append(str(materialized.get("summary") or "").strip())
+        records.extend(list(materialized.get("records") or []))
+        pending_proposals.extend(list(materialized.get("pending_proposals") or []))
+        panel_sync = dict(materialized.get("panel_sync") or panel_sync)
+        current_version = str(materialized.get("current_version") or current_version).strip() or current_version
+        planned_version = str(materialized.get("planned_version") or planned_version).strip() or planned_version
+        plan_doc = dict(materialized.get("plan") or {}) if isinstance(materialized.get("plan"), dict) else {}
+        ci_actions.extend([str(item).strip() for item in list(plan_doc.get("ci_actions") or []) if str(item).strip()])
+        notes.extend([str(item).strip() for item in list(plan_doc.get("notes") or []) if str(item).strip()])
+        if workflow.lane == "bug":
+            bug_finding_count = len(list((plan_doc.get("findings") or [])))
+            repo_context_for_bug_state = dict((((result.get("state") or {}).get("tasks") or {}).get("prepare_context") or {}).get("outputs") or {}).get("repo_context") or {}
+            bug_scan_policy = dict(materialized.get("bug_scan_policy") or {})
 
-        pending_doc = {
-            "proposal_id": proposal_id,
-            "workflow_id": str(proposal.get("workflow_id") or workflow.workflow_id),
-            "lane": finding.lane,
-            "title": proposal.get("title") or finding.title,
-            "status": status,
-            "cooldown_until": proposal.get("cooldown_until") or "",
-            "version_bump": proposal.get("version_bump") or finding.version_bump,
-            "target_version": proposal.get("target_version") or finding.target_version,
-            "requires_user_confirmation": bool(proposal.get("requires_user_confirmation")),
-            "discussion_issue_url": proposal.get("discussion_issue_url") or "",
-            "discussion_issue_number": int(proposal.get("discussion_issue_number") or 0),
-        }
-        pending_proposals.append(pending_doc)
-        db.add_event(
-            event_type="REPO_IMPROVEMENT_PROPOSAL_PENDING",
+    if repo_context_for_bug_state:
+        bug_lane_state = _update_bug_lane_state(
+            db=db,
             actor=actor,
+            target_id=target_id,
             project_id=project_id,
-            workstream_id=finding.workstream_id or workstream_id,
-            payload={"run_id": run_id, **pending_doc},
+            workstream_id=workstream_id,
+            repo_context=repo_context_for_bug_state,
+            bug_finding_count=bug_finding_count,
+            policy=bug_scan_policy,
         )
-
-    if dry_run:
-        try:
-            svc = GitHubProjectsPanelSync(db=db)
-            panel_sync = svc.sync(project_id=project_id, mode="full", dry_run=True)
-        except Exception as e:
-            panel_sync = {"ok": False, "dry_run": True, "error": str(e)[:500], "project_id": project_id}
     else:
-        panel_sync = _sync_panel(db=db, project_id=project_id)
+        bug_lane_state = {}
+
     report = {
         "ts": _utc_now_iso(),
         "run_id": run_id,
@@ -5609,25 +5137,16 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "actor": actor,
         "trigger": trigger,
         "target": target,
-        "repo_context": repo_context,
-        "plan": plan.model_dump(),
+        "repo_root": str(repo_root),
+        "repo_locator": repo_locator,
+        "project_id": project_id,
+        "workflow_results": workflow_results,
         "records": records,
         "pending_proposals": pending_proposals,
         "panel_sync": panel_sync,
         "crewai": crewai_info,
-        "crew_debug": crew_debug,
     }
     improvement_store.save_report(target_id=target_id, project_id=project_id, report=report)
-    bug_lane_state = _update_bug_lane_state(
-        db=db,
-        actor=actor,
-        target_id=target_id,
-        project_id=project_id,
-        workstream_id=workstream_id,
-        repo_context=repo_context,
-        bug_finding_count=bug_finding_count,
-        policy=bug_scan_policy,
-    )
     _merge_state_last_run(
         target_id,
         {
@@ -5658,9 +5177,8 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "bug_findings": bug_finding_count,
             "bug_lane_status": str((bug_lane_state or {}).get("status") or "active"),
             "pending_proposals": len(pending_proposals),
-        }
+        },
     )
-    _finish_agents(db=db, agent_ids=agent_ids, state="DONE", current_action="repo-improvement recorded")
     db.add_event(
         event_type="REPO_IMPROVEMENT_FINISHED",
         actor=actor,
@@ -5680,6 +5198,9 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
             "report_id": run_id,
         },
     )
+    summary = "\n".join([item for item in summaries if item]).strip()
+    if not summary:
+        summary = "Repo improvement workflow run completed."
     return {
         "ok": True,
         "run_id": run_id,
@@ -5687,11 +5208,11 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "repo_root": str(repo_root),
         "repo_locator": repo_locator,
         "project_id": project_id,
-        "summary": plan.summary,
-        "ci_actions": plan.ci_actions,
-        "notes": plan.notes,
+        "summary": summary,
+        "ci_actions": ci_actions,
+        "notes": notes,
         "current_version": current_version,
-        "planned_version": plan.planned_version or _planned_version(current_version, plan.findings),
+        "planned_version": planned_version,
         "bug_findings": bug_finding_count,
         "bug_lane_status": str((bug_lane_state or {}).get("status") or "active"),
         "records": records,
@@ -5700,9 +5221,10 @@ def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dic
         "report_id": run_id,
         "crewai": crewai_info,
         "dry_run": dry_run,
+        "workflow_results": workflow_results,
         "write_delegate": {
             "write_mode": "crewai_repo_improvement",
-            "writer": "crewai_agents",
+            "writer": "workflow_runner",
             "truth_sources": ["task_ledger", "github_issues", "github_projects"],
             "target_repo": repo_locator or str(repo_root),
         },

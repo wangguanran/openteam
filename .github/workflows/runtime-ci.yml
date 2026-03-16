@@ -52,7 +52,7 @@ jobs:
 
       - name: Run runtime unit tests
         env:
-          TEAMOS_REPO_IMPROVEMENT_AUTO: "0"
+          TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED: "0"
         run: |
           python -m unittest \
             tests.test_crewai_runtime \

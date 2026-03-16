@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import crewai_runtime
-from . import crewai_self_upgrade
 from . import crew_tools
 from . import improvement_store
+from .domains.repo_improvement import proposal_runtime
 from .state_store import team_os_root
 from . import redis_bus
 
@@ -127,7 +127,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             payload={"run_id": run_id, "flow": flow, "task_id": task_id, "crewai": crewai_info, "write_delegate": write_delegate},
         )
         try:
-            out = crewai_self_upgrade.run_self_upgrade(
+            out = proposal_runtime.run_self_upgrade(
                 db=db,
                 spec=spec,
                 actor=actor,

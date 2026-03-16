@@ -45,7 +45,7 @@ cd ~/.teamos/runtime-config/default
 cp .env.example .env
 # 外部数据库：填写 TEAMOS_DB_URL
 # 本地数据库：保持 TEAMOS_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
-# 按需填写 OPENAI_API_KEY
+# 按需填写 TEAMOS_LLM_API_KEY
 make up
 make ps
 ```
@@ -56,7 +56,11 @@ make ps
 export TEAMOS_CREWAI_REASONING_EFFORT=xhigh
 ```
 
-当前 runtime 默认使用 `openai-codex/gpt-5.4`，并将 `TEAMOS_CREWAI_REASONING_EFFORT` 设为 `xhigh`。
+当前 runtime 默认使用 `openrouter/openai/gpt-5.4`，并将 `TEAMOS_LLM_MODEL` 设为该值，同时将 `TEAMOS_CREWAI_REASONING_EFFORT` 设为 `xhigh`。
+
+Repo-improvement 的 background workflow loop 不再由 `TEAMOS_REPO_IMPROVEMENT_*` 环境变量控制；具体的 `bug-finding`、`bug-coding`、`feature-discussion` 等 loop 配置都定义在 `scaffolds/runtime/orchestrator/app/teams/repo_improvement/specs/workflows/*.yaml`。Runtime 侧只保留全局开关 `TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED`。
+
+Team 目录现在只保留配置；workflow 里的 `kind: skill` 节点会通过 `scaffolds/runtime/orchestrator/app/skill_library/specs/*.yaml` 描述的技能库执行，具体实现位于通用 runtime skill/domain 模块，而不是 team 目录脚本。
 
 如需让本地 runtime 自动跟随 GHCR 上的新 `control-plane` 镜像，设置：
 

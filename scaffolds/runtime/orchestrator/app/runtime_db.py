@@ -2136,7 +2136,7 @@ class RuntimeDB:
     """
     RuntimeDB facade.
 
-    - Default: sqlite (db_path from RUNTIME_DB_PATH or .team-os/state/runtime.db)
+    - Default: sqlite (db_path from TEAMOS_RUNTIME_DB_PATH or .team-os/state/runtime.db)
     - Optional: Postgres when TEAMOS_DB_URL is set to a postgres DSN.
     """
 

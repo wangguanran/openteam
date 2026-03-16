@@ -1,0 +1,21 @@
+skill_id: delivery.run-task-pipeline
+handler_id: delivery.run-task-pipeline
+display_name_zh: 执行任务交付流水线
+description: Claim queued delivery tasks and run the coding/review/qa/release pipeline for the current workflow lane.
+category: delivery
+idempotent: false
+supports_dry_run: true
+inputs_schema:
+  project_id: string
+  target_id: string
+  task_id: string
+  lane: string
+outputs_schema:
+  scanned: integer
+  processed: integer
+  tasks: array
+  summary: object
+tags:
+  - delivery
+  - queue
+  - release

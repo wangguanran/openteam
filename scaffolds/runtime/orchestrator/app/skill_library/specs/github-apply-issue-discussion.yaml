@@ -1,0 +1,22 @@
+skill_id: github.apply-issue-discussion
+handler_id: github.apply-issue-discussion
+display_name_zh: 应用 Issue 讨论决策
+description: Persist a structured discussion response and sync the reply back to the GitHub issue thread.
+category: github
+idempotent: false
+supports_dry_run: false
+inputs_schema:
+  proposal: object
+  latest_comment_id: integer
+  explicit_action: string
+  comments_text: string
+  response: object
+outputs_schema:
+  proposal: object
+  updated: boolean
+  action: string
+tags:
+  - github
+  - issue
+  - discussion
+  - approval

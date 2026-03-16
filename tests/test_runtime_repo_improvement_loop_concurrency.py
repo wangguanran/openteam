@@ -29,25 +29,17 @@ if "agents" not in sys.modules:
 FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 if FASTAPI_AVAILABLE:
     from app import main as app_main  # noqa: E402
+    from app.engines.crewai import workflow_registry  # noqa: E402
 else:  # pragma: no cover
     app_main = None
+    workflow_registry = None
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not available in this test environment")
 class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
-    def test_loop_worker_concurrency_defaults_to_ten(self) -> None:
-        original = os.environ.pop("TEAMOS_REPO_IMPROVEMENT_DISCOVERY_CONCURRENCY", None)
-        try:
-            self.assertEqual(
-                app_main._repo_improvement_loop_worker_concurrency(
-                    "TEAMOS_REPO_IMPROVEMENT_DISCOVERY_CONCURRENCY",
-                    10,
-                ),
-                10,
-            )
-        finally:
-            if original is not None:
-                os.environ["TEAMOS_REPO_IMPROVEMENT_DISCOVERY_CONCURRENCY"] = original
+    def test_workflow_loop_concurrency_loads_from_spec(self) -> None:
+        workflow = workflow_registry.workflow_spec("bug-finding", project_id="teamos")
+        self.assertEqual(workflow.loop.concurrency, 1)
 
     def test_target_job_pool_runs_jobs_concurrently(self) -> None:
         targets = [{"target_id": "a"}, {"target_id": "b"}]
@@ -79,18 +71,18 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
         self.assertCountEqual(results, ["a", "b"])
         self.assertGreaterEqual(peak, 2)
 
-    def test_public_repo_improvement_workflow_status_uses_finding_and_coding_names(self) -> None:
+    def test_workflow_status_snapshot_is_keyed_by_workflow_id(self) -> None:
         app_main._set_repo_improvement_loop_state(
-            app_main._REPO_IMPROVEMENT_LOOP_DISCOVERY,
+            "bug-finding",
             enabled=True,
             status="running",
-            current_action="running repo-improvement discovery workers",
+            current_action="running bug-finding workers",
         )
         app_main._set_repo_improvement_loop_state(
-            app_main._REPO_IMPROVEMENT_LOOP_DELIVERY,
+            "bug-coding",
             enabled=True,
             status="sleeping",
-            current_action="sleeping until next delivery sweep",
+            current_action="sleeping until next bug-coding sweep",
         )
 
         statuses = app_main._repo_improvement_workflow_status_snapshot(
@@ -101,6 +93,10 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
         self.assertIn("bug-finding", statuses)
         self.assertIn("bug-coding", statuses)
         self.assertIn("feature-discussion", statuses)
-        self.assertEqual(statuses["bug-finding"]["phase"], "discovery")
-        self.assertEqual(statuses["bug-coding"]["phase"], "delivery")
+        self.assertEqual(statuses["bug-finding"]["phase"], "finding")
+        self.assertEqual(statuses["bug-coding"]["phase"], "coding")
         self.assertEqual(statuses["bug-coding"]["workflow_root"], "bug")
+
+
+if __name__ == "__main__":
+    unittest.main()

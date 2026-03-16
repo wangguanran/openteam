@@ -1,0 +1,23 @@
+skill_id: planning.materialize-findings
+handler_id: planning.materialize-findings
+display_name_zh: 物化发现结果
+description: Convert structured findings into queued tasks or proposals according to workflow policy.
+category: planning
+idempotent: false
+supports_dry_run: true
+inputs_schema:
+  plan: object
+  project_id: string
+  target_id: string
+  repo_root: string
+  repo_locator: string
+  current_version: string
+outputs_schema:
+  records: array
+  pending_proposals: array
+  panel_sync: object
+  plan: object
+tags:
+  - planning
+  - materialization
+  - ledger

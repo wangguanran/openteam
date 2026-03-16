@@ -1,0 +1,20 @@
+skill_id: github.claim-issue-discussion
+handler_id: github.claim-issue-discussion
+display_name_zh: 领取 Issue 讨论
+description: Read new user comments from a proposal discussion issue and return the pending discussion payload.
+category: github
+idempotent: true
+supports_dry_run: true
+inputs_schema:
+  project_id: string
+  target_id: string
+  lane: string
+outputs_schema:
+  proposal: object
+  comments: array
+  comments_text: string
+  latest_comment_id: integer
+tags:
+  - github
+  - issue
+  - discussion

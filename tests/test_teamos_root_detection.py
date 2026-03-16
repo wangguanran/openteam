@@ -33,17 +33,17 @@ from app import workspace_store  # noqa: E402
 
 
 class TeamOSRootDetectionTests(unittest.TestCase):
-    def test_current_repo_is_recognized_without_agents_md(self):
+    def test_current_repo_is_recognized_with_repo_agents_md(self):
         repo = _repo_root()
         common = _load_common_module()
 
-        self.assertFalse((repo / "AGENTS.md").exists())
+        self.assertTrue((repo / "AGENTS.md").exists())
         self.assertTrue(common._looks_like_teamos_repo(repo))
         resolved = common.resolve_repo_root(argparse.Namespace(repo_root=str(repo)))
 
         self.assertEqual(resolved, repo)
 
-    def test_runtime_helpers_find_current_repo_without_agents_md(self):
+    def test_runtime_helpers_find_current_repo_with_repo_agents_md(self):
         repo = _repo_root()
 
         with mock.patch.dict(os.environ, {"TEAM_OS_REPO_PATH": ""}, clear=False):

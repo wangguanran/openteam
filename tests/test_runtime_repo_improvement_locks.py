@@ -123,7 +123,7 @@ class RepoImprovementLockTests(unittest.TestCase):
             app_main._REPO_IMPROVEMENT_DELIVERY_LOCKS,
             "release",
         ) as release_mock, mock.patch.object(
-            app_main.crewai_self_upgrade_delivery,
+            app_main.task_runtime,
             "run_delivery_sweep",
             return_value={"ok": True, "processed": 0, "summary": {"total": 0}},
         ) as sweep_mock:
@@ -139,6 +139,77 @@ class RepoImprovementLockTests(unittest.TestCase):
         self.assertEqual(sweep_mock.call_args.kwargs["project_id"], "projectmanager")
         self.assertEqual(out["project_id"], "projectmanager")
         release_mock.assert_called_once_with("task:PROJECTMANAGER-0003")
+
+    def test_active_repo_improvement_run_for_scope_matches_running_project_run(self) -> None:
+        active_run = SimpleNamespace(
+            run_id="run-projectmanager-1",
+            project_id="projectmanager",
+            workstream_id="general",
+            objective="Continuous improvement sweep for target wangguanran/ProjectManager",
+            state="RUNNING",
+        )
+        fake_db = SimpleNamespace(list_runs=lambda project_id=None, workstream_id=None: [active_run])
+        original_db = app_main.DB
+        try:
+            app_main.DB = fake_db
+            out = app_main._active_repo_improvement_run_for_scope(
+                project_id="projectmanager",
+                workstream_id="general",
+                lock_key="project:projectmanager",
+            )
+        finally:
+            app_main.DB = original_db
+
+        self.assertIsNotNone(out)
+        self.assertEqual(out.run_id, "run-projectmanager-1")
+
+    def test_run_self_upgrade_iteration_skips_when_active_project_run_exists(self) -> None:
+        active_run = SimpleNamespace(
+            run_id="run-projectmanager-1",
+            project_id="projectmanager",
+            workstream_id="general",
+            objective="Continuous improvement sweep for target wangguanran/ProjectManager",
+            state="RUNNING",
+        )
+        fake_db = SimpleNamespace(
+            list_runs=lambda project_id=None, workstream_id=None: [active_run],
+            list_events=lambda limit=5000: [],
+            list_agents=lambda: [],
+            event_calls=[],
+        )
+
+        def _add_event(**kwargs) -> int:
+            fake_db.event_calls.append(kwargs)
+            return 1
+
+        fake_db.add_event = _add_event
+        original_db = app_main.DB
+        try:
+            app_main.DB = fake_db
+            with mock.patch.object(app_main._REPO_IMPROVEMENT_LOCKS, "acquire", return_value=True), mock.patch.object(
+                app_main._REPO_IMPROVEMENT_LOCKS,
+                "release",
+            ) as release_mock, mock.patch.object(
+                app_main.crewai_orchestrator,
+                "run_once",
+            ) as run_once_mock:
+                out = app_main._run_self_upgrade_iteration(
+                    actor="test",
+                    project_id="projectmanager",
+                    workstream_id="general",
+                    objective="Continuous improvement sweep for target wangguanran/ProjectManager",
+                    trigger="continuous_loop",
+                )
+
+            self.assertTrue(out["ok"])
+            self.assertTrue(out["skipped"])
+            self.assertEqual(out["reason"], "repo_improvement_active_run_exists")
+            self.assertEqual(out["existing_run_id"], "run-projectmanager-1")
+            run_once_mock.assert_not_called()
+            release_mock.assert_called_once_with("project:projectmanager")
+            self.assertTrue(any(call.get("event_type") == "REPO_IMPROVEMENT_ALREADY_RUNNING" for call in fake_db.event_calls))
+        finally:
+            app_main.DB = original_db
 
     def test_cleanup_stale_repo_improvement_run_uses_event_flow_not_objective_text(self) -> None:
         stale_run = SimpleNamespace(
@@ -174,25 +245,25 @@ class RepoImprovementLockTests(unittest.TestCase):
         fake_db.add_event = _add_event
 
         original_db = app_main.DB
-        original_ttl = os.environ.get("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC")
+        original_ttl = os.environ.get("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC")
         try:
             app_main.DB = fake_db
-            os.environ["TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
+            os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
             app_main._cleanup_stale_repo_improvement_activity()
             self.assertEqual(fake_db.update_run_state_calls, [("run-123", "FAILED")])
             self.assertTrue(any(call[0] == "REPO_IMPROVEMENT_STALE_RUN_CLEANED" for call in fake_db.event_calls))
         finally:
             app_main.DB = original_db
             if original_ttl is None:
-                os.environ.pop("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
+                os.environ.pop("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
             else:
-                os.environ["TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
+                os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
 
     def test_cleanup_stale_repo_improvement_run_cleans_gap_and_milestone_agents(self) -> None:
         stale_agents = [
             SimpleNamespace(
                 agent_id="agent-gap",
-                role_id=app_main.crewai_self_upgrade.ROLE_TEST_CASE_GAP_AGENT,
+                role_id=app_main.proposal_runtime.ROLE_TEST_CASE_GAP_AGENT,
                 project_id="projectmanager",
                 workstream_id="general",
                 state="RUNNING",
@@ -201,7 +272,7 @@ class RepoImprovementLockTests(unittest.TestCase):
             ),
             SimpleNamespace(
                 agent_id="agent-ms",
-                role_id=app_main.crewai_self_upgrade.ROLE_MILESTONE_MANAGER,
+                role_id=app_main.proposal_runtime.ROLE_MILESTONE_MANAGER,
                 project_id="projectmanager",
                 workstream_id="general",
                 state="RUNNING",
@@ -228,10 +299,10 @@ class RepoImprovementLockTests(unittest.TestCase):
         fake_db.add_event = _add_event
 
         original_db = app_main.DB
-        original_ttl = os.environ.get("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC")
+        original_ttl = os.environ.get("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC")
         try:
             app_main.DB = fake_db
-            os.environ["TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
+            os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
             app_main._cleanup_stale_repo_improvement_activity()
             cleaned_ids = {str(call.get("agent_id") or "") for call in fake_db.update_calls}
             self.assertEqual(cleaned_ids, {"agent-gap", "agent-ms"})
@@ -242,9 +313,9 @@ class RepoImprovementLockTests(unittest.TestCase):
         finally:
             app_main.DB = original_db
             if original_ttl is None:
-                os.environ.pop("TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
+                os.environ.pop("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
             else:
-                os.environ["TEAMOS_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
+                os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
 
 
 if __name__ == "__main__":

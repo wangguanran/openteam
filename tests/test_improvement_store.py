@@ -35,7 +35,7 @@ class ImprovementStoreTests(unittest.TestCase):
     def _configure_runtime(self, root: str) -> None:
         os.environ["TEAMOS_RUNTIME_ROOT"] = root
         os.environ["TEAMOS_WORKSPACE_ROOT"] = str(Path(root) / "workspace")
-        os.environ["RUNTIME_DB_PATH"] = str(Path(root) / "state" / "runtime.db")
+        os.environ["TEAMOS_RUNTIME_DB_PATH"] = str(Path(root) / "state" / "runtime.db")
 
     def test_runtime_state_and_docs_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as td:

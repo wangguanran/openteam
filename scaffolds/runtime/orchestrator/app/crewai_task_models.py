@@ -1,7 +1,7 @@
-"""Compatibility wrapper for repo improvement task models."""
+"""Compatibility wrapper for repo-improvement runtime models."""
 
 import sys
 
-from .teams.repo_improvement import models as _impl
+from .domains.repo_improvement import models as _impl
 
 sys.modules[__name__] = _impl

@@ -1,0 +1,71 @@
+workflow_id: feature-discussion
+lane: feature
+phase: discussion
+display_name_zh: 功能确认流程
+enabled: true
+description: Collect user confirmation and update feature proposals before coding starts.
+task_source: proposal
+requires_user_confirmation: true
+materialize_requires_approval: true
+default_version_bump: minor
+baseline_action_default: feature_followup
+baseline_action_by_bump:
+  major: new_baseline
+  minor: new_baseline
+stages:
+  - proposal-confirmation
+runtime_policy:
+  max_candidates: 1
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+  cooldown_hours: 1
+loop:
+  enabled: true
+  run_on_startup: false
+  interval_sec: 90
+  initial_delay_sec: 30
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+agents:
+  - agent_id: responder
+    role_id: Issue-Discussion-Agent
+tasks:
+  - task_id: claim_discussion
+    kind: skill
+    skill_id: github.claim-issue-discussion
+  - task_id: reply_discussion
+    kind: crewai_task
+    agent_id: responder
+    output_model: ProposalDiscussionResponse
+    inputs:
+      proposal: $tasks.claim_discussion.outputs.proposal
+      comments: $tasks.claim_discussion.outputs.comments
+    description_template: |
+      Read the proposal and the latest user comments and return JSON matching ProposalDiscussionResponse.
+      Rules:
+      - If the user is only asking questions or suggesting changes, keep action=pending or hold.
+      - Only set action=approve when the user explicitly confirms the proposal should proceed.
+      - You may refine title, summary, version_bump, or module if the user feedback clearly changes the scope.
+      - Keep reply_body concise and directly answer the latest comments.
+      - All reply_body, title, and summary fields must use Simplified Chinese.
+
+      Proposal:
+      {proposal}
+
+      Latest comments:
+      {comments}
+    expected_output: Structured discussion reply JSON.
+  - task_id: apply_discussion
+    kind: skill
+    skill_id: github.apply-issue-discussion
+    inputs:
+      proposal: $tasks.claim_discussion.outputs.proposal
+      latest_comment_id: $tasks.claim_discussion.outputs.latest_comment_id
+      explicit_action: $tasks.claim_discussion.outputs.explicit_action
+      comments_text: $tasks.claim_discussion.outputs.comments_text
+      response: $tasks.reply_discussion.outputs.json

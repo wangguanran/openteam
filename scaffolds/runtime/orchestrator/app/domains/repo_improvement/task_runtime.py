@@ -19,11 +19,11 @@ from app import cluster_manager
 from app import crewai_agent_factory
 from app import crewai_role_registry
 from app import crewai_runtime
-from app import crewai_self_upgrade as planning
 from app import crewai_task_registry
 from app import crewai_workflow_registry
 from app import improvement_store
 from app import workspace_store
+from app.domains.repo_improvement import proposal_runtime as planning
 from app.crewai_task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
@@ -172,16 +172,45 @@ def _source_repo_root(doc: dict[str, Any]) -> Path:
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
         repo = {}
+    target = doc.get("target") or {}
+    if not isinstance(target, dict):
+        target = {}
+    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    target_id = str(target.get("target_id") or "").strip()
     exec_state = planning._repo_improvement_section(
         doc,
         new_key="repo_improvement_execution",
         legacy_key="self_upgrade_execution",
     )
-    for raw in (
+    candidates = [
         exec_state.get("source_repo_root"),
         repo.get("source_workdir"),
         repo.get("workdir"),
-    ):
+    ]
+    if target_id:
+        try:
+            candidates.append(str(workspace_store.target_repo_dir(target_id, project_id=project_id)))
+        except Exception:
+            pass
+        try:
+            candidates.append(str(workspace_store.legacy_target_dir(target_id) / "repo"))
+        except Exception:
+            pass
+    for raw in candidates:
+        s = str(raw or "").strip()
+        if s:
+            p = Path(s).expanduser().resolve()
+            if p.exists():
+                if str(exec_state.get("source_repo_root") or "").strip() != str(p):
+                    exec_state["source_repo_root"] = str(p)
+                    doc["repo_improvement_execution"] = dict(exec_state)
+                if str(repo.get("source_workdir") or "").strip() != str(p):
+                    repo["source_workdir"] = str(p)
+                if str(repo.get("workdir") or "").strip() == s:
+                    repo["workdir"] = str(p)
+                doc["repo"] = repo
+                return p
+    for raw in candidates:
         s = str(raw or "").strip()
         if s:
             return Path(s).expanduser().resolve()
@@ -1077,6 +1106,38 @@ def _issue_close_comment_body(
     return "\n".join(lines).strip() + "\n"
 
 
+def _issue_sync_comment_body(*, doc: dict[str, Any]) -> str:
+    task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
+    status = str(doc.get("status") or "").strip().lower()
+    checkpoint = doc.get("checkpoint") or {}
+    if not isinstance(checkpoint, dict):
+        checkpoint = {}
+    stage = str(checkpoint.get("stage") or "").strip().lower()
+    execution = _execution_state(doc)
+    feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
+    last_error = str(execution.get("last_error") or "").strip()
+    lines = [
+        "Team OS is updating this repo-improvement issue.",
+        "",
+        f"Task: {task_id or '(unknown)'}",
+        f"Reason: status={status or 'unknown'}; stage={stage or 'unknown'}",
+    ]
+    if feedback:
+        lines.extend(["", "Details:"])
+        lines.extend(f"- {item}" for item in feedback[:5])
+    elif last_error:
+        lines.extend(["", "Details:", f"- {last_error}"])
+    return "\n".join(lines).strip() + "\n"
+
+
+def _normalize_delivery_exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    lowered = message.lower()
+    if "usage_limit_reached" in lowered:
+        return "OpenRouter usage_limit_reached: provider quota or plan limit reached for the configured model"
+    return message[:500]
+
+
 def _close_issue_if_possible(
     doc: dict[str, Any],
     *,
@@ -1184,6 +1245,13 @@ def _update_task_state(
         doc["roles_involved"] = roles
     _write_yaml(ledger_path, doc)
     try:
+        issue = _issue_snapshot(doc)
+        if int(issue.get("number") or 0) > 0 and str(issue.get("url") or "").strip():
+            create_issue_comment(
+                str(((doc.get("repo") or {}) if isinstance(doc.get("repo"), dict) else {}).get("locator") or "").strip(),
+                int(issue.get("number") or 0),
+                body=_issue_sync_comment_body(doc=doc),
+            )
         sync_out = planning.sync_task_issue_from_doc(doc)
         if sync_out.get("ok") and str(sync_out.get("url") or "").strip():
             links = doc.get("links") or {}
@@ -2215,9 +2283,9 @@ def execute_task_delivery(
     review_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
     qa_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
     documentation_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("documentation_role")) or planning.ROLE_DOCUMENTATION_AGENT)
-    verbose = _env_truthy("TEAMOS_REPO_IMPROVEMENT_VERBOSE", "0")
-    max_attempts = max(1, int(os.getenv("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_ATTEMPTS", "2") or "2"))
-    ship_enabled = _env_truthy("TEAMOS_REPO_IMPROVEMENT_SHIP_ENABLED", "1")
+    verbose = False
+    max_attempts = 2
+    ship_enabled = True
     lease_guard: Optional[_DeliveryLeaseGuard] = None
     agent_ids: dict[str, str] = {}
     if lease:
@@ -2952,11 +3020,12 @@ def execute_task_delivery(
         return {"ok": False, "task_id": task_id, "status": "blocked", "feedback": feedback, "worktree": str(worktree_root), "project_id": project_id}
     except Exception as e:
         doc = _load_yaml(ledger_path)
-        doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_error": str(e)[:500]})
+        normalized_error = _normalize_delivery_exception_message(e)
+        doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_error": normalized_error})
         _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery failed")
-        _append_markdown(logs_dir, "07_retro.md", "Delivery Failed", [str(e)[:800]])
-        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": str(e)[:800]}, severity="ERROR")
-        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": str(e)[:500]})
+        _append_markdown(logs_dir, "07_retro.md", "Delivery Failed", [normalized_error[:800]])
+        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": normalized_error[:800]}, severity="ERROR")
+        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": normalized_error})
         raise
     finally:
         if lease_guard is not None:
@@ -3127,10 +3196,7 @@ def delivery_summary(*, project_id: str = "", target_id: str = "") -> dict[str, 
 def _delivery_worker_concurrency(concurrency: Optional[int] = None) -> int:
     if concurrency is not None:
         return max(1, int(concurrency))
-    raw = os.getenv("TEAMOS_REPO_IMPROVEMENT_DELIVERY_CONCURRENCY", "").strip()
-    if not raw:
-        raw = os.getenv("TEAMOS_REPO_IMPROVEMENT_DELIVERY_MAX_TASKS_PER_SWEEP", "10").strip()
-    return max(1, int(raw or "10"))
+    return 10
 
 
 def _execute_delivery_candidate(
@@ -3175,7 +3241,11 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
             task_project_id = str(task.get("project_id") or project_id or "teamos").strip() or "teamos"
             task_target_id = str(task.get("target_id") or target_id or "").strip()
             task_lane = str(((task.get("self_upgrade") or {}) if isinstance(task.get("self_upgrade"), dict) else {}).get("lane") or ((task.get("orchestration") or {}) if isinstance(task.get("orchestration"), dict) else {}).get("finding_lane") or "bug").strip().lower() or "bug"
-            workflow = crewai_workflow_registry.workflow_for_lane(task_lane, project_id=task_project_id)
+            workflow = crewai_workflow_registry.workflow_for_lane_phase(
+                task_lane,
+                crewai_workflow_registry.PHASE_CODING,
+                project_id=task_project_id,
+            )
             runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
                 workflow=workflow,
                 target_id=task_target_id,

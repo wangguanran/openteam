@@ -207,7 +207,7 @@ def _running_in_container() -> bool:
 
 
 def _openclaw_config_dir() -> Path:
-    explicit = str(os.getenv("OPENCLAW_CONFIG_DIR", "") or "").strip()
+    explicit = str(os.getenv("TEAMOS_OPENCLAW_CONFIG_DIR", "") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
     home = Path.home().resolve()
@@ -286,7 +286,7 @@ def _gateway_command_env(config: dict[str, Any]) -> tuple[dict[str, str], Option
     Path(temp_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     env["OPENCLAW_CONFIG_PATH"] = temp_path
     env["OPENCLAW_STATE_DIR"] = str(state_dir)
-    env.pop("OPENCLAW_CONFIG_DIR", None)
+    env.pop("TEAMOS_OPENCLAW_CONFIG_DIR", None)
     if bool(config.get("allow_insecure_private_ws")) and gateway_url.startswith("ws://"):
         env["OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"] = "1"
     return env, temp_path

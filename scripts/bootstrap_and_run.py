@@ -409,18 +409,9 @@ def _codex_login_status() -> tuple[bool, str]:
 
 
 def _llm_config() -> dict[str, Any]:
-    base = str(
-        os.getenv("TEAMOS_LLM_BASE_URL")
-        or os.getenv("OPENAI_BASE_URL")
-        or os.getenv("OPENAI_API_BASE")
-        or ""
-    ).strip()
-    key = str(
-        os.getenv("TEAMOS_LLM_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or ""
-    ).strip()
-    model = str(os.getenv("TEAMOS_CREWAI_MODEL") or os.getenv("OPENAI_MODEL") or "openai-codex/gpt-5.4").strip()
+    base = str(os.getenv("TEAMOS_LLM_BASE_URL") or "").strip()
+    key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
+    model = str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
     needs_codex = "codex" in model.lower()
     codex_logged_in, codex_login_message = _codex_login_status()
     codex_oauth_ready = bool(needs_codex and codex_logged_in)
@@ -441,7 +432,7 @@ def _llm_config() -> dict[str, Any]:
         "codex_oauth_ready": codex_oauth_ready,
         "required": [
             "Codex OAuth login via `codex login` for codex models",
-            "or TEAMOS_LLM_BASE_URL(or OPENAI_BASE_URL/OPENAI_API_BASE) + TEAMOS_LLM_API_KEY(or OPENAI_API_KEY)",
+            "or TEAMOS_LLM_BASE_URL + TEAMOS_LLM_API_KEY",
         ],
     }
 
@@ -451,8 +442,7 @@ def _require_llm_config(runtime_root: Path) -> dict[str, Any]:
     if not bool(cfg.get("ok")):
         raise BootstrapError(
             "missing required LLM config: either run `codex login` for codex models, "
-            "or set TEAMOS_LLM_BASE_URL and TEAMOS_LLM_API_KEY "
-            "(or OPENAI_BASE_URL/OPENAI_API_BASE and OPENAI_API_KEY)"
+            "or set TEAMOS_LLM_BASE_URL and TEAMOS_LLM_API_KEY"
         )
     _append_audit(
         runtime_root,
@@ -530,11 +520,11 @@ def _start_control_plane(
     env["TEAMOS_WORKSPACE_ROOT"] = str(workspace_root)
     env["TEAMOS_DB_URL"] = db_url
     env["TEAMOS_REDIS_URL"] = redis_url
-    env["RUNTIME_DB_PATH"] = str(runtime_root / "state" / "runtime.db")
+    env["TEAMOS_RUNTIME_DB_PATH"] = str(runtime_root / "state" / "runtime.db")
     env["TEAMOS_BASE_URL"] = base_url
     env["CONTROL_PLANE_BASE_URL"] = base_url
     env["TEAMOS_PIPELINE_PYTHON"] = str(sys.executable)
-    env["TEAMOS_REPO_IMPROVEMENT_AUTO"] = "0"
+    env["TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED"] = "0"
     env.setdefault("CREWAI_TRACING_ENABLED", "false")
     py_path = str(orch_dir)
     if str(env.get("PYTHONPATH") or "").strip():
