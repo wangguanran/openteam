@@ -14,10 +14,7 @@ role_pool:
   - Issue-Audit-Agent
   - Bug-Repro-Agent
   - Bug-TestCase-Agent
-  - Feature-Coding-Agent
-  - Bugfix-Coding-Agent
-  - Process-Optimization-Agent
-  - Code-Quality-Agent
+  - Coding-Agent
   - Review-Agent
   - QA-Agent
   - Documentation-Agent
@@ -27,15 +24,12 @@ role_pool:
   - Milestone-Manager-Agent
 workflow_ids:
   - bug-finding
-  - bug-coding
+  - coding
   - feature-finding
   - feature-discussion
-  - feature-coding
   - quality-finding
   - quality-discussion
-  - quality-coding
   - process-finding
-  - process-coding
 stage_ids:
   - planning
   - proposal-confirmation

@@ -21,11 +21,11 @@ cd team-os
 # 二选一：
 # 1. Codex OAuth（推荐，和 ~/Codes/crewAI 的 demo 脚本一致）
 codex login
-export TEAMOS_CREWAI_MODEL="openai-codex/gpt-5.4"
+export TEAMOS_LLM_MODEL="openai/gpt-5.4"
 
 # 2. 平台 API Key
-export TEAMOS_LLM_BASE_URL="https://api.openai.com/v1"
-export TEAMOS_LLM_API_KEY="<your_api_key>"
+export TEAMOS_LLM_BASE_URL="https://openrouter.ai/api/v1"
+export TEAMOS_LLM_API_KEY="<your_openrouter_api_key>"
 
 # 初始化 Workspace（所有 project:<id> 真相源必须落在 Workspace，不在 team-os/ 目录树内）
 ./teamos config init

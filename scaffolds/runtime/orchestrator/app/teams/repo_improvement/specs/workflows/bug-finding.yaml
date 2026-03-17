@@ -79,7 +79,7 @@ tasks:
       - requires_user_confirmation must be false.
       - Every finding must include exactly one stable module name.
       - Every finding must include small, executable work_items.
-      - Every bug work_item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, reproduction_steps, test_case_files, verification_steps, and worktree_hint.
+      - Every bug work_item must include review_role, qa_role, allowed_paths, tests, acceptance, reproduction_steps, test_case_files, verification_steps, and worktree_hint. owner_role will be normalized to Coding-Agent by the runtime.
       - Keep all user-facing natural language fields in Simplified Chinese.
 
       Current version: {current_version}

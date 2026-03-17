@@ -22,6 +22,13 @@ LEGACY_ROOT_WORKFLOW_BY_LANE: dict[str, str] = {
     "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
 }
 
+LEGACY_CODING_WORKFLOW_IDS: tuple[str, ...] = (
+    crewai_role_registry.WORKFLOW_BUG_CODING,
+    crewai_role_registry.WORKFLOW_FEATURE_CODING,
+    crewai_role_registry.WORKFLOW_QUALITY_CODING,
+    crewai_role_registry.WORKFLOW_PROCESS_CODING,
+)
+
 
 def _workflow_now_local() -> _dt.datetime:
     return _dt.datetime.now().astimezone()
@@ -59,6 +66,10 @@ def _workflow_aliases(workflow_id: str, lane: str = "") -> tuple[str, ...]:
     aliases: list[str] = []
     if canonical:
         aliases.append(canonical)
+    if canonical == crewai_role_registry.WORKFLOW_CODING:
+        for legacy in LEGACY_CODING_WORKFLOW_IDS:
+            if legacy not in aliases:
+                aliases.append(legacy)
     normalized_lane = str(lane or "").strip().lower()
     legacy = LEGACY_ROOT_WORKFLOW_BY_LANE.get(normalized_lane, "")
     if legacy and legacy not in aliases:
@@ -70,6 +81,8 @@ def _canonical_workflow_id(workflow_id: str) -> str:
     normalized = _normalize_workflow_id(workflow_id)
     if not normalized:
         return ""
+    if normalized in LEGACY_CODING_WORKFLOW_IDS:
+        return crewai_role_registry.WORKFLOW_CODING
     for lane, legacy in LEGACY_ROOT_WORKFLOW_BY_LANE.items():
         if normalized == legacy:
             for spec in list_workflows(project_id="teamos"):
@@ -478,9 +491,19 @@ def workflow_spec(workflow_id: str, *, project_id: str = "teamos") -> WorkflowSp
     return _workflow_spec_from_doc(merged)
 
 
+def workflow_for_phase(phase: str, *, project_id: str = "teamos") -> WorkflowSpec:
+    normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
+    for spec in list_workflows(project_id=project_id):
+        if spec.phase == normalized_phase:
+            return spec
+    raise KeyError(f"unknown workflow phase={normalized_phase!r}")
+
+
 def workflow_for_lane_phase(lane: str, phase: str, *, project_id: str = "teamos") -> WorkflowSpec:
     normalized_lane = str(lane or "").strip().lower() or "bug"
     normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
+    if normalized_phase == PHASE_CODING:
+        return workflow_for_phase(PHASE_CODING, project_id=project_id)
     for spec in list_workflows(project_id=project_id):
         if spec.lane == normalized_lane and spec.phase == normalized_phase:
             return spec

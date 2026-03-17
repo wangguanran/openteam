@@ -77,7 +77,7 @@ tasks:
       - requires_user_confirmation must be true.
       - materialization requires approval.
       - Every finding must include exactly one stable module name.
-      - Every work_item must stay small, executable, and include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint.
+      - Every work_item must stay small, executable, and include review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint. owner_role will be normalized to Coding-Agent by the runtime.
       - Keep all user-facing natural language fields in Simplified Chinese.
 
       Current version: {current_version}

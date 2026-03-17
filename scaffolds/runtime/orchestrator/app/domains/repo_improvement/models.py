@@ -79,7 +79,7 @@ class DeliveryDocumentationResult(BaseModel):
 class UpgradeWorkItem(BaseModel):
     title: str
     summary: str = ""
-    owner_role: str = "Feature-Coding-Agent"
+    owner_role: str = "Coding-Agent"
     review_role: str = "Review-Agent"
     qa_role: str = "QA-Agent"
     workstream_id: str = "general"

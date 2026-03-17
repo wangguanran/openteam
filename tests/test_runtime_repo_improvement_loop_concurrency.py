@@ -79,10 +79,10 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
             current_action="running bug-finding workers",
         )
         app_main._set_repo_improvement_loop_state(
-            "bug-coding",
+            "coding",
             enabled=True,
             status="sleeping",
-            current_action="sleeping until next bug-coding sweep",
+            current_action="sleeping until next coding sweep",
         )
 
         statuses = app_main._repo_improvement_workflow_status_snapshot(
@@ -91,11 +91,11 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
         )
 
         self.assertIn("bug-finding", statuses)
-        self.assertIn("bug-coding", statuses)
+        self.assertIn("coding", statuses)
         self.assertIn("feature-discussion", statuses)
         self.assertEqual(statuses["bug-finding"]["phase"], "finding")
-        self.assertEqual(statuses["bug-coding"]["phase"], "coding")
-        self.assertEqual(statuses["bug-coding"]["workflow_root"], "bug")
+        self.assertEqual(statuses["coding"]["phase"], "coding")
+        self.assertEqual(statuses["coding"]["workflow_root"], "shared")
 
 
 if __name__ == "__main__":

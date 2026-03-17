@@ -46,18 +46,24 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
 
     def test_delivery_team_blueprint_includes_dynamic_roles(self):
         blueprint = crewai_role_registry.delivery_team_blueprint(
-            owner_role="Bugfix-Coding-Agent",
+            owner_role="Coding-Agent",
             review_role="Review-Agent",
             qa_role="QA-Agent",
             documentation_role="Documentation-Agent",
         )
 
-        self.assertIn("Bugfix-Coding-Agent", crewai_role_registry.role_ids_for_team(blueprint))
+        self.assertIn("Coding-Agent", crewai_role_registry.role_ids_for_team(blueprint))
         self.assertIn(crewai_role_registry.ROLE_BUG_REPRO_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertIn(crewai_role_registry.ROLE_BUG_TESTCASE_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertIn(crewai_role_registry.ROLE_SCHEDULER_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertIn(crewai_role_registry.ROLE_RELEASE_AGENT, crewai_role_registry.role_ids_for_team(blueprint))
         self.assertEqual(blueprint.team_id, crewai_role_registry.STAGE_DELIVERY)
+
+    def test_generic_coding_role_loads_from_yaml(self):
+        spec = crewai_role_registry.get_role_spec(crewai_role_registry.ROLE_CODING_AGENT)
+
+        self.assertEqual(spec.display_name_zh, "通用编码 Agent")
+        self.assertEqual(spec.tool_profile, "write")
 
     def test_loaded_role_spec_exposes_display_name_from_yaml(self):
         spec = crewai_role_registry.get_role_spec(crewai_role_registry.ROLE_REVIEW_AGENT)
@@ -93,15 +99,17 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
 
         self.assertEqual(doc.get("team_id"), crewai_role_registry.TEAM_REPO_IMPROVEMENT)
         self.assertIn(crewai_role_registry.WORKFLOW_FEATURE_FINDING, doc.get("workflow_ids") or [])
+        self.assertIn(crewai_role_registry.WORKFLOW_CODING, doc.get("workflow_ids") or [])
         self.assertIn(crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT, doc.get("role_pool") or [])
+        self.assertIn(crewai_role_registry.ROLE_CODING_AGENT, doc.get("role_pool") or [])
 
     def test_team_stage_and_workflow_docs_load_from_nested_path(self):
         stage = crewai_spec_loader.team_stage_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.STAGE_PLANNING)
-        workflow = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.WORKFLOW_BUG_CODING)
+        workflow = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.WORKFLOW_CODING)
 
         self.assertEqual(stage.get("stage_id"), crewai_role_registry.STAGE_PLANNING)
         self.assertTrue(stage.get("members"))
-        self.assertEqual(workflow.get("workflow_id"), crewai_role_registry.WORKFLOW_BUG_CODING)
+        self.assertEqual(workflow.get("workflow_id"), crewai_role_registry.WORKFLOW_CODING)
         self.assertEqual(workflow.get("stages"), [crewai_role_registry.STAGE_DELIVERY])
         self.assertIn(crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT, [str(x.get("role_id") or "") for x in (stage.get("members") or []) if isinstance(x, dict)])
 

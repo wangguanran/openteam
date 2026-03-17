@@ -92,7 +92,7 @@ tasks:
       - version_bump must be none.
       - requires_user_confirmation must be true.
       - Test-gap findings must preserve test_gap_type, target_paths, missing_paths, suggested_test_files, and why_not_covered.
-      - Every work_item must stay small, executable, and include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint.
+      - Every work_item must stay small, executable, and include review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint. owner_role will be normalized to Coding-Agent by the runtime.
       - Keep all user-facing natural language fields in Simplified Chinese.
 
       Current version: {current_version}

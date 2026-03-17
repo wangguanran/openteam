@@ -1,18 +1,14 @@
-workflow_id: process-coding
-lane: process
+workflow_id: coding
+lane: shared
 phase: coding
-display_name_zh: 流程交付流程
+display_name_zh: 通用编码流程
 enabled: true
-description: Deliver approved runtime and delivery process improvements.
-task_source: proposal
+description: Deliver queued repo-improvement tasks through the common audit, proof, coding, review, QA, and release pipeline.
+task_source: direct_task
 requires_user_confirmation: false
 materialize_requires_approval: false
-materialize_blocked_statuses:
-  - REJECTED
-  - HOLD
-  - MATERIALIZED
 default_version_bump: none
-baseline_action_default: process_improvement
+baseline_action_default: coding
 stages:
   - delivery
 runtime_policy:
@@ -20,7 +16,6 @@ runtime_policy:
   active_window_start_hour: 0
   active_window_end_hour: 24
   max_continuous_runtime_minutes: 0
-  cooldown_hours: 24
 loop:
   enabled: true
   run_on_startup: false
@@ -36,7 +31,7 @@ agents:
   - agent_id: scheduler
     role_id: Scheduler-Agent
   - agent_id: owner
-    role_id: Process-Optimization-Agent
+    role_id: Coding-Agent
   - agent_id: reviewer
     role_id: Review-Agent
   - agent_id: qa_gate

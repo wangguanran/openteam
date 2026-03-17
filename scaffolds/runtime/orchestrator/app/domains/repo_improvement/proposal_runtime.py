@@ -62,6 +62,7 @@ ROLE_TEST_CASE_GAP_AGENT = crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT
 ROLE_DOCUMENTATION_AGENT = crewai_role_registry.ROLE_DOCUMENTATION_AGENT
 ROLE_MILESTONE_MANAGER = crewai_role_registry.ROLE_MILESTONE_MANAGER
 ROLE_CODE_QUALITY_ANALYST = crewai_role_registry.ROLE_CODE_QUALITY_ANALYST
+ROLE_CODING_AGENT = crewai_role_registry.ROLE_CODING_AGENT
 ROLE_FEATURE_CODING_AGENT = crewai_role_registry.ROLE_FEATURE_CODING_AGENT
 ROLE_BUGFIX_CODING_AGENT = crewai_role_registry.ROLE_BUGFIX_CODING_AGENT
 ROLE_PROCESS_OPTIMIZATION_AGENT = crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_AGENT
@@ -408,8 +409,18 @@ def _task_issue_marker(*, repo_locator: str, repo_root: Path, finding: UpgradeFi
 
 def _normalize_owner_role(role_id: str, lane: str) -> str:
     rid = str(role_id or "").strip()
-    if rid in ("", "Coding-Agent", "Developer", "Developer-Agent"):
-        return _coding_owner_role(lane)
+    _ = lane
+    if rid in (
+        "",
+        "Coding-Agent",
+        "Developer",
+        "Developer-Agent",
+        ROLE_FEATURE_CODING_AGENT,
+        ROLE_BUGFIX_CODING_AGENT,
+        ROLE_PROCESS_OPTIMIZATION_AGENT,
+        ROLE_CODE_QUALITY_AGENT,
+    ):
+        return ROLE_CODING_AGENT
     return rid
 
 
@@ -1966,15 +1977,115 @@ def _lane_default_baseline_action(lane: str, version_bump: str) -> str:
     return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).default_baseline_action(version_bump)
 
 
+def _default_proof_required(*, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> bool:
+    lane = str(finding.lane or "").strip().lower()
+    if lane == "bug":
+        return True
+    return bool(list(work_item.reproduction_steps or []) or list(work_item.test_case_files or []))
+
+
+def _default_proof_bootstrap_required(*, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> bool:
+    if not _default_proof_required(finding=finding, work_item=work_item):
+        return False
+    return not bool(list(work_item.test_case_files or []))
+
+
+def _default_proof_failure_policy(*, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> str:
+    if not _default_proof_required(finding=finding, work_item=work_item):
+        return "block"
+    lane = str(finding.lane or "").strip().lower()
+    return "close" if lane == "bug" else "block"
+
+
+def _default_approval_required(*, finding: UpgradeFinding) -> bool:
+    return bool(finding.requires_user_confirmation)
+
+
+def _default_approval_state(*, finding: UpgradeFinding, proposal_id: str) -> str:
+    if not _default_approval_required(finding=finding):
+        return "not_required"
+    return "approved" if str(proposal_id or "").strip() else "pending"
+
+
+def _build_coding_contract(
+    *,
+    finding: UpgradeFinding,
+    work_item: UpgradeWorkItem,
+    proposal_id: str,
+    documentation_required: bool,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    existing_doc = dict(existing or {})
+    approval_doc = dict(existing_doc.get("approval") or {}) if isinstance(existing_doc.get("approval"), dict) else {}
+    proof_doc = dict(existing_doc.get("proof") or {}) if isinstance(existing_doc.get("proof"), dict) else {}
+    documentation_doc = dict(existing_doc.get("documentation") or {}) if isinstance(existing_doc.get("documentation"), dict) else {}
+    return {
+        "issue_type_hint": str(existing_doc.get("issue_type_hint") or finding.lane or "").strip().lower(),
+        "approval": {
+            "required": bool(approval_doc.get("required", _default_approval_required(finding=finding))),
+            "state": str(approval_doc.get("state") or _default_approval_state(finding=finding, proposal_id=proposal_id)).strip() or _default_approval_state(finding=finding, proposal_id=proposal_id),
+            "source": str(approval_doc.get("source") or ("proposal" if str(proposal_id or "").strip() else "direct_task")).strip() or "direct_task",
+        },
+        "proof": {
+            "required": bool(proof_doc.get("required", _default_proof_required(finding=finding, work_item=work_item))),
+            "bootstrap_if_missing": bool(proof_doc.get("bootstrap_if_missing", _default_proof_bootstrap_required(finding=finding, work_item=work_item))),
+            "failure_policy": str(proof_doc.get("failure_policy") or _default_proof_failure_policy(finding=finding, work_item=work_item)).strip() or _default_proof_failure_policy(finding=finding, work_item=work_item),
+        },
+        "documentation": {
+            "required": bool(documentation_doc.get("required", documentation_required)),
+        },
+    }
+
+
+def _coding_contract(
+    doc: dict[str, Any],
+    *,
+    finding: UpgradeFinding | None = None,
+    work_item: UpgradeWorkItem | None = None,
+    proposal_id: str = "",
+    documentation_required: bool | None = None,
+) -> dict[str, Any]:
+    existing = doc.get("coding_contract")
+    if isinstance(existing, dict) and existing:
+        return _build_coding_contract(
+            finding=finding or UpgradeFinding(kind="TASK", lane=str(existing.get("issue_type_hint") or "bug"), title="", summary=""),
+            work_item=work_item or UpgradeWorkItem(title=""),
+            proposal_id=proposal_id,
+            documentation_required=bool((existing.get("documentation") or {}).get("required", documentation_required or False)),
+            existing=existing,
+        )
+    if finding is None:
+        su = _repo_improvement_section(doc, new_key="repo_improvement", legacy_key="self_upgrade")
+        lane = str(su.get("lane") or ((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("finding_lane") or "bug").strip().lower() or "bug"
+        finding = UpgradeFinding(
+            kind=str(su.get("kind") or "TASK"),
+            lane=lane,
+            title=str(doc.get("title") or ""),
+            summary=str(su.get("summary") or ""),
+            requires_user_confirmation=bool(su.get("requires_user_confirmation") or False),
+        )
+    if work_item is None:
+        su = _repo_improvement_section(doc, new_key="repo_improvement", legacy_key="self_upgrade")
+        raw_work_item = su.get("work_item") or {}
+        if isinstance(raw_work_item, dict):
+            work_item = UpgradeWorkItem.model_validate({"title": str(raw_work_item.get("title") or doc.get("title") or "task"), **raw_work_item})
+        else:
+            work_item = UpgradeWorkItem(title=str(doc.get("title") or "task"))
+    if documentation_required is None:
+        documentation_required = bool((doc.get("documentation_policy") or {}).get("required", False)) if isinstance(doc.get("documentation_policy"), dict) else False
+    normalized_proposal_id = str(proposal_id or ((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("proposal_id") or "").strip()
+    return _build_coding_contract(
+        finding=finding,
+        work_item=work_item,
+        proposal_id=normalized_proposal_id,
+        documentation_required=bool(documentation_required),
+        existing={},
+    )
+
+
 def _coding_owner_role(lane: str) -> str:
-    ln = str(lane or "bug").strip().lower()
-    if ln == "feature":
-        return ROLE_FEATURE_CODING_AGENT
-    if ln == "bug":
-        return ROLE_BUGFIX_CODING_AGENT
-    if ln == "quality":
-        return ROLE_CODE_QUALITY_AGENT
-    return ROLE_PROCESS_OPTIMIZATION_AGENT
+    _ = lane
+    return ROLE_CODING_AGENT
 
 
 def _worktree_hint(*, repo_root: Path, lane: str, title: str) -> str:
@@ -2673,7 +2784,7 @@ def _kickoff_bug_only_plan(
                     {
                         "title": title or summary or "未命名缺陷",
                         "summary": summary or title or "发现可证明的当前缺陷信号。",
-                        "owner_role": ROLE_BUGFIX_CODING_AGENT,
+                        "owner_role": ROLE_CODING_AGENT,
                         "review_role": ROLE_REVIEW_AGENT,
                         "qa_role": ROLE_QA_AGENT,
                         "workstream_id": "general",
@@ -2919,9 +3030,9 @@ def kickoff_upgrade_plan(
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
             "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
-            "- Each work item must include owner_role, review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding.\n"
+            "- Each work item must include review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding. owner_role will be normalized to Coding-Agent by the runtime.\n"
             "- Bug work items must also include reproduction_steps, repo-relative test_case_files, and verification_steps. Do not leave bug reproduction implicit.\n"
-            "- Test-gap work items should prefer the Code-Quality-Agent, stay scoped to test files plus their target paths, and preserve blackbox/whitebox classification in test_gap_type.\n"
+            "- Test-gap work items should stay scoped to test files plus their target paths, and preserve blackbox/whitebox classification in test_gap_type.\n"
             "- Quality work items should prefer deleting dead files, consolidating duplicate code, extracting shared logic, or narrowing oversized modules. Do not propose cosmetic-only cleanup.\n"
             "- Coding work items must be issue-scoped only; no extra optimization outside the listed paths.\n"
             "- 所有面向用户的自然语言字段必须使用简体中文，包括 title、summary、rationale、acceptance、work_items.title、work_items.summary。\n"
@@ -3190,7 +3301,7 @@ def _task_issue_stage_label(doc: dict[str, Any]) -> str:
     status = str(doc.get("status") or "").strip().lower()
     if status in ("needs_clarification",):
         return "stage:needs-clarification"
-    if stage in ("audit", "bug_testcase", "bug_repro", "coding", "review", "qa", "docs", "release", "blocked", "closed", "merge_conflict", "needs_clarification"):
+    if stage in ("audit", "proof_bootstrap", "proof_verify", "coding", "review", "qa", "docs", "release", "blocked", "closed", "merge_conflict", "needs_clarification"):
         return {"closed": "stage:done", "merge_conflict": "stage:merge-conflict"}.get(stage, f"stage:{stage}")
     if status in ("doing",):
         return "stage:coding"
@@ -3205,6 +3316,20 @@ def _task_issue_stage_label(doc: dict[str, Any]) -> str:
     if status in ("closed", "done"):
         return "stage:done"
     return "stage:queued"
+
+
+def _coding_contract_labels(doc: dict[str, Any], *, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> list[str]:
+    contract = _coding_contract(doc, finding=finding, work_item=work_item)
+    approval = contract.get("approval") or {}
+    proof = contract.get("proof") or {}
+    documentation = contract.get("documentation") or {}
+    return [
+        f"approval:{str(approval.get('state') or 'pending').strip().lower() or 'pending'}",
+        "proof:required" if bool(proof.get("required")) else "proof:not-required",
+        "proof:bootstrap" if bool(proof.get("bootstrap_if_missing")) else "proof:no-bootstrap",
+        f"proof-failure:{str(proof.get('failure_policy') or 'block').strip().lower() or 'block'}",
+        "docs:required" if bool(documentation.get("required")) else "docs:not-required",
+    ]
 
 
 def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_item: UpgradeWorkItem) -> list[str]:
@@ -3236,6 +3361,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
     test_gap_type = str(work_item.test_gap_type or finding.test_gap_type or "").strip().lower()
     if lane == "quality" and test_gap_type in ("blackbox", "whitebox"):
         labels.append(f"test-gap:{test_gap_type}")
+    labels.extend(_coding_contract_labels(doc, finding=finding, work_item=work_item))
     return sorted({str(x).strip() for x in labels if str(x).strip()})
 
 
@@ -3292,6 +3418,24 @@ def _task_issue_documentation_lines(doc: dict[str, Any], *, finding: UpgradeFind
     else:
         lines.append("- 允许更新路径: （未指定）")
     return lines
+
+
+def _task_issue_coding_contract_lines(doc: dict[str, Any], *, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> list[str]:
+    contract = _coding_contract(doc, finding=finding, work_item=work_item)
+    approval = contract.get("approval") or {}
+    proof = contract.get("proof") or {}
+    documentation = contract.get("documentation") or {}
+    return [
+        f"- 审批要求: {'需要' if bool(approval.get('required')) else '不需要'}",
+        f"- 审批状态: {str(approval.get('state') or 'pending')}",
+        f"- 证据要求: {'需要' if bool(proof.get('required')) else '不需要'}",
+        f"- 证据缺失时自动补齐: {'是' if bool(proof.get('bootstrap_if_missing')) else '否'}",
+        f"- 证据失败策略: {str(proof.get('failure_policy') or 'block')}",
+        f"- 文档同步要求: {'需要' if bool(documentation.get('required')) else '不需要'}",
+        f"- 编码角色: {role_display_zh(work_item.owner_role)} ({work_item.owner_role})",
+        f"- 评审角色: {role_display_zh(work_item.review_role)} ({work_item.review_role})",
+        f"- QA 角色: {role_display_zh(work_item.qa_role)} ({work_item.qa_role})",
+    ]
 
 
 def _task_issue_milestone_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
@@ -4288,6 +4432,13 @@ def _ensure_task_record(
         "changed_files": [str(x).strip() for x in (existing_docs.get("changed_files") or []) if str(x).strip()],
         "followups": [str(x).strip() for x in (existing_docs.get("followups") or []) if str(x).strip()],
     }
+    coding_contract = _build_coding_contract(
+        finding=finding,
+        work_item=work_item,
+        proposal_id=proposal_id,
+        documentation_required=bool(documentation_policy["required"]),
+        existing=doc.get("coding_contract") if isinstance(doc.get("coding_contract"), dict) else {},
+    )
     audit_doc = {
         "status": str(existing_audit.get("status") or "pending"),
         "classification": str(existing_audit.get("classification") or finding.lane),
@@ -4346,6 +4497,7 @@ def _ensure_task_record(
     doc["roles_involved"] = [
         ROLE_ISSUE_AUDIT_AGENT,
         ROLE_MILESTONE_MANAGER,
+        ROLE_CODING_AGENT,
         work_item.owner_role,
         work_item.review_role,
         work_item.qa_role,
@@ -4410,6 +4562,7 @@ def _ensure_task_record(
     doc["self_upgrade_milestone"] = dict(milestone_doc)
     doc["repo_improvement_milestone"] = dict(milestone_doc)
     doc["documentation_policy"] = documentation_policy
+    doc["coding_contract"] = coding_contract
     doc["execution_policy"] = {
         "issue_only_scope": True,
         "allowed_paths": list(work_item.allowed_paths or []),
@@ -4417,6 +4570,7 @@ def _ensure_task_record(
         "commit_message_template": f"{task_id}: {work_item.title}",
         "issue_id_required": True,
         "no_extra_optimization": True,
+        "owner_role": ROLE_CODING_AGENT,
         "module": normalized_module,
         "review_role": work_item.review_role,
         "qa_role": work_item.qa_role,
@@ -4557,11 +4711,16 @@ def _issue_body(
     lines.extend(
         [
             "",
+            "## 编码契约",
+            "",
+        ]
+    )
+    lines.extend(_task_issue_coding_contract_lines(doc or {}, finding=finding, work_item=work_item))
+    lines.extend(
+        [
+            "",
             "## 执行约束",
             "",
-            f"- 编码角色: {role_display_zh(work_item.owner_role)} ({work_item.owner_role})",
-            f"- 评审角色: {role_display_zh(work_item.review_role)} ({work_item.review_role})",
-            f"- QA 角色: {role_display_zh(work_item.qa_role)} ({work_item.qa_role})",
             f"- worktree_hint: {work_item.worktree_hint or '(无)'}",
             "- issue_only_scope: true",
             "- no_extra_optimization: true",

@@ -22,6 +22,7 @@ ROLE_BUG_TESTCASE_AGENT = "Bug-TestCase-Agent"
 ROLE_DOCUMENTATION_AGENT = "Documentation-Agent"
 ROLE_MILESTONE_MANAGER = "Milestone-Manager-Agent"
 ROLE_CODE_QUALITY_ANALYST = "Code-Quality-Analyst"
+ROLE_CODING_AGENT = "Coding-Agent"
 ROLE_FEATURE_CODING_AGENT = "Feature-Coding-Agent"
 ROLE_BUGFIX_CODING_AGENT = "Bugfix-Coding-Agent"
 ROLE_PROCESS_OPTIMIZATION_AGENT = "Process-Optimization-Agent"
@@ -36,6 +37,7 @@ STAGE_PROPOSAL_CONFIRMATION = "proposal-confirmation"
 STAGE_DELIVERY = "delivery"
 
 WORKFLOW_BUG_FINDING = "bug-finding"
+WORKFLOW_CODING = "coding"
 WORKFLOW_BUG_CODING = "bug-coding"
 WORKFLOW_FEATURE_FINDING = "feature-finding"
 WORKFLOW_FEATURE_DISCUSSION = "feature-discussion"
@@ -56,6 +58,10 @@ LEGACY_WORKFLOW_ID_ALIASES = {
     WORKFLOW_BUG_FIX: WORKFLOW_BUG_FINDING,
     WORKFLOW_QUALITY_IMPROVEMENT: WORKFLOW_QUALITY_FINDING,
     WORKFLOW_PROCESS_IMPROVEMENT: WORKFLOW_PROCESS_FINDING,
+    WORKFLOW_BUG_CODING: WORKFLOW_CODING,
+    WORKFLOW_FEATURE_CODING: WORKFLOW_CODING,
+    WORKFLOW_QUALITY_CODING: WORKFLOW_CODING,
+    WORKFLOW_PROCESS_CODING: WORKFLOW_CODING,
 }
 
 
@@ -76,6 +82,7 @@ ROLE_DISPLAY_ZH = {
     ROLE_DOCUMENTATION_AGENT: "文档同步 Agent",
     ROLE_MILESTONE_MANAGER: "里程碑经理 Agent",
     ROLE_CODE_QUALITY_ANALYST: "代码质量分析 Agent",
+    ROLE_CODING_AGENT: "通用编码 Agent",
     ROLE_FEATURE_CODING_AGENT: "功能编码 Agent",
     ROLE_BUGFIX_CODING_AGENT: "缺陷修复 Agent",
     ROLE_PROCESS_OPTIMIZATION_AGENT: "流程优化编码 Agent",
@@ -170,6 +177,12 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
         role_id=ROLE_BUG_TESTCASE_AGENT,
         goal="Bootstrap the smallest failing automated test case that proves the reported bug exists in the current task worktree.",
         backstory="You are a bug-validation specialist. You create the minimum failing test under approved test paths, capture the exact reproduction commands, and stop if the bug cannot be turned into a stable executable test.",
+        tool_profile="write",
+    ),
+    ROLE_CODING_AGENT: CrewRoleSpec(
+        role_id=ROLE_CODING_AGENT,
+        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
+        backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_FEATURE_CODING_AGENT: CrewRoleSpec(

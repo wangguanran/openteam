@@ -81,6 +81,36 @@ def _compat_file_mirror_enabled() -> bool:
     return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
 
 
+def _coding_contract(doc: dict[str, Any]) -> dict[str, Any]:
+    return planning._coding_contract(doc)
+
+
+def _issue_type_hint(doc: dict[str, Any]) -> str:
+    contract = _coding_contract(doc)
+    hint = str(contract.get("issue_type_hint") or "").strip().lower()
+    return hint or _task_lane(doc)
+
+
+def _approval_required(doc: dict[str, Any]) -> bool:
+    return bool((_coding_contract(doc).get("approval") or {}).get("required"))
+
+
+def _approval_state(doc: dict[str, Any]) -> str:
+    return str((_coding_contract(doc).get("approval") or {}).get("state") or "pending").strip().lower() or "pending"
+
+
+def _proof_required(doc: dict[str, Any]) -> bool:
+    return bool((_coding_contract(doc).get("proof") or {}).get("required"))
+
+
+def _proof_bootstrap_if_missing(doc: dict[str, Any]) -> bool:
+    return bool((_coding_contract(doc).get("proof") or {}).get("bootstrap_if_missing"))
+
+
+def _proof_failure_policy(doc: dict[str, Any]) -> str:
+    return str((_coding_contract(doc).get("proof") or {}).get("failure_policy") or "block").strip().lower() or "block"
+
+
 def _runtime_root() -> Path:
     return planning._runtime_root()
 
@@ -1548,11 +1578,13 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
         ensure_ascii=False,
         indent=2,
     )
-    lane = planning._task_lane(task_doc) if hasattr(planning, "_task_lane") else str((((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("lane")) or "bug")
-    owner_role = str(task_doc.get("owner_role") or planning._coding_owner_role(lane))
+    execution_policy = task_doc.get("execution_policy") or {}
+    if not isinstance(execution_policy, dict):
+        execution_policy = {}
+    owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or planning.ROLE_CODING_AGENT).strip() or planning.ROLE_CODING_AGENT
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=owner_role,
-        template_role_id=planning._coding_owner_role(lane),
+        template_role_id=planning.ROLE_CODING_AGENT,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
@@ -1652,10 +1684,10 @@ def _normalize_audit_result(
     result: DeliveryAuditResult,
     audit_evidence: Optional[list[dict[str, Any]]] = None,
 ) -> DeliveryAuditResult:
-    lane = str(_task_lane(task_doc) or "bug").strip().lower() or "bug"
-    classification = str(result.classification or lane).strip().lower()
+    expected_type = str(_issue_type_hint(task_doc) or "bug").strip().lower() or "bug"
+    classification = str(result.classification or expected_type).strip().lower()
     if classification not in ("bug", "feature", "process", "quality"):
-        classification = lane
+        classification = expected_type
     closure = str(result.closure or ("ready" if result.approved else "needs_clarification")).strip().lower()
     if closure not in ("ready", "needs_clarification", "split_required", "duplicate", "misclassified", "rejected", "pending"):
         closure = "ready" if result.approved else "needs_clarification"
@@ -1683,15 +1715,15 @@ def _normalize_audit_result(
     normalized_audit_evidence = list(audit_evidence or result.reproduction_evidence or [])
     reproduced_in_audit = _audit_reproduced(normalized_audit_evidence)
     confirmed_not_reproducible = _audit_confirmed_not_reproducible(normalized_audit_evidence)
-    if classification != lane and closure == "ready":
+    if classification != expected_type and closure == "ready":
         closure = "misclassified"
         approved = False
-        feedback.append(f"当前 issue 更像 {_task_lane(task_doc)} 之外的 `{classification}`，需要先重新分类。")
+        feedback.append(f"当前 issue 更像 `{classification}`，需要先重新分类。")
     if not worth_doing and closure == "ready":
         closure = "rejected"
         approved = False
         feedback.append("审计认为该问题当前不值得进入开发。")
-    if lane == "bug" and classification == "bug" and worth_doing and closure in ("ready", "needs_clarification", "pending", "split_required", "rejected"):
+    if _proof_required(task_doc) and classification == expected_type and worth_doing and closure in ("ready", "needs_clarification", "pending", "split_required", "rejected"):
         bug_feedback = _bug_contract_feedback(task_doc, worktree_root=worktree_root, extra=bug_contract)
         bug_feedback.extend(_audit_evidence_feedback(normalized_audit_evidence))
         if reproduction_commands:
@@ -1885,7 +1917,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
     )
     raw_result = DeliveryAuditResult.model_validate(out.model_dump())
     audit_evidence: list[dict[str, Any]] = []
-    if str(_task_lane(task_doc) or "").strip().lower() == "bug":
+    if _proof_required(task_doc):
         audit_evidence = _run_validation_evidence(
             repo_root=worktree_root,
             commands=raw_result.reproduction_commands,
@@ -1977,7 +2009,7 @@ def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbo
         repo_root=worktree_root,
         commands=_candidate_validation_commands(raw_result.reproduction_commands, _bug_contract(task_doc)["reproduction_commands"]),
         allowlist=tests_allowlist,
-        source_stage="bug_repro",
+        source_stage="proof_verify",
     )
     return _normalize_bug_repro_result(
         task_doc=task_doc,
@@ -2116,8 +2148,7 @@ def _register_delivery_agents(*, db: Any, task_doc: dict[str, Any]) -> dict[str,
     execution_policy = task_doc.get("execution_policy") or {}
     if not isinstance(execution_policy, dict):
         execution_policy = {}
-    lane = _task_lane(task_doc)
-    owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or planning._coding_owner_role(lane)).strip() or planning._coding_owner_role(lane)
+    owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or planning.ROLE_CODING_AGENT).strip() or planning.ROLE_CODING_AGENT
     review_role = str(execution_policy.get("review_role") or planning.ROLE_REVIEW_AGENT).strip() or planning.ROLE_REVIEW_AGENT
     qa_role = str(execution_policy.get("qa_role") or planning.ROLE_QA_AGENT).strip() or planning.ROLE_QA_AGENT
     documentation_role = str(execution_policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT).strip() or planning.ROLE_DOCUMENTATION_AGENT
@@ -2278,11 +2309,13 @@ def execute_task_delivery(
 
     project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     workstream_id = str(doc.get("workstream_id") or "general").strip() or "general"
-    lane = _task_lane(doc)
-    owner_role = str(doc.get("owner_role") or planning._coding_owner_role(lane)).strip() or planning._coding_owner_role(lane)
+    owner_role = str(doc.get("owner_role") or (((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("owner_role") or planning.ROLE_CODING_AGENT)).strip() or planning.ROLE_CODING_AGENT
     review_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
     qa_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
     documentation_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("documentation_role")) or planning.ROLE_DOCUMENTATION_AGENT)
+    expected_type = _issue_type_hint(doc)
+    proof_required = _proof_required(doc)
+    proof_failure_policy = _proof_failure_policy(doc)
     verbose = False
     max_attempts = 2
     ship_enabled = True
@@ -2300,6 +2333,20 @@ def execute_task_delivery(
 
     try:
         doc, worktree_root, _ = _ensure_task_worktree(ledger_path, doc)
+        if _approval_required(doc) and _approval_state(doc) not in ("approved", "not_required") and not force:
+            blocked_status = "needs_clarification"
+            doc = _update_task_state(
+                ledger_path,
+                doc,
+                status=blocked_status,
+                stage="needs_clarification",
+                owner_role=owner_role,
+                extra_execution={
+                    "last_error": f"approval_state={_approval_state(doc)}",
+                    "last_feedback": ["任务尚未满足通用编码契约中的审批条件。"],
+                },
+            )
+            return {"ok": False, "task_id": task_id, "status": blocked_status, "reason": "approval_pending", "worktree": str(worktree_root), "project_id": project_id}
         agent_ids = _register_delivery_agents(db=db, task_doc=doc)
         prior_status = status
         resume_with_existing_fix = False
@@ -2382,14 +2429,14 @@ def execute_task_delivery(
                 _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
                 _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
             else:
-                if lane == "bug":
-                    close_reason = "bug_rejected_by_audit"
-                    if audit_result.classification != "bug":
-                        close_reason = "bug_misclassified"
+                if proof_failure_policy == "close":
+                    close_reason = "proof_rejected_by_audit"
+                    if audit_result.classification != expected_type:
+                        close_reason = "issue_misclassified"
                     elif audit_result.closure == "duplicate":
-                        close_reason = "bug_duplicate"
+                        close_reason = "issue_duplicate"
                     elif bool(audit_result.reproduction_evidence) and not bool(audit_result.reproduced_in_audit):
-                        close_reason = "bug_not_reproducible"
+                        close_reason = "proof_not_reproducible"
                     return _close_bug_task(
                         db=db,
                         agent_ids=agent_ids,
@@ -2403,7 +2450,7 @@ def execute_task_delivery(
                         owner_role=owner_role,
                         active_role=planning.ROLE_ISSUE_AUDIT_AGENT,
                         close_reason=close_reason,
-                        summary=audit_result.summary or "Issue 审计未通过，bug 任务直接关闭。",
+                        summary=audit_result.summary or "Issue 审计未通过，当前任务根据编码契约直接关闭。",
                         feedback=audit_result.feedback,
                         evidence=list(audit_result.reproduction_evidence or []),
                     )
@@ -2449,14 +2496,14 @@ def execute_task_delivery(
                 )
                 return {"ok": False, "task_id": task_id, "status": blocked_status, "feedback": audit_result.feedback, "audit": audit_result.model_dump(), "worktree": str(worktree_root), "project_id": project_id}
 
-        if lane == "bug":
+        if proof_required:
             doc = _load_yaml(ledger_path)
-            if not _bug_contract_complete(doc, worktree_root=worktree_root):
+            if not _bug_contract_complete(doc, worktree_root=worktree_root) and _proof_bootstrap_if_missing(doc):
                 doc = _update_task_state(
                     ledger_path,
                     doc,
                     status="doing",
-                    stage="bug_testcase",
+                    stage="proof_bootstrap",
                     owner_role=owner_role,
                     extra_execution={"active_role": planning.ROLE_BUG_TESTCASE_AGENT},
                 )
@@ -2478,8 +2525,8 @@ def execute_task_delivery(
                         workstream_id=workstream_id,
                         owner_role=owner_role,
                         active_role=planning.ROLE_BUG_TESTCASE_AGENT,
-                        close_reason="bug_not_verifiable",
-                        summary=bug_testcase_result.summary or "Bug-TestCase-Agent 无法产出稳定的 failing test，任务关闭。",
+                        close_reason="proof_not_verifiable",
+                        summary=bug_testcase_result.summary or "Proof bootstrap 无法产出稳定的前置证据，任务关闭。",
                         feedback=bug_testcase_result.feedback,
                     )
                 doc = _merge_bug_contract_into_doc(
@@ -2521,11 +2568,30 @@ def execute_task_delivery(
                 )
 
             doc = _load_yaml(ledger_path)
+            if not _bug_contract_complete(doc, worktree_root=worktree_root):
+                if proof_failure_policy == "close":
+                    return _close_bug_task(
+                        db=db,
+                        agent_ids=agent_ids,
+                        ledger_path=ledger_path,
+                        doc=doc,
+                        logs_dir=logs_dir,
+                        actor=actor,
+                        task_id=task_id,
+                        project_id=project_id,
+                        workstream_id=workstream_id,
+                        owner_role=owner_role,
+                        active_role=planning.ROLE_BUG_TESTCASE_AGENT,
+                        close_reason="proof_contract_incomplete",
+                        summary="编码契约要求前置证据，但当前任务缺少可执行证据。",
+                        feedback=_bug_contract_feedback(doc, worktree_root=worktree_root),
+                    )
+                return {"ok": False, "task_id": task_id, "status": "blocked", "reason": "proof_contract_incomplete", "worktree": str(worktree_root), "project_id": project_id}
             doc = _update_task_state(
                 ledger_path,
                 doc,
                 status="doing",
-                stage="bug_repro",
+                stage="proof_verify",
                 owner_role=owner_role,
                 extra_execution={"active_role": planning.ROLE_BUG_REPRO_AGENT},
             )
@@ -2537,7 +2603,7 @@ def execute_task_delivery(
             doc = _persist_validation_evidence(
                 ledger_path,
                 doc,
-                stage="bug_repro",
+                stage="proof_verify",
                 evidence=list(bug_repro_result.reproduction_evidence or []),
             )
             audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
@@ -2607,8 +2673,8 @@ def execute_task_delivery(
                         workstream_id=workstream_id,
                         owner_role=owner_role,
                         active_role=planning.ROLE_BUG_REPRO_AGENT,
-                        close_reason="bug_not_reproducible",
-                        summary=bug_repro_result.summary or "Bug-Repro-Agent 未能证明 bug 仍然存在，任务关闭。",
+                        close_reason="proof_not_reproducible",
+                        summary=bug_repro_result.summary or "Proof verification 未能证明当前任务仍需进入编码，任务关闭。",
                         feedback=bug_repro_result.feedback,
                         evidence=list(bug_repro_result.reproduction_evidence or []),
                     )
@@ -2617,7 +2683,7 @@ def execute_task_delivery(
                     ledger_path,
                     doc,
                     status="doing",
-                    stage="bug_repro",
+                    stage="proof_verify",
                     owner_role=owner_role,
                     extra_execution={"active_role": "Scheduler-Agent", "last_error": "", "last_feedback": []},
                 )
@@ -3240,9 +3306,7 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
             scanned += 1
             task_project_id = str(task.get("project_id") or project_id or "teamos").strip() or "teamos"
             task_target_id = str(task.get("target_id") or target_id or "").strip()
-            task_lane = str(((task.get("self_upgrade") or {}) if isinstance(task.get("self_upgrade"), dict) else {}).get("lane") or ((task.get("orchestration") or {}) if isinstance(task.get("orchestration"), dict) else {}).get("finding_lane") or "bug").strip().lower() or "bug"
-            workflow = crewai_workflow_registry.workflow_for_lane_phase(
-                task_lane,
+            workflow = crewai_workflow_registry.workflow_for_phase(
                 crewai_workflow_registry.PHASE_CODING,
                 project_id=task_project_id,
             )

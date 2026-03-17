@@ -132,7 +132,7 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
                     "project_id": "demo",
                     "workstream_id": "general",
                     "status": "todo",
-                    "owner_role": "Feature-Coding-Agent",
+                    "owner_role": "Coding-Agent",
                     "orchestration": {"engine": "crewai", "flow": "repo_improvement"},
                     "artifacts": {"ledger_path": "/tmp/TASK-1.yaml"},
                     "repo_improvement_execution": {"stage": "coding", "attempt_count": 1},
