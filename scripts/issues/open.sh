@@ -8,7 +8,7 @@ ROOT="$(teamos_root)"
 ENTRY_PATH="${1:-}"
 
 if [[ -z "$ENTRY_PATH" ]]; then
-  echo "Usage: ./scripts/open_issue.sh <self_improve_entry.md>" >&2
+  echo "Usage: ./scripts/open_issue.sh <repo_improvement_entry.md>" >&2
   exit 2
 fi
 
@@ -19,7 +19,7 @@ fi
 
 title="$(head -n 1 "$ENTRY_PATH" | sed -e 's/^# *//')"
 if [[ -z "$title" ]]; then
-  title="Team OS Self-Improve"
+  title="Team OS Repo-Improvement"
 fi
 
 pending_dir="$ROOT/.team-os/ledger/team_os_issues_pending"
@@ -29,7 +29,7 @@ fallback() {
   local ts slug out
   ts="$(ts_compact_utc)"
   slug="$(slugify "$title")"
-  [[ -z "$slug" ]] && slug="self-improve"
+  [[ -z "$slug" ]] && slug="repo-improvement"
   out="$pending_dir/${ts}_${slug}.md"
   cat >"$out" <<EOF
 # Pending Issue Draft

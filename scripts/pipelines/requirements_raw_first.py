@@ -183,7 +183,7 @@ def cmd_migrate_v3(repo: Path, *, scope: str, workspace_root: str, dry_run: bool
 
         def is_system_user(u: str) -> bool:
             uu = (u or "").strip().lower()
-            return uu.startswith("system:") or uu in ("self-improve", "self-improve-daemon") or uu.startswith("self-improve")
+            return uu.startswith("system:") or uu in ("repo-improvement", "repo-improvement-daemon") or uu.startswith("repo-improvement")
 
         migrated_items: list[dict[str, Any]] = []
         skipped = 0

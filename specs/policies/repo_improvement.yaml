@@ -1,0 +1,21 @@
+schema_version: 1
+
+# Repo-improvement runtime policy.
+# This policy describes the desired runtime behavior for the platform-native
+# repo-improvement loops handled by the control plane.
+
+repo_improvement:
+  enabled: true
+
+  finding:
+    interval_sec: 3600
+    debounce_sec: 21600
+    min_findings_per_run: 0
+
+  coding:
+    concurrency: 10
+    require_issue_close_reason: true
+
+  panel_sync:
+    enabled: true
+    dry_run: true

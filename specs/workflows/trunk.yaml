@@ -66,7 +66,7 @@ trunk_stages:
       - ".team-os/logs/tasks/<TASK_ID>/07_retro.md"
     exit_criteria:
       - "retro completed"
-      - "self-improve items captured"
+      - "repo-improvement items captured"
 
 plugins:
   # Plugins are conditional gates that attach to stages based on triggers.
@@ -74,4 +74,3 @@ plugins:
     path: "specs/workflows/plugins/repo_understanding.yaml"
   - plugin_id: "risk_gate"
     path: "specs/workflows/plugins/risk_gate.yaml"
-

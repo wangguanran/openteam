@@ -1,7 +1,7 @@
 schema_version: 1
 
 # Team OS evolution policy: how the system should split roles/workflows and propose improvements.
-# This is a "policy" input for self-improve scanning (it does not execute changes by itself).
+# This is a "policy" input for repo-improvement scanning (it does not execute changes by itself).
 
 complexity_vector:
   # D: Domain complexity (number of distinct domains/workstreams involved)
@@ -56,8 +56,7 @@ split_triggers:
     # If "approval needed" blocks repeatedly, suggest clarifying gates.
     waiting_approval_ge: 2
 
-self_improve:
+repo_improvement:
   debounce_hours: 6
   min_proposals_per_run: 3
   remote_writes_default: "dry_run"  # dry_run | require_explicit_enable
-

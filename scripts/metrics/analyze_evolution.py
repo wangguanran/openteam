@@ -62,14 +62,14 @@ def analyze(summary: dict[str, Any], *, tasks_dir: Path) -> dict[str, Any]:
             }
         )
 
-    # 3) If there are no events, self-improve has no signal.
+    # 3) If there are no events, repo-improvement has no signal.
     if int(summary.get("total_events") or 0) == 0:
         findings.append(
             {
                 "kind": "OBSERVABILITY_GAP",
-                "title": "Emit baseline telemetry events (TASK_CREATED, STATUS_CHANGED, SELF_IMPROVE_TRIGGERED)",
+                "title": "Emit baseline telemetry events (TASK_CREATED, STATUS_CHANGED, REPO_IMPROVEMENT_TRIGGERED)",
                 "evidence": {"metrics_files": summary.get("metrics_files"), "total_events": summary.get("total_events")},
-                "recommendation": "Add event writers to task creation/state transitions and self-improve scheduler.",
+                "recommendation": "Add event writers to task creation/state transitions and repo-improvement scheduler.",
             }
         )
 

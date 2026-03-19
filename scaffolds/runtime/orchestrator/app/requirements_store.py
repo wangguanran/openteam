@@ -130,8 +130,8 @@ def _validate_raw_input(item: dict[str, Any]) -> None:
     if ch not in _RAW_INPUT_CHANNELS:
         raise RequirementsError(f"raw_input schema violation: invalid channel={ch!r}")
     user = str(item.get("user") or "").strip()
-    # Raw inputs must be user-originated verbatim text only; system/self-improve must never write here.
-    if user.startswith("system:") or user in ("self-improve-daemon", "self-improve") or user.lower().startswith("self-improve"):
+    # Raw inputs must be user-originated verbatim text only; system/repo-improvement must never write here.
+    if user.startswith("system:") or user in ("repo-improvement-daemon", "repo-improvement") or user.lower().startswith("repo-improvement"):
         raise RequirementsError("raw_input schema violation: reserved/system user not allowed in raw inputs")
     txt = str(item.get("text") or "")
     if not txt.strip():
@@ -1100,7 +1100,7 @@ def add_requirement_raw_first(
     5) conflict/duplicate check + expand requirements.yaml
     6) post-check (drift check again)
 
-    NOTE: System/self-improve inputs must not write to raw_inputs.jsonl.
+    NOTE: System/repo-improvement inputs must not write to raw_inputs.jsonl.
     """
     scope = _scope_from_project_id(project_id)
     # Raw-first: do NOT create/modify Expanded artifacts before capturing the raw input.
@@ -1111,9 +1111,9 @@ def add_requirement_raw_first(
         s = str(source or "").strip().lower()
         if u.startswith("system:"):
             return True
-        if u in ("self-improve", "self-improve-daemon") or u.startswith("self-improve"):
+        if u in ("repo-improvement", "repo-improvement-daemon") or u.startswith("repo-improvement"):
             return True
-        if s.startswith("self-improve") or s.startswith("system"):
+        if s.startswith("repo-improvement") or s.startswith("system"):
             return True
         return False
 

@@ -10,7 +10,7 @@
     },
     "event_type": {
       "type": "string",
-      "description": "Machine-readable event type, e.g. TASK_CREATED, SELF_IMPROVE_PROPOSAL_CREATED."
+      "description": "Machine-readable event type, e.g. TASK_CREATED, REPO_IMPROVEMENT_PROPOSAL_CREATED."
     },
     "actor": {
       "type": "string",
@@ -32,4 +32,3 @@
   },
   "additionalProperties": true
 }
-

@@ -1,6 +1,6 @@
-# SELF_IMPROVE (标准提示词)
+# REPO_IMPROVEMENT (标准提示词)
 
-你现在扮演 Process-Guardian，目标是让 Team OS 自我升级而不影响业务交付。
+你现在扮演 Process-Guardian，目标是让 Team OS 的 repo-improvement 流程持续改进而不影响业务交付。
 
 硬性要求：
 
@@ -12,7 +12,7 @@
 流程：
 
 1. 从 Retro 中提取 1-5 个改进项（优先影响 Hard Rules 的缺陷）
-2. 为每个改进项生成一条 self-improve 台账：`.team-os/ledger/self_improve/`
+2. 为每个改进项生成一条 repo-improvement 台账，写入 workspace 的项目状态目录
 3. 尝试开 issue/PR（或写 pending）：`.team-os/ledger/team_os_issues_pending/`
 4. 能修复就直接修复并提交（不要影响当前任务的交付节奏）
 
@@ -24,4 +24,3 @@
   - 验收标准
   - 风险与闸门（如需审批）
   - 证据链接（指向仓库内文件路径）
-

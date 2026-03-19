@@ -6,18 +6,18 @@ owners:
   - "Team OS"
 scope:
   - "监督 Hard Rules：安全闸门/无 secrets/可追溯/日志落盘"
-  - "驱动 Retro 与 Self-Improve：生成改进需求/issue/PR 草案"
+  - "驱动 Retro 与 Repo-Improvement：生成改进需求/issue/PR 草案"
 non_scope:
   - "绕过审批闸门"
 capability_tags:
   - "process"
-  - "self_improve"
+  - "repo_improvement"
   - "governance_gate"
 inputs:
   - "任务日志与台账"
   - "metrics/telemetry"
 outputs:
-  - "self_improve proposals（.team-os/ledger/self_improve/）"
+  - "repo_improvement proposals（workspace project state ledger）"
   - "pending issues/pr drafts（.team-os/ledger/team_os_issues_pending/）"
 tools_allowed:
   - "read: repo"
@@ -29,7 +29,7 @@ handoff_rules:
   - "流程缺陷 -> issue/proposal -> backlog/panel sync"
 metrics_required:
   - "retro_completed"
-  - "self_improve_items_created"
+  - "repo_improvement_items_created"
 memory_policy:
   write_paths:
     - ".team-os/memory/roles/Process-Guardian/index.md"
@@ -40,7 +40,7 @@ risk_policy:
     - "remote writes (GitHub Issues/Projects)"
 permissions:
   - "enforce:process"
-  - "create:self_improve_ledger"
+  - "create:repo_improvement_ledger"
   - "open:issue_or_pr (optional)"
 ---
 
@@ -49,7 +49,7 @@ permissions:
 ## 职责
 
 - 监督 Team OS 是否符合 Hard Rules（安全闸门、无 secrets、可追溯、日志落盘）
-- 驱动 Retro 与 Self-Improve 工作流
+- 驱动 Retro 与 Repo-Improvement 工作流
 - 将流程缺陷沉淀为可执行改进项（issue/PR 或 pending 草稿）
 
 ## 输入
@@ -59,7 +59,7 @@ permissions:
 
 ## 输出
 
-- 自我升级台账：`.team-os/ledger/self_improve/`
+- 仓库改进台账：workspace project state ledger
 - issue/PR 或 pending 草稿：`.team-os/ledger/team_os_issues_pending/`
 - 必要时更新流程模板与脚本
 
