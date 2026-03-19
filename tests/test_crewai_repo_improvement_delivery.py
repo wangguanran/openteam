@@ -35,7 +35,7 @@ def _workflow(lane: str, *, max_units_per_tick: int = 1) -> SimpleNamespace:
     )
 
 
-class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
+class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
     def test_run_delivery_workflow_stops_when_no_matching_lane_tasks(self):
         context = SimpleNamespace(
             db=_FakeDB(),
@@ -64,19 +64,19 @@ class CrewAISelfUpgradeDeliveryTests(unittest.TestCase):
             bug_doc = {
                 "id": "BUG-1",
                 "status": "todo",
-                "self_upgrade": {"lane": "bug"},
+                "repo_improvement": {"lane": "bug"},
                 "execution_policy": {"allowed_paths": ["src/demo.py"]},
             }
             feature_doc = {
                 "id": "FEATURE-1",
                 "status": "todo",
-                "self_upgrade": {"lane": "feature"},
+                "repo_improvement": {"lane": "feature"},
                 "execution_policy": {"allowed_paths": ["src/demo.py"]},
             }
             second_bug_doc = {
                 "id": "BUG-2",
                 "status": "todo",
-                "self_upgrade": {"lane": "bug"},
+                "repo_improvement": {"lane": "bug"},
                 "execution_policy": {"allowed_paths": ["src/demo.py"]},
             }
             bug_path = task_dir / "BUG-1.yaml"

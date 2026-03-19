@@ -1,4 +1,4 @@
-task_name: document_self_upgrade_task
+task_name: document_repo_improvement_task
 expected_output: A structured JSON documentation decision.
 output_model: DeliveryDocumentationResult
 description_template: |

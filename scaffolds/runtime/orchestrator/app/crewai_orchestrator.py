@@ -127,7 +127,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             payload={"run_id": run_id, "flow": flow, "task_id": task_id, "crewai": crewai_info, "write_delegate": write_delegate},
         )
         try:
-            out = proposal_runtime.run_self_upgrade(
+            out = proposal_runtime.run_repo_improvement(
                 db=db,
                 spec=spec,
                 actor=actor,

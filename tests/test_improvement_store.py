@@ -101,8 +101,8 @@ class ImprovementStoreTests(unittest.TestCase):
                     "status": "todo",
                     "target": {"target_id": "demo-target"},
                     "repo": {"locator": "owner/demo", "workdir": "/tmp/demo-repo"},
-                    "orchestration": {"flow": "self_upgrade", "finding_lane": "bug"},
-                    "self_upgrade": {"lane": "bug"},
+                    "orchestration": {"flow": "repo_improvement", "finding_lane": "bug"},
+                    "repo_improvement": {"lane": "bug"},
                 }
             )
             self.assertEqual(task["target_id"], "demo-target")

@@ -382,8 +382,6 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
         orchestration = {}
     repo_improvement = doc.get("repo_improvement")
     if not isinstance(repo_improvement, dict):
-        repo_improvement = doc.get("self_upgrade")
-    if not isinstance(repo_improvement, dict):
         repo_improvement = {}
     target_id = str((doc.get("target") or {}).get("target_id") if isinstance(doc.get("target"), dict) else "").strip() or str(doc.get("target_id") or "").strip()
     if not target_id:
@@ -629,7 +627,7 @@ def _event_summary(payload: dict[str, Any]) -> str:
 
 
 def _display_event_type(event_type: Any) -> str:
-    return str(event_type or "").strip().replace("SELF_UPGRADE", "REPO_IMPROVEMENT")
+    return str(event_type or "").strip()
 
 
 def render_repo_improvement_run_logs_markdown(payload: dict[str, Any]) -> str:

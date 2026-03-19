@@ -30,7 +30,7 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
                 "target_id": "target-a",
                 "status": "todo",
                 "ledger_path": "/tmp/TASK-1.yaml",
-                "self_upgrade": {"lane": "bug"},
+                "repo_improvement": {"lane": "bug"},
             },
             {
                 "task_id": "TASK-2",
@@ -38,7 +38,7 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
                 "target_id": "target-a",
                 "status": "todo",
                 "ledger_path": "/tmp/TASK-2.yaml",
-                "self_upgrade": {"lane": "bug"},
+                "repo_improvement": {"lane": "bug"},
             },
         ]
 

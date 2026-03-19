@@ -28,7 +28,7 @@ class _FakeDB:
         self.events.append(kwargs)
 
 
-class CrewAISelfUpgradeTests(unittest.TestCase):
+class CrewAIRepoImprovementTests(unittest.TestCase):
     def _spec(self, repo: Path) -> SimpleNamespace:
         return SimpleNamespace(
             project_id="teamos",
@@ -61,7 +61,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
             self.assertTrue(ctx["git_status_dirty"])
             self.assertEqual(ctx["git_status_sample"], [" M src/demo.py"])
 
-    def test_run_self_upgrade_returns_skipped_when_no_enabled_workflows(self):
+    def test_run_repo_improvement_returns_skipped_when_no_enabled_workflows(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -71,7 +71,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.list_workflows",
                 return_value=(),
             ):
-                out = proposal_runtime.run_self_upgrade(
+                out = proposal_runtime.run_repo_improvement(
                     db=db,
                     spec=self._spec(repo),
                     actor="test",
@@ -84,7 +84,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
         self.assertEqual(out["reason"], "no_enabled_workflows")
         self.assertTrue(any(event.get("event_type") == "REPO_IMPROVEMENT_SKIPPED" for event in db.events))
 
-    def test_run_self_upgrade_aggregates_workflow_runner_outputs(self):
+    def test_run_repo_improvement_aggregates_workflow_runner_outputs(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -149,7 +149,7 @@ class CrewAISelfUpgradeTests(unittest.TestCase):
                 "app.domains.repo_improvement.proposal_runtime._update_bug_lane_state",
                 return_value={"status": "active"},
             ), mock.patch("app.domains.repo_improvement.proposal_runtime.improvement_store.save_report"):
-                out = proposal_runtime.run_self_upgrade(
+                out = proposal_runtime.run_repo_improvement(
                     db=db,
                     spec=self._spec(repo),
                     actor="test",

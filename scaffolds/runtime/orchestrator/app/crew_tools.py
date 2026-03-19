@@ -11,11 +11,6 @@ class CrewToolsError(ValueError):
     pass
 
 
-_FLOW_ALIASES: dict[str, str] = {
-    "self_improve": "repo_improvement",
-    "self_upgrade": "repo_improvement",
-}
-
 _NATIVE_CREWAI_FLOWS = frozenset({"repo_improvement"})
 
 # CrewAI flow aliases route to supported runtime pipelines only.
@@ -44,8 +39,7 @@ def workspace_root() -> Path:
 
 
 def normalize_flow(raw: Optional[str]) -> str:
-    flow = str(raw or "standard").strip().lower()
-    return _FLOW_ALIASES.get(flow, flow)
+    return str(raw or "standard").strip().lower()
 
 
 def supported_flows() -> list[str]:

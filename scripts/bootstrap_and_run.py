@@ -119,52 +119,6 @@ def _run(cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[str, 
     return p.returncode, (p.stdout or ""), (p.stderr or "")
 
 
-def _legacy_self_improve_pids(repo: Path) -> list[int]:
-    pat = f"{str(repo)}/.team-os/scripts/pipelines/self_improve_daemon.py"
-    rc, out, _ = _run(["ps", "-eo", "pid=,args="], timeout_sec=15)
-    if rc != 0:
-        return []
-    pids: list[int] = []
-    for line in (out or "").splitlines():
-        s = line.strip()
-        if not s or pat not in s:
-            continue
-        parts = s.split(None, 1)
-        if not parts:
-            continue
-        try:
-            pids.append(int(parts[0]))
-        except Exception:
-            continue
-    return sorted(list(set([p for p in pids if p > 1])))
-
-
-def _stop_legacy_processes(repo: Path) -> dict[str, Any]:
-    pids = _legacy_self_improve_pids(repo)
-    if not pids:
-        return {"ok": True, "found": False, "stopped": []}
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
-    deadline = time.time() + 4.0
-    while time.time() < deadline:
-        if not any(_pid_alive(pid) for pid in pids):
-            break
-        time.sleep(0.1)
-    stopped: list[int] = []
-    for pid in pids:
-        if _pid_alive(pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except Exception:
-                pass
-        if not _pid_alive(pid):
-            stopped.append(pid)
-    return {"ok": True, "found": True, "candidates": pids, "stopped": sorted(stopped)}
-
-
 def _quarantine_legacy_team_os_dir(repo: Path, runtime_root: Path) -> dict[str, Any]:
     legacy = repo / ".team-os"
     if not legacy.exists():
@@ -566,11 +520,6 @@ def _ensure_crewai_ready(base_url: str) -> dict[str, Any]:
 def _repo_improvement_state_path(runtime_root: Path) -> Path:
     return runtime_root / "state" / "deprecated-repo_improvement_state.json"
 
-
-def _self_upgrade_state_path(runtime_root: Path) -> Path:
-    return _repo_improvement_state_path(runtime_root)
-
-
 def _read_repo_improvement_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
     _ = runtime_root
     url = str(base_url or "").strip().rstrip("/")
@@ -581,14 +530,7 @@ def _read_repo_improvement_state(runtime_root: Path, *, base_url: str = "") -> d
     except Exception:
         return {}
     repo_improvement = status.get("repo_improvement") if isinstance(status, dict) else {}
-    if isinstance(repo_improvement, dict):
-        return dict(repo_improvement)
-    legacy = status.get("self_upgrade") if isinstance(status, dict) else {}
-    return dict(legacy) if isinstance(legacy, dict) else {}
-
-
-def _read_self_upgrade_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
-    return _read_repo_improvement_state(runtime_root, base_url=base_url)
+    return dict(repo_improvement) if isinstance(repo_improvement, dict) else {}
 
 
 def _run_repo_improvement_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
@@ -609,10 +551,6 @@ def _run_repo_improvement_bootstrap(repo: Path, base_url: str) -> dict[str, Any]
     if not bool(out.get("ok")):
         raise BootstrapError(f"repo-improvement bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
     return out
-
-
-def _run_self_upgrade_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
-    return _run_repo_improvement_bootstrap(repo, base_url)
 
 
 def _resume_tasks(base_url: str) -> dict[str, Any]:
@@ -742,11 +680,11 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     _append_audit(runtime_root, "crewai orchestrator readiness check passed")
 
     # 9) force one bootstrap repo-improvement run (must actually execute)
-    repo_improvement_bootstrap = _run_self_upgrade_bootstrap(repo, base_url)
+    repo_improvement_bootstrap = _run_repo_improvement_bootstrap(repo, base_url)
     _append_audit(runtime_root, "repo-improvement bootstrap run executed")
 
     # hard check: last_run must exist after bootstrap
-    st = _read_self_upgrade_state(runtime_root, base_url=base_url)
+    st = _read_repo_improvement_state(runtime_root, base_url=base_url)
     last_run = (st.get("last_run") or {}) if isinstance(st, dict) else {}
     if not str(last_run.get("ts") or "").strip():
         raise BootstrapError("repo-improvement bootstrap not persisted: missing last_run.ts")
@@ -828,9 +766,6 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.action == "start":
-            legacy_proc = _stop_legacy_processes(repo)
-            if legacy_proc.get("found"):
-                _append_audit(runtime_root, f"stopped legacy self-improve processes: {legacy_proc}")
             legacy_dir = _quarantine_legacy_team_os_dir(repo, runtime_root)
             if legacy_dir.get("found"):
                 _append_audit(runtime_root, f"quarantined legacy .team-os dir -> {legacy_dir.get('moved_to')}")
@@ -842,9 +777,6 @@ def main(argv: list[str] | None = None) -> int:
             out = _stop_flow(repo, runtime_root, workspace_root, keep_hub=bool(args.keep_hub))
         elif args.action == "restart":
             _ = _stop_flow(repo, runtime_root, workspace_root, keep_hub=False)
-            legacy_proc = _stop_legacy_processes(repo)
-            if legacy_proc.get("found"):
-                _append_audit(runtime_root, f"stopped legacy self-improve processes: {legacy_proc}")
             legacy_dir = _quarantine_legacy_team_os_dir(repo, runtime_root)
             if legacy_dir.get("found"):
                 _append_audit(runtime_root, f"quarantined legacy .team-os dir -> {legacy_dir.get('moved_to')}")

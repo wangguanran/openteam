@@ -222,7 +222,7 @@ def _desired_items(
         tid = str(t.get("id") or "").strip()
         repo_improvement = t.get("repo_improvement")
         if not isinstance(repo_improvement, dict):
-            repo_improvement = t.get("self_upgrade")
+            repo_improvement = t.get("repo_improvement")
         if not isinstance(repo_improvement, dict):
             repo_improvement = {}
         title = _panel_item_title(

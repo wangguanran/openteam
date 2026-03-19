@@ -728,7 +728,7 @@ def _env_truthy(name: str, default: str = "1") -> bool:
 
 def _repo_improvement_flow(value: Any) -> bool:
     flow = str(value or "").strip().lower()
-    return flow in ("repo_improvement", "self_upgrade")
+    return flow == "repo_improvement"
 
 
 def _repo_improvement_run_id_set(*, event_limit: int = 5000) -> set[str]:
@@ -760,8 +760,6 @@ def _is_repo_improvement_run(run: Any, *, known_run_ids: set[str]) -> bool:
     return (
         "repo-improvement" in objective
         or "repo-improvement" in run_id_lower
-        or "self-upgrade" in objective
-        or "self-upgrade" in run_id_lower
     )
 
 
@@ -793,7 +791,7 @@ def _cleanup_stale_repo_improvement_activity() -> None:
             continue
         role_id = str(agent.role_id or "").strip()
         current_action = str(agent.current_action or "").strip().lower()
-        if role_id not in _REPO_IMPROVEMENT_STALE_AGENT_ROLES and "repo-improvement" not in current_action and "self-upgrade" not in current_action:
+        if role_id not in _REPO_IMPROVEMENT_STALE_AGENT_ROLES and "repo-improvement" not in current_action:
             continue
         if _iso_age_seconds(agent.last_heartbeat) < float(ttl_sec):
             continue
@@ -985,7 +983,7 @@ def _repo_improvement_active_run_matches(
     run_objective = str(getattr(run, "objective", "") or "").strip().lower()
     if existing_key == lock_key:
         return True
-    if "improvement sweep" in run_objective or "repo-improvement" in run_objective or "self-upgrade" in run_objective:
+    if "improvement sweep" in run_objective or "repo-improvement" in run_objective:
         return existing_key == f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
     return False
 
@@ -1002,7 +1000,7 @@ def _active_repo_improvement_run_for_scope(
     return None
 
 
-def _run_self_upgrade_iteration(
+def _run_repo_improvement_iteration(
     *,
     actor: str,
     project_id: str = "teamos",
@@ -1101,7 +1099,7 @@ def _run_self_upgrade_iteration(
         _REPO_IMPROVEMENT_LOCKS.release(lock_key)
 
 
-def _run_self_upgrade_discussion_sync(*, actor: str, project_id: str = "", target_id: str = "") -> dict[str, Any]:
+def _run_repo_improvement_discussion_sync(*, actor: str, project_id: str = "", target_id: str = "") -> dict[str, Any]:
     out = proposal_runtime.reconcile_feature_discussions(
         db=DB,
         actor=actor,
@@ -1113,7 +1111,7 @@ def _run_self_upgrade_discussion_sync(*, actor: str, project_id: str = "", targe
     return out
 
 
-def _run_self_upgrade_delivery_iteration(
+def _run_repo_improvement_delivery_iteration(
     *,
     actor: str,
     project_id: str = "teamos",
@@ -1357,7 +1355,7 @@ def _startup_background_threads() -> None:
     rct = threading.Thread(target=_repo_improvement_cleanup_loop, name="repo-improvement-cleanup-loop", daemon=True)
     rct.start()
 
-    def _self_upgrade_worktree_migration_once() -> None:
+    def _repo_improvement_worktree_migration_once() -> None:
         try:
             time.sleep(1)
             if not _leader_write_allowed():
@@ -1383,7 +1381,7 @@ def _startup_background_threads() -> None:
             except Exception:
                 pass
 
-    wmt = threading.Thread(target=_self_upgrade_worktree_migration_once, name="self-upgrade-worktree-migration-once", daemon=True)
+    wmt = threading.Thread(target=_repo_improvement_worktree_migration_once, name="repo-improvement-worktree-migration-once", daemon=True)
     wmt.start()
 
     # GitHub Projects sync loop (view layer). It is a best-effort background thread.
@@ -1664,7 +1662,7 @@ class PanelSyncIn(BaseModel):
     dry_run: bool = False
 
 
-class SelfUpgradeIn(BaseModel):
+class RepoImprovementIn(BaseModel):
     dry_run: bool = False
     force: bool = False
     trigger: str = "api"  # api|cli_auto|manual
@@ -1676,11 +1674,7 @@ class SelfUpgradeIn(BaseModel):
     repo_locator: Optional[str] = None
     objective: Optional[str] = None
 
-
-SelfImproveIn = SelfUpgradeIn
-
-
-class SelfUpgradeDeliveryIn(BaseModel):
+class RepoImprovementDeliveryIn(BaseModel):
     dry_run: bool = False
     force: bool = False
     project_id: str = "teamos"
@@ -1690,7 +1684,7 @@ class SelfUpgradeDeliveryIn(BaseModel):
     max_tasks: Optional[int] = Field(default=None, ge=1, le=50, description="deprecated compatibility field")
 
 
-class SelfUpgradeProposalDecisionIn(BaseModel):
+class RepoImprovementProposalDecisionIn(BaseModel):
     proposal_id: str = Field(..., min_length=1)
     action: str = Field(..., min_length=1, description="approve|reject|hold")
     title: Optional[str] = None
@@ -2951,7 +2945,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
             and str(orchestration.get("engine") or "").strip().lower() == "crewai"
             and _repo_improvement_flow(orchestration.get("flow"))
         ):
-            delivery = _run_self_upgrade_delivery_iteration(
+            delivery = _run_repo_improvement_delivery_iteration(
                 actor="control-plane.recovery",
                 project_id=str(t.get("project_id") or "teamos"),
                 task_id=str(t.get("task_id") or ""),
@@ -2991,12 +2985,11 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
 
 
 @app.post("/v1/repo_improvement/run")
-@app.post("/v1/self_upgrade/run")
-def v1_repo_improvement_run(payload: SelfUpgradeIn):
+def v1_repo_improvement_run(payload: RepoImprovementIn):
     _require_leader_write()
     project_id = str(payload.project_id or "teamos").strip() or "teamos"
     workstream_id = str(payload.workstream_id or "general").strip() or "general"
-    return _run_self_upgrade_iteration(
+    return _run_repo_improvement_iteration(
         actor="repo_improvement_api",
         project_id=project_id,
         workstream_id=workstream_id,
@@ -3032,7 +3025,6 @@ def v1_improvement_targets_upsert(payload: ImprovementTargetIn):
 
 
 @app.get("/v1/repo_improvement/proposals")
-@app.get("/v1/self_upgrade/proposals")
 def v1_repo_improvement_proposals(
     target_id: str = Query(default=""),
     project_id: str = Query(default=""),
@@ -3044,8 +3036,7 @@ def v1_repo_improvement_proposals(
 
 
 @app.post("/v1/repo_improvement/proposals/decide")
-@app.post("/v1/self_upgrade/proposals/decide")
-def v1_repo_improvement_proposals_decide(payload: SelfUpgradeProposalDecisionIn):
+def v1_repo_improvement_proposals_decide(payload: RepoImprovementProposalDecisionIn):
     _require_leader_write()
     try:
         proposal = proposal_runtime.decide_proposal(
@@ -3055,7 +3046,7 @@ def v1_repo_improvement_proposals_decide(payload: SelfUpgradeProposalDecisionIn)
             summary=str(payload.summary or "").strip(),
             version_bump=str(payload.version_bump or "").strip(),
         )
-    except proposal_runtime.SelfUpgradeError as e:
+    except proposal_runtime.RepoImprovementError as e:
         raise HTTPException(status_code=400, detail={"error": "repo_improvement_proposal_decision_failed", "message": str(e)})
     project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
     workstream_id = str(proposal.get("workstream_id") or "general").strip() or "general"
@@ -3071,15 +3062,13 @@ def v1_repo_improvement_proposals_decide(payload: SelfUpgradeProposalDecisionIn)
 
 
 @app.post("/v1/repo_improvement/discussions/sync")
-@app.post("/v1/self_upgrade/discussions/sync")
 def v1_repo_improvement_discussions_sync():
     _require_leader_write()
-    out = _run_self_upgrade_discussion_sync(actor="repo_improvement_discussion_api")
+    out = _run_repo_improvement_discussion_sync(actor="repo_improvement_discussion_api")
     return {"ok": True, **out}
 
 
 @app.get("/v1/repo_improvement/milestones")
-@app.get("/v1/self_upgrade/milestones")
 def v1_repo_improvement_milestones(
     project_id: str = Query(default="teamos"),
     target_id: str = Query(default=""),
@@ -3141,7 +3130,6 @@ def v1_openclaw_sweep(payload: OpenClawSweepIn):
 
 
 @app.get("/v1/repo_improvement/delivery/tasks")
-@app.get("/v1/self_upgrade/delivery/tasks")
 def v1_repo_improvement_delivery_tasks(
     project_id: str = Query(default=""),
     target_id: str = Query(default=""),
@@ -3156,10 +3144,9 @@ def v1_repo_improvement_delivery_tasks(
 
 
 @app.post("/v1/repo_improvement/delivery/run")
-@app.post("/v1/self_upgrade/delivery/run")
-def v1_repo_improvement_delivery_run(payload: SelfUpgradeDeliveryIn):
+def v1_repo_improvement_delivery_run(payload: RepoImprovementDeliveryIn):
     _require_leader_write()
-    out = _run_self_upgrade_delivery_iteration(
+    out = _run_repo_improvement_delivery_iteration(
         actor="repo_improvement_delivery_api",
         project_id=str(payload.project_id or "teamos").strip() or "teamos",
         target_id=str(payload.target_id or "").strip(),
@@ -3171,19 +3158,6 @@ def v1_repo_improvement_delivery_run(payload: SelfUpgradeDeliveryIn):
     return out
 
 
-@app.post("/v1/self_improve/run")
-def v1_self_improve_run(payload: SelfUpgradeIn):
-    out = v1_repo_improvement_run(payload)
-    try:
-        emit_n8n_event(
-            "REPO_IMPROVEMENT_RUN",
-            project_id=str(out.get("project_id") or "teamos"),
-            workstream_id=str(payload.workstream_id or _default_workstream_id()),
-            payload=out,
-        )
-    except Exception:
-        pass
-    return out
 
 
 @app.get("/v1/events/stream")
@@ -3405,7 +3379,7 @@ def _load_tasks_summary() -> list[dict[str, Any]]:
             project_id = str(data.get("project_id") or pid or _default_project_id())
             risk = str(data.get("risk_level") or data.get("risk") or "")
             need_pm = bool(data.get("need_pm_decision") or False)
-            execution = data.get("self_upgrade_execution") or {}
+            execution = data.get("repo_improvement_execution") or {}
 
             out.append(
                 {
@@ -3420,7 +3394,7 @@ def _load_tasks_summary() -> list[dict[str, Any]]:
                     "links": data.get("links") or {},
                     "ledger_path": str(p),
                     "orchestration": data.get("orchestration") or {},
-                    "self_upgrade_stage": str((execution if isinstance(execution, dict) else {}).get("stage") or ""),
+                    "repo_improvement_stage": str((execution if isinstance(execution, dict) else {}).get("stage") or ""),
                 }
             )
     return out

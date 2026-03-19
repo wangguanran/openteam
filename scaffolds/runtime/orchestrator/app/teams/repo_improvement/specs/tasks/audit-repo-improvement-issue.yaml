@@ -1,4 +1,4 @@
-task_name: audit_self_upgrade_issue
+task_name: audit_repo_improvement_issue
 expected_output: A structured JSON audit decision.
 output_model: DeliveryAuditResult
 description_template: |

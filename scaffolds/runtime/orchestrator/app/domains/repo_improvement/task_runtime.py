@@ -145,7 +145,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
-    payload = planning._mirror_repo_improvement_sections(dict(payload or {}))
+    payload = dict(payload or {})
     if str((payload or {}).get("id") or (payload or {}).get("task_id") or "").strip():
         try:
             improvement_store.upsert_delivery_task(dict(payload or {}))
@@ -184,7 +184,7 @@ def _logs_dir_for_doc(doc: dict[str, Any], *, ledger_path: Path, source_repo_roo
     return (ledger_path.parent.parent.parent / "logs" / "tasks" / task_id).resolve()
 
 
-def _is_self_upgrade_task(doc: dict[str, Any]) -> bool:
+def _is_repo_improvement_task(doc: dict[str, Any]) -> bool:
     orchestration = doc.get("orchestration") or {}
     if not isinstance(orchestration, dict):
         return False
@@ -207,11 +207,7 @@ def _source_repo_root(doc: dict[str, Any]) -> Path:
         target = {}
     project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     target_id = str(target.get("target_id") or "").strip()
-    exec_state = planning._repo_improvement_section(
-        doc,
-        new_key="repo_improvement_execution",
-        legacy_key="self_upgrade_execution",
-    )
+    exec_state = planning._repo_improvement_section(doc, key="repo_improvement_execution")
     candidates = [
         exec_state.get("source_repo_root"),
         repo.get("source_workdir"),
@@ -259,11 +255,7 @@ def _worktree_repo_root(doc: dict[str, Any]) -> Optional[Path]:
 
 
 def _execution_state(doc: dict[str, Any]) -> dict[str, Any]:
-    return planning._repo_improvement_section(
-        doc,
-        new_key="repo_improvement_execution",
-        legacy_key="self_upgrade_execution",
-    )
+    return planning._repo_improvement_section(doc, key="repo_improvement_execution")
 
 
 def _delivery_lease_key(*, project_id: str, task_id: str) -> str:
@@ -390,7 +382,7 @@ def _release_delivery_task_lease(*, db: Any, lease: Optional[dict[str, Any]]) ->
 
 
 def _task_lane(doc: dict[str, Any]) -> str:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         su = {}
     lane = str(su.get("lane") or "").strip().lower()
@@ -398,7 +390,7 @@ def _task_lane(doc: dict[str, Any]) -> str:
 
 
 def _task_work_item(doc: dict[str, Any]) -> dict[str, Any]:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         return {}
     work_item = su.get("work_item") or {}
@@ -474,7 +466,7 @@ def _allowed_paths(doc: dict[str, Any]) -> list[str]:
 
 
 def _tests_allowlist(doc: dict[str, Any]) -> list[str]:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -485,7 +477,7 @@ def _tests_allowlist(doc: dict[str, Any]) -> list[str]:
 
 
 def _acceptance_items(doc: dict[str, Any]) -> list[str]:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -496,13 +488,13 @@ def _acceptance_items(doc: dict[str, Any]) -> list[str]:
 
 
 def _bug_contract(doc: dict[str, Any], *, extra: Optional[dict[str, Any]] = None) -> dict[str, list[str]]:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
     if not isinstance(work_item, dict):
         work_item = {}
-    audit = doc.get("self_upgrade_audit") or {}
+    audit = doc.get("repo_improvement_audit") or {}
     if not isinstance(audit, dict):
         audit = {}
     extra_doc = dict(extra or {})
@@ -731,7 +723,7 @@ def _clear_validation_evidence(doc: dict[str, Any]) -> dict[str, Any]:
     execution["validation_evidence"] = {}
     execution["last_validation_at"] = ""
     execution["last_validation_stage"] = ""
-    doc["self_upgrade_execution"] = execution
+    doc["repo_improvement_execution"] = execution
     return doc
 
 
@@ -742,7 +734,7 @@ def _persist_validation_evidence(ledger_path: Path, doc: dict[str, Any], *, stag
     execution["validation_evidence"] = all_evidence
     execution["last_validation_stage"] = str(stage or "").strip()
     execution["last_validation_at"] = _utc_now_iso() if evidence else str(execution.get("last_validation_at") or "")
-    doc["self_upgrade_execution"] = execution
+    doc["repo_improvement_execution"] = execution
     _write_yaml(ledger_path, doc)
     return doc
 
@@ -888,7 +880,7 @@ def _merge_bug_contract_into_doc(
     verification_steps: list[str],
     verification_commands: list[str],
 ) -> dict[str, Any]:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -904,9 +896,9 @@ def _merge_bug_contract_into_doc(
     if work_item.get("verification_steps"):
         work_item["acceptance"] = _clean_text_list((work_item.get("acceptance") or []) + work_item["verification_steps"])
     su["work_item"] = work_item
-    doc["self_upgrade"] = su
+    doc["repo_improvement"] = su
 
-    audit = doc.get("self_upgrade_audit") or {}
+    audit = doc.get("repo_improvement_audit") or {}
     if not isinstance(audit, dict):
         audit = {}
     audit.update(
@@ -919,7 +911,7 @@ def _merge_bug_contract_into_doc(
             "updated_at": _utc_now_iso(),
         }
     )
-    doc["self_upgrade_audit"] = audit
+    doc["repo_improvement_audit"] = audit
 
     execution_policy = doc.get("execution_policy") or {}
     if not isinstance(execution_policy, dict):
@@ -1260,7 +1252,7 @@ def _update_task_state(
     execution["history"] = history[-50:]
     if isinstance(extra_execution, dict):
         execution.update(extra_execution)
-    doc["self_upgrade_execution"] = execution
+    doc["repo_improvement_execution"] = execution
     doc["updated_at"] = now
     if owner_role:
         doc["owners"] = [owner_role]
@@ -1368,10 +1360,10 @@ def _ensure_task_worktree(ledger_path: Path, doc: dict[str, Any]) -> tuple[dict[
     work_item = _task_work_item(doc)
     if work_item:
         work_item["worktree_hint"] = str(worktree_root)
-        su = doc.get("self_upgrade") or {}
+        su = doc.get("repo_improvement") or {}
         if isinstance(su, dict):
             su["work_item"] = work_item
-            doc["self_upgrade"] = su
+            doc["repo_improvement"] = su
     execution_policy["worktree_hint"] = str(worktree_root)
     doc["execution_policy"] = execution_policy
     execution.update(
@@ -1383,7 +1375,7 @@ def _ensure_task_worktree(ledger_path: Path, doc: dict[str, Any]) -> tuple[dict[
             "worktree_ready_at": str(execution.get("worktree_ready_at") or _utc_now_iso()),
         }
     )
-    doc["self_upgrade_execution"] = execution
+    doc["repo_improvement_execution"] = execution
     _write_yaml(ledger_path, doc)
     return doc, worktree_root, source_repo_root
 
@@ -1565,8 +1557,8 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
         {
             "task_id": task_id,
             "title": task_doc.get("title") or "",
-            "summary": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("summary") or "",
-            "rationale": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("rationale") or "",
+            "summary": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("rationale") or "",
             "issue_url": _issue_url(task_doc),
             "repo_locator": repo.get("locator") or "",
             "allowed_paths": allowed_paths,
@@ -1889,8 +1881,8 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
             "title": task_doc.get("title") or "",
             "current_lane": _task_lane(task_doc),
             "module": str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("module")) or ""),
-            "summary": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("summary") or "",
-            "rationale": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("rationale") or "",
+            "summary": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("rationale") or "",
             "allowed_paths": allowed_paths,
             "tests": tests_allowlist,
             "acceptance": _acceptance_items(task_doc),
@@ -2029,8 +2021,8 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
         {
             "task_id": task_doc.get("id") or "",
             "title": task_doc.get("title") or "",
-            "summary": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("summary") or "",
-            "rationale": ((task_doc.get("self_upgrade") or {}) if isinstance(task_doc.get("self_upgrade"), dict) else {}).get("rationale") or "",
+            "summary": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("rationale") or "",
             "issue_url": _issue_url(task_doc),
             "documentation_policy": policy,
             "git_status": _git_status_text(worktree_root),
@@ -2353,7 +2345,7 @@ def execute_task_delivery(
         _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
         _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
         _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
-        audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+        audit_doc = dict(doc.get("repo_improvement_audit") or {}) if isinstance(doc.get("repo_improvement_audit"), dict) else {}
         if force or str(audit_doc.get("status") or "").strip().lower() != "approved":
             doc = _update_task_state(
                 ledger_path,
@@ -2368,7 +2360,7 @@ def execute_task_delivery(
             if lease_guard:
                 lease_guard.assert_held(task_id=task_id)
             doc = _load_yaml(ledger_path)
-            audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+            audit_doc = dict(doc.get("repo_improvement_audit") or {}) if isinstance(doc.get("repo_improvement_audit"), dict) else {}
             audit_doc.update(
                 {
                     "status": "approved" if audit_result.approved else audit_result.closure,
@@ -2392,7 +2384,7 @@ def execute_task_delivery(
                     "issue_title_snapshot": str((_issue_snapshot(doc).get("title") or "")),
                 }
             )
-            doc["self_upgrade_audit"] = audit_doc
+            doc["repo_improvement_audit"] = audit_doc
             doc_policy = _documentation_policy(doc)
             doc_policy.update(
                 {
@@ -2606,7 +2598,7 @@ def execute_task_delivery(
                 stage="proof_verify",
                 evidence=list(bug_repro_result.reproduction_evidence or []),
             )
-            audit_doc = dict(doc.get("self_upgrade_audit") or {}) if isinstance(doc.get("self_upgrade_audit"), dict) else {}
+            audit_doc = dict(doc.get("repo_improvement_audit") or {}) if isinstance(doc.get("repo_improvement_audit"), dict) else {}
             audit_doc.update(
                 {
                     "reproduction_commands": list(bug_repro_result.reproduction_commands or audit_doc.get("reproduction_commands") or []),
@@ -2615,7 +2607,7 @@ def execute_task_delivery(
                     "updated_at": _utc_now_iso(),
                 }
             )
-            doc["self_upgrade_audit"] = audit_doc
+            doc["repo_improvement_audit"] = audit_doc
             _write_yaml(ledger_path, doc)
             if not bug_repro_result.approved:
                 if _has_post_fix_candidate_changes(doc, worktree_root=worktree_root):
@@ -3110,7 +3102,7 @@ def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: st
     seen_task_ids: set[str] = set()
     for current_pid in project_ids:
         for doc in improvement_store.list_delivery_tasks(project_id=current_pid, target_id=str(target_id or "").strip(), status=status_filter):
-            if not _is_self_upgrade_task(doc):
+            if not _is_repo_improvement_task(doc):
                 continue
             execution = _execution_state(doc)
             task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
@@ -3143,7 +3135,7 @@ def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: st
             continue
         for path in sorted(task_dir.glob("*.yaml")):
             doc = _load_yaml(path)
-            if not _is_self_upgrade_task(doc):
+            if not _is_repo_improvement_task(doc):
                 continue
             task_id = str(doc.get("id") or path.stem)
             if task_id in seen_task_ids:
@@ -3183,7 +3175,7 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
             str(task.get("ledger_path") or _fallback_ledger_path(project_id=str(task.get("project_id") or "teamos"), task_id=str(task.get("task_id") or "")))
         ).expanduser().resolve()
         doc = _load_yaml(ledger_path)
-        if not _is_self_upgrade_task(doc):
+        if not _is_repo_improvement_task(doc):
             continue
         source_repo_root = _source_repo_root(doc)
         repo = doc.get("repo") or {}
@@ -3216,10 +3208,10 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
         work_item = _task_work_item(doc)
         if work_item and str(work_item.get("worktree_hint") or "") != str(target_root):
             work_item["worktree_hint"] = str(target_root)
-            su = doc.get("self_upgrade") or {}
+            su = doc.get("repo_improvement") or {}
             if isinstance(su, dict):
                 su["work_item"] = work_item
-                doc["self_upgrade"] = su
+                doc["repo_improvement"] = su
             changed = True
         if str(execution.get("worktree_path") or "") != str(target_root):
             execution["worktree_path"] = str(target_root)
@@ -3237,7 +3229,7 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
         if changed:
             doc["repo"] = repo
             doc["execution_policy"] = execution_policy
-            doc["self_upgrade_execution"] = execution
+            doc["repo_improvement_execution"] = execution
             _write_yaml(ledger_path, doc)
             updated += 1
             touched.append({"task_id": str(doc.get("id") or ledger_path.stem), "ledger_path": str(ledger_path), "worktree_path": str(target_root)})

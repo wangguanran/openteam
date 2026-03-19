@@ -15,21 +15,6 @@ PHASE_FINDING = "finding"
 PHASE_DISCUSSION = "discussion"
 PHASE_CODING = "coding"
 
-LEGACY_ROOT_WORKFLOW_BY_LANE: dict[str, str] = {
-    "feature": crewai_role_registry.WORKFLOW_FEATURE_IMPROVEMENT,
-    "bug": crewai_role_registry.WORKFLOW_BUG_FIX,
-    "quality": crewai_role_registry.WORKFLOW_QUALITY_IMPROVEMENT,
-    "process": crewai_role_registry.WORKFLOW_PROCESS_IMPROVEMENT,
-}
-
-LEGACY_CODING_WORKFLOW_IDS: tuple[str, ...] = (
-    crewai_role_registry.WORKFLOW_BUG_CODING,
-    crewai_role_registry.WORKFLOW_FEATURE_CODING,
-    crewai_role_registry.WORKFLOW_QUALITY_CODING,
-    crewai_role_registry.WORKFLOW_PROCESS_CODING,
-)
-
-
 def _workflow_now_local() -> _dt.datetime:
     return _dt.datetime.now().astimezone()
 
@@ -63,32 +48,11 @@ def _normalize_workflow_id(raw: str) -> str:
 
 def _workflow_aliases(workflow_id: str, lane: str = "") -> tuple[str, ...]:
     canonical = _normalize_workflow_id(workflow_id)
-    aliases: list[str] = []
-    if canonical:
-        aliases.append(canonical)
-    if canonical == crewai_role_registry.WORKFLOW_CODING:
-        for legacy in LEGACY_CODING_WORKFLOW_IDS:
-            if legacy not in aliases:
-                aliases.append(legacy)
-    normalized_lane = str(lane or "").strip().lower()
-    legacy = LEGACY_ROOT_WORKFLOW_BY_LANE.get(normalized_lane, "")
-    if legacy and legacy not in aliases:
-        aliases.append(legacy)
-    return tuple(aliases)
+    return (canonical,) if canonical else ()
 
 
 def _canonical_workflow_id(workflow_id: str) -> str:
-    normalized = _normalize_workflow_id(workflow_id)
-    if not normalized:
-        return ""
-    if normalized in LEGACY_CODING_WORKFLOW_IDS:
-        return crewai_role_registry.WORKFLOW_CODING
-    for lane, legacy in LEGACY_ROOT_WORKFLOW_BY_LANE.items():
-        if normalized == legacy:
-            for spec in list_workflows(project_id="teamos"):
-                if spec.lane == lane and spec.phase == PHASE_FINDING:
-                    return spec.workflow_id
-    return normalized
+    return _normalize_workflow_id(workflow_id)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

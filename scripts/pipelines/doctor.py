@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         hz = _http_json(base + "/healthz", timeout_sec=5)
         st = _http_json(base + "/v1/status", timeout_sec=5)
         control_plane.update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
-        repo_improvement_value = st.get("repo_improvement") if isinstance(st.get("repo_improvement"), dict) else st.get("self_upgrade")
+        repo_improvement_value = st.get("repo_improvement") if isinstance(st.get("repo_improvement"), dict) else {}
         if isinstance(repo_improvement_value, dict):
             report["repo_improvement"]["last_run"] = dict((repo_improvement_value or {}).get("last_run") or {})
             report["repo_improvement"]["control_plane_summary"] = repo_improvement_value or {}

@@ -36,7 +36,7 @@ from app.domains.repo_improvement.models import UpgradePlan
 from app.domains.repo_improvement.models import UpgradeWorkItem
 
 
-class SelfUpgradeError(RuntimeError):
+class RepoImprovementError(RuntimeError):
     pass
 
 
@@ -70,8 +70,6 @@ ROLE_CODE_QUALITY_AGENT = crewai_role_registry.ROLE_CODE_QUALITY_AGENT
 
 MODULE_ALIASES = {
     "runtime": "Runtime",
-    "self-upgrade": "Repo-Improvement",
-    "self-upgrade-runtime": "Repo-Improvement",
     "repo-improvement": "Repo-Improvement",
     "ci": "CI",
     "doctor": "Doctor",
@@ -104,7 +102,7 @@ MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
     (("requirements", "raw_inputs", "requirement"), "Requirements"),
     (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
     (("security", "auth", "oauth", "token"), "Security"),
-    (("crewai_self_upgrade", "self_upgrade", "self-upgrade", "repo_improvement", "repo-improvement"), "Repo-Improvement"),
+    (("repo_improvement", "repo-improvement"), "Repo-Improvement"),
     (("control-plane", "orchestrator", "main.py", "runtime"), "Runtime"),
 ]
 
@@ -172,45 +170,12 @@ def _module_slug(module: str) -> str:
 
 
 def _is_repo_improvement_flow(flow: Any) -> bool:
-    return str(flow or "").strip().lower() in ("repo_improvement", "self_upgrade")
+    return str(flow or "").strip().lower() == "repo_improvement"
 
 
-def _repo_improvement_section(doc: dict[str, Any], *, new_key: str, legacy_key: str) -> dict[str, Any]:
-    value = doc.get(new_key)
-    if not isinstance(value, dict):
-        value = doc.get(legacy_key)
+def _repo_improvement_section(doc: dict[str, Any], *, key: str) -> dict[str, Any]:
+    value = doc.get(key)
     return dict(value) if isinstance(value, dict) else {}
-
-
-def _mirror_repo_improvement_sections(payload: dict[str, Any]) -> dict[str, Any]:
-    doc = dict(payload or {})
-    for new_key, legacy_key in (
-        ("repo_improvement", "self_upgrade"),
-        ("repo_improvement_execution", "self_upgrade_execution"),
-        ("repo_improvement_audit", "self_upgrade_audit"),
-        ("repo_improvement_milestone", "self_upgrade_milestone"),
-    ):
-        new_value = doc.get(new_key)
-        legacy_value = doc.get(legacy_key)
-        if isinstance(new_value, dict) and not isinstance(legacy_value, dict):
-            doc[legacy_key] = dict(new_value)
-        elif isinstance(legacy_value, dict) and not isinstance(new_value, dict):
-            doc[new_key] = dict(legacy_value)
-        elif isinstance(new_value, dict) and isinstance(legacy_value, dict):
-            doc[new_key] = dict(new_value)
-            doc[legacy_key] = dict(new_value)
-    orchestration = doc.get("orchestration")
-    if isinstance(orchestration, dict) and _is_repo_improvement_flow(orchestration.get("flow")):
-        orchestration_out = dict(orchestration)
-        orchestration_out["flow"] = "repo_improvement"
-        doc["orchestration"] = orchestration_out
-    workflows = doc.get("workflows")
-    if isinstance(workflows, list):
-        doc["workflows"] = [
-            "RepoImprovement" if str(item or "").strip() in ("SelfUpgrade", "self_upgrade", "repo_improvement") else item
-            for item in workflows
-        ]
-    return doc
 
 
 def _normalize_module_name(
@@ -258,7 +223,7 @@ def _documentation_allowed_paths(*, module: str, lane: str, allowed_paths: list[
     module_norm = _normalize_module_name(module, paths=allowed_paths, lane=lane)
     lane_norm = str(lane or "").strip().lower()
     path_bag = [_normalize_repo_doc_path(x) for x in (allowed_paths or []) if _normalize_repo_doc_path(x)]
-    if module_norm in ("CLI", "Doctor", "Bootstrap", "Runtime", "Self-Upgrade", "CI", "Release", "GitHub-Project"):
+    if module_norm in ("CLI", "Doctor", "Bootstrap", "Runtime", "Repo-Improvement", "CI", "Release", "GitHub-Project"):
         out.extend(
             [
                 "docs/runbooks/EXECUTION_RUNBOOK.md",
@@ -289,7 +254,7 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
     reasons: list[str] = []
     if lane in ("feature", "process"):
         reasons.append("该任务属于功能增强或流程优化，默认需要同步说明文档。")
-    if module in ("CLI", "Doctor", "Bootstrap", "Runtime", "Self-Upgrade", "CI", "Release", "GitHub-Project"):
+    if module in ("CLI", "Doctor", "Bootstrap", "Runtime", "Repo-Improvement", "CI", "Release", "GitHub-Project"):
         reasons.append(f"模块 `{module}` 对外行为或运维流程敏感，需要记录使用/回滚说明。")
     if any(path == "README.md" or path.startswith("docs/") or path.startswith(".github/workflows") or path == "teamos" for path in paths):
         reasons.append("任务涉及入口脚本、文档或工作流路径，需要同步说明和操作手册。")
@@ -1287,7 +1252,7 @@ def _prepare_discovery_repo(*, source_repo_root: Path, target: dict[str, Any]) -
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
-            raise SelfUpgradeError(f"failed to prepare discovery worktree: {detail or 'git worktree add failed'}")
+            raise RepoImprovementError(f"failed to prepare discovery worktree: {detail or 'git worktree add failed'}")
 
     if not scan_root.exists() or _git_dir(scan_root) is None:
         _recreate()
@@ -1317,7 +1282,7 @@ def _prepare_discovery_repo(*, source_repo_root: Path, target: dict[str, Any]) -
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
-            raise SelfUpgradeError(f"failed to sync discovery worktree: {detail or 'git reset/clean failed'}")
+            raise RepoImprovementError(f"failed to sync discovery worktree: {detail or 'git reset/clean failed'}")
     return scan_root
 
 
@@ -1378,7 +1343,7 @@ def _bug_dormant_after_zero_scans(*, project_id: str) -> int:
 
 def _has_unresolved_bug_tasks(*, project_id: str, target_id: str) -> bool:
     for task in improvement_store.list_delivery_tasks(project_id=project_id, target_id=target_id):
-        su = dict(task.get("self_upgrade") or {}) if isinstance(task.get("self_upgrade"), dict) else {}
+        su = dict(task.get("repo_improvement") or {}) if isinstance(task.get("repo_improvement"), dict) else {}
         orchestration = dict(task.get("orchestration") or {}) if isinstance(task.get("orchestration"), dict) else {}
         lane = str(su.get("lane") or orchestration.get("finding_lane") or "").strip().lower()
         status = str(task.get("status") or task.get("state") or "").strip().lower()
@@ -1818,7 +1783,7 @@ def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
 def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
     if not _zh_localization_enabled():
         return dict(doc)
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -1886,7 +1851,7 @@ def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
         lane=lane,
     )
     su_out["work_item"] = wi_out
-    out["self_upgrade"] = su_out
+    out["repo_improvement"] = su_out
     out["owner_role"] = wi_out["owner_role"]
     out["owners"] = [wi_out["owner_role"]]
     out["roles_involved"] = [wi_out["owner_role"], wi_out["review_role"], wi_out["qa_role"]]
@@ -2055,7 +2020,7 @@ def _coding_contract(
             existing=existing,
         )
     if finding is None:
-        su = _repo_improvement_section(doc, new_key="repo_improvement", legacy_key="self_upgrade")
+        su = _repo_improvement_section(doc, key="repo_improvement")
         lane = str(su.get("lane") or ((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("finding_lane") or "bug").strip().lower() or "bug"
         finding = UpgradeFinding(
             kind=str(su.get("kind") or "TASK"),
@@ -2065,7 +2030,7 @@ def _coding_contract(
             requires_user_confirmation=bool(su.get("requires_user_confirmation") or False),
         )
     if work_item is None:
-        su = _repo_improvement_section(doc, new_key="repo_improvement", legacy_key="self_upgrade")
+        su = _repo_improvement_section(doc, key="repo_improvement")
         raw_work_item = su.get("work_item") or {}
         if isinstance(raw_work_item, dict):
             work_item = UpgradeWorkItem.model_validate({"title": str(raw_work_item.get("title") or doc.get("title") or "task"), **raw_work_item})
@@ -2260,7 +2225,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         text = str(raw_output or "").strip()
         match = re.search(r"\{.*\}", text, re.S)
         if not match:
-            raise SelfUpgradeError("CrewAI returned no structured repo-improvement plan")
+            raise RepoImprovementError("CrewAI returned no structured repo-improvement plan")
         plan = UpgradePlan.model_validate(json.loads(match.group(0)))
 
     findings: list[UpgradeFinding] = []
@@ -3028,7 +2993,7 @@ def kickoff_upgrade_plan(
             "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
             "- Test-gap findings and work_items should carry target_paths, missing_paths, suggested_test_files, and why_not_covered so downstream issues can explain the exact uncovered path.\n"
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
-            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Repo-Improvement, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
             "- Each work item must include review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding. owner_role will be normalized to Coding-Agent by the runtime.\n"
             "- Bug work items must also include reproduction_steps, repo-relative test_case_files, and verification_steps. Do not leave bug reproduction implicit.\n"
@@ -3124,16 +3089,16 @@ def _compat_file_mirror_enabled() -> bool:
     return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
 
 
-def _is_self_upgrade_task_doc(doc: dict[str, Any]) -> bool:
+def _is_repo_improvement_task_doc(doc: dict[str, Any]) -> bool:
     orchestration = doc.get("orchestration") or {}
     return isinstance(orchestration, dict) and _is_repo_improvement_flow(orchestration.get("flow"))
 
 
-def _iter_self_upgrade_task_docs(*, project_id: str, target_id: str = "") -> list[dict[str, Any]]:
+def _iter_repo_improvement_task_docs(*, project_id: str, target_id: str = "") -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for doc in improvement_store.list_delivery_tasks(project_id=str(project_id or ""), target_id=str(target_id or "")):
-        if not isinstance(doc, dict) or not _is_self_upgrade_task_doc(doc):
+        if not isinstance(doc, dict) or not _is_repo_improvement_task_doc(doc):
             continue
         task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
         if task_id:
@@ -3144,7 +3109,7 @@ def _iter_self_upgrade_task_docs(*, project_id: str, target_id: str = "") -> lis
         return out
     for p in sorted(d.glob("*.yaml")):
         doc = _load_yaml(p)
-        if not isinstance(doc, dict) or not _is_self_upgrade_task_doc(doc):
+        if not isinstance(doc, dict) or not _is_repo_improvement_task_doc(doc):
             continue
         task_id = str(doc.get("id") or doc.get("task_id") or p.stem).strip()
         if task_id in seen:
@@ -3158,7 +3123,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             doc = raw if isinstance(raw, dict) else {}
-            if _is_self_upgrade_task_doc(doc):
+            if _is_repo_improvement_task_doc(doc):
                 try:
                     improvement_store.upsert_delivery_task(doc)
                 except Exception:
@@ -3174,7 +3139,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         doc = raw if isinstance(raw, dict) else {}
-        if _is_self_upgrade_task_doc(doc):
+        if _is_repo_improvement_task_doc(doc):
             try:
                 improvement_store.upsert_delivery_task(doc)
             except Exception:
@@ -3185,8 +3150,8 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
-    payload = _mirror_repo_improvement_sections(dict(payload or {}))
-    if _is_self_upgrade_task_doc(payload or {}):
+    payload = dict(payload or {})
+    if _is_repo_improvement_task_doc(payload or {}):
         try:
             improvement_store.upsert_delivery_task(dict(payload or {}))
         except Exception:
@@ -3296,7 +3261,7 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
 
 
 def _task_issue_stage_label(doc: dict[str, Any]) -> str:
-    execution = _repo_improvement_section(doc, new_key="repo_improvement_execution", legacy_key="self_upgrade_execution")
+    execution = _repo_improvement_section(doc, key="repo_improvement_execution")
     stage = str((execution if isinstance(execution, dict) else {}).get("stage") or "").strip().lower()
     status = str(doc.get("status") or "").strip().lower()
     if status in ("needs_clarification",):
@@ -3350,7 +3315,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
         _task_issue_stage_label(doc),
         _version_label(str(finding.version_bump or "")),
     ]
-    milestone_doc = _repo_improvement_section(doc, new_key="repo_improvement_milestone", legacy_key="self_upgrade_milestone")
+    milestone_doc = _repo_improvement_section(doc, key="repo_improvement_milestone")
     if not isinstance(milestone_doc, dict):
         milestone_doc = {}
     milestone_title = ""
@@ -3366,7 +3331,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
 
 
 def _task_issue_audit_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
-    audit = _repo_improvement_section(doc, new_key="repo_improvement_audit", legacy_key="self_upgrade_audit")
+    audit = _repo_improvement_section(doc, key="repo_improvement_audit")
     if not isinstance(audit, dict):
         audit = {}
     lane = str(audit.get("classification") or finding.lane or "").strip().lower() or str(finding.lane or "bug").strip().lower() or "bug"
@@ -3439,7 +3404,7 @@ def _task_issue_coding_contract_lines(doc: dict[str, Any], *, finding: UpgradeFi
 
 
 def _task_issue_milestone_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
-    milestone = doc.get("self_upgrade_milestone") or {}
+    milestone = doc.get("repo_improvement_milestone") or {}
     if not isinstance(milestone, dict):
         milestone = {}
     milestone_title = ""
@@ -3480,7 +3445,7 @@ def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Op
         orchestration = doc.get("orchestration") or {}
         if not isinstance(orchestration, dict) or not _is_repo_improvement_flow(orchestration.get("flow")):
             return
-        milestone = _repo_improvement_section(doc, new_key="repo_improvement_milestone", legacy_key="self_upgrade_milestone")
+        milestone = _repo_improvement_section(doc, key="repo_improvement_milestone")
         if not isinstance(milestone, dict) or str(milestone.get("milestone_id") or "").strip() != milestone_id:
             return
         total_items += 1
@@ -3505,7 +3470,7 @@ def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Op
                 "issue_url": issue_url,
             }
         )
-    for doc in _iter_self_upgrade_task_docs(project_id=project_id):
+    for doc in _iter_repo_improvement_task_docs(project_id=project_id):
         _collect(doc)
     extra_task_id = ""
     if isinstance(extra_doc, dict):
@@ -3635,13 +3600,13 @@ def _release_issue_body(*, project_id: str, milestone: dict[str, Any], summary: 
 def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     finding, work_item = _finding_from_task_doc(doc)
     if finding is None or work_item is None:
-        return {"ok": False, "reason": "missing_self_upgrade_finding"}
+        return {"ok": False, "reason": "missing_repo_improvement_finding"}
     project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
         repo = {}
     repo_locator = str(repo.get("locator") or "").strip()
-    existing = doc.get("self_upgrade_milestone") or {}
+    existing = doc.get("repo_improvement_milestone") or {}
     if not isinstance(existing, dict):
         existing = {}
     milestone = _build_milestone_doc(
@@ -3656,7 +3621,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     summary = _milestone_task_summary(
         project_id=project_id,
         milestone_id=str(milestone.get("milestone_id") or ""),
-        extra_doc={**doc, "self_upgrade_milestone": dict(milestone)},
+        extra_doc={**doc, "repo_improvement_milestone": dict(milestone)},
     )
     milestone.update(
         {
@@ -3727,12 +3692,12 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         except (GitHubAuthError, GitHubIssuesBusError):
             pass
     upsert_runtime_milestone(project_id, milestone)
-    doc["self_upgrade_milestone"] = milestone
+    doc["repo_improvement_milestone"] = milestone
     return {"ok": True, "milestone": milestone}
 
 
 def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, doc: Optional[dict[str, Any]] = None) -> Optional[int]:
-    milestone = (doc or {}).get("self_upgrade_milestone") if isinstance(doc, dict) else None
+    milestone = (doc or {}).get("repo_improvement_milestone") if isinstance(doc, dict) else None
     if isinstance(milestone, dict):
         num = int(milestone.get("github_milestone_number") or 0)
         if num > 0:
@@ -3762,13 +3727,13 @@ def decide_proposal(
 ) -> dict[str, Any]:
     pid = str(proposal_id or "").strip()
     if not pid:
-        raise SelfUpgradeError("proposal_id is required")
+        raise RepoImprovementError("proposal_id is required")
     act = str(action or "").strip().lower()
     if act not in ("approve", "reject", "hold"):
-        raise SelfUpgradeError("action must be one of: approve, reject, hold")
+        raise RepoImprovementError("action must be one of: approve, reject, hold")
     doc = improvement_store.get_proposal(pid)
     if not isinstance(doc, dict):
-        raise SelfUpgradeError(f"proposal not found: {pid}")
+        raise RepoImprovementError(f"proposal not found: {pid}")
     now = _utc_now_iso()
     if title:
         doc["title"] = str(title).strip()
@@ -3777,7 +3742,7 @@ def decide_proposal(
     if version_bump:
         vb = str(version_bump).strip().lower()
         if vb not in ("major", "minor", "patch", "none"):
-            raise SelfUpgradeError("version_bump must be one of: major, minor, patch, none")
+            raise RepoImprovementError("version_bump must be one of: major, minor, patch, none")
         doc["version_bump"] = vb
         lane = str(doc.get("lane") or "").strip().lower() or "feature"
         current_version = str(doc.get("current_version") or "0.1.0").strip() or "0.1.0"
@@ -3808,10 +3773,10 @@ def _update_proposal_record(
 ) -> dict[str, Any]:
     pid = str(proposal_id or "").strip()
     if not pid:
-        raise SelfUpgradeError("proposal_id is required")
+        raise RepoImprovementError("proposal_id is required")
     doc = improvement_store.get_proposal(pid)
     if not isinstance(doc, dict):
-        raise SelfUpgradeError(f"proposal not found: {pid}")
+        raise RepoImprovementError(f"proposal not found: {pid}")
     now = _utc_now_iso()
     if title:
         doc["title"] = str(title).strip()
@@ -3820,7 +3785,7 @@ def _update_proposal_record(
     if version_bump:
         vb = str(version_bump).strip().lower()
         if vb not in ("major", "minor", "patch", "none"):
-            raise SelfUpgradeError("version_bump must be one of: major, minor, patch, none")
+            raise RepoImprovementError("version_bump must be one of: major, minor, patch, none")
         lane = str(doc.get("lane") or "").strip().lower() or "feature"
         current_version = str(doc.get("current_version") or "0.1.0").strip() or "0.1.0"
         doc["version_bump"] = vb
@@ -4052,7 +4017,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             "- If the user is only asking questions or suggesting changes, keep action=pending or hold.\n"
             "- Only set action=approve when the user explicitly confirms the proposal should proceed.\n"
             "- You may refine title, summary, version_bump, or module if the user feedback clearly changes the scope.\n"
-            "- module must stay a single stable value such as Runtime, Self-Upgrade, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- module must stay a single stable value such as Runtime, Repo-Improvement, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Keep the reply concise and directly answer the user's latest questions.\n"
             "- 所有 reply_body、title、summary 必须使用简体中文。\n\n"
             f"Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
@@ -4071,14 +4036,14 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
     text = str(out or "").strip()
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
-        raise SelfUpgradeError("CrewAI returned no structured discussion reply")
+        raise RepoImprovementError("CrewAI returned no structured discussion reply")
     return ProposalDiscussionResponse.model_validate(json.loads(match.group(0)))
 
 
 def reconcile_feature_discussions(
     *,
     db=None,
-    actor: str = "self_upgrade_discussion_loop",
+    actor: str = "repo_improvement_discussion_loop",
     verbose: bool = False,
     project_id: str = "",
     target_id: str = "",
@@ -4315,7 +4280,7 @@ def _task_issue_comment_reason(doc: dict[str, Any]) -> str:
     if not isinstance(checkpoint, dict):
         checkpoint = {}
     stage = str(checkpoint.get("stage") or "").strip().lower()
-    execution = doc.get("self_upgrade_execution") or doc.get("repo_improvement_execution") or {}
+    execution = doc.get("repo_improvement_execution") or {}
     if not isinstance(execution, dict):
         execution = {}
     feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
@@ -4389,9 +4354,9 @@ def _ensure_task_record(
         doc = _load_yaml(ledger_path)
 
     if not task_id or not ledger_path:
-        raise SelfUpgradeError(f"failed to materialize task record for finding={finding.title}")
+        raise RepoImprovementError(f"failed to materialize task record for finding={finding.title}")
 
-    existing_execution = doc.get("self_upgrade_execution") or {}
+    existing_execution = doc.get("repo_improvement_execution") or {}
     if not isinstance(existing_execution, dict):
         existing_execution = {}
     normalized_worktree_hint = _normalize_worktree_hint(
@@ -4410,14 +4375,14 @@ def _ensure_task_record(
     )
     work_item = work_item.model_copy(update={"worktree_hint": normalized_worktree_hint, "module": normalized_module})
     finding = finding.model_copy(update={"module": _normalize_module_name(str(finding.module or normalized_module), paths=list(finding.files or work_item.allowed_paths or []), workstream_id=str(finding.workstream_id or ""), title=str(finding.title or ""), summary=str(finding.summary or ""), lane=str(finding.lane or ""))})
-    existing_audit = doc.get("self_upgrade_audit") or {}
+    existing_audit = doc.get("repo_improvement_audit") or {}
     if not isinstance(existing_audit, dict):
         existing_audit = {}
     default_docs = _default_documentation_policy(finding=finding, work_item=work_item)
     existing_docs = doc.get("documentation_policy") or {}
     if not isinstance(existing_docs, dict):
         existing_docs = {}
-    existing_milestone = doc.get("self_upgrade_milestone") or {}
+    existing_milestone = doc.get("repo_improvement_milestone") or {}
     if not isinstance(existing_milestone, dict):
         existing_milestone = {}
     documentation_policy = {
@@ -4539,7 +4504,6 @@ def _ensure_task_record(
             "reopen_on_failed_review_or_qa": True,
         },
     }
-    doc["self_upgrade"] = dict(repo_improvement_doc)
     doc["repo_improvement"] = dict(repo_improvement_doc)
     repo_improvement_execution = {
         "stage": str(existing_execution.get("stage") or "queued"),
@@ -4555,11 +4519,8 @@ def _ensure_task_record(
         "commit_sha": str(existing_execution.get("commit_sha") or ""),
         "closed_at": str(existing_execution.get("closed_at") or ""),
     }
-    doc["self_upgrade_execution"] = dict(repo_improvement_execution)
     doc["repo_improvement_execution"] = dict(repo_improvement_execution)
-    doc["self_upgrade_audit"] = dict(audit_doc)
     doc["repo_improvement_audit"] = dict(audit_doc)
-    doc["self_upgrade_milestone"] = dict(milestone_doc)
     doc["repo_improvement_milestone"] = dict(milestone_doc)
     doc["documentation_policy"] = documentation_policy
     doc["coding_contract"] = coding_contract
@@ -4779,7 +4740,7 @@ def _issue_number_from_url(issue_url: str) -> int:
 def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     finding, work_item = _finding_from_task_doc(doc)
     if finding is None or work_item is None:
-        return {"ok": False, "reason": "missing_self_upgrade_finding"}
+        return {"ok": False, "reason": "missing_repo_improvement_finding"}
     milestone_out = sync_milestone_from_doc(doc)
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
@@ -4826,7 +4787,7 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding], Optional[UpgradeWorkItem]]:
-    su = doc.get("self_upgrade") or {}
+    su = doc.get("repo_improvement") or {}
     if not isinstance(su, dict):
         return None, None
     work_item_raw = su.get("work_item") or {}
@@ -4897,7 +4858,7 @@ def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding
         return None, None
 
 
-def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos") -> dict[str, Any]:
+def sync_existing_repo_improvement_github_content_to_zh(*, project_id: str = "teamos") -> dict[str, Any]:
     stats = {"proposals": 0, "proposal_issues": 0, "tasks": 0, "task_issues": 0, "errors": 0}
     for proposal in list_proposals():
         try:
@@ -4921,9 +4882,9 @@ def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos
                 stats["proposal_issues"] += 1
         except Exception:
             stats["errors"] += 1
-    for localized_doc in _iter_self_upgrade_task_docs(project_id=project_id):
+    for localized_doc in _iter_repo_improvement_task_docs(project_id=project_id):
         try:
-            if not isinstance(localized_doc, dict) or not _is_self_upgrade_task_doc(localized_doc):
+            if not isinstance(localized_doc, dict) or not _is_repo_improvement_task_doc(localized_doc):
                 continue
             original_doc = dict(localized_doc)
             localized_doc = _localize_task_doc_to_zh(localized_doc)
@@ -4944,7 +4905,7 @@ def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos
                     )
                     orchestration["work_item_key"] = str(orchestration.get("work_item_key") or _work_item_key(work_item))
                     localized_doc["orchestration"] = orchestration
-                su = localized_doc.get("self_upgrade") or {}
+                su = localized_doc.get("repo_improvement") or {}
                 if isinstance(su, dict):
                     su = dict(su)
                     su["module"] = finding.module
@@ -4953,7 +4914,7 @@ def sync_existing_self_upgrade_github_content_to_zh(*, project_id: str = "teamos
                         wi = dict(wi)
                         wi["module"] = work_item.module
                         su["work_item"] = wi
-                    localized_doc["self_upgrade"] = su
+                    localized_doc["repo_improvement"] = su
                 execution_policy = localized_doc.get("execution_policy") or {}
                 if isinstance(execution_policy, dict):
                     execution_policy = dict(execution_policy)
@@ -5134,7 +5095,7 @@ def _mark_proposal_materialized(proposal_id: str) -> None:
     improvement_store.upsert_proposal(doc)
 
 
-def run_self_upgrade(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
+def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
     from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
 
     project_id = _safe_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))

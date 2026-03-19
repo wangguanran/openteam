@@ -55,16 +55,16 @@ class CrewOrchestratorTests(unittest.TestCase):
     def test_flow_alias_maps_to_deterministic_pipeline_chain(self):
         self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor", "db_migrate"])
 
-    def test_self_improve_alias_maps_to_native_repo_improvement_flow(self):
-        self.assertEqual(crew_tools.normalize_flow("self_improve"), "repo_improvement")
-        self.assertTrue(crew_tools.is_native_crewai_flow("self_improve"))
+    def test_repo_improvement_is_native_crewai_flow(self):
+        self.assertEqual(crew_tools.normalize_flow("repo_improvement"), "repo_improvement")
+        self.assertTrue(crew_tools.is_native_crewai_flow("repo_improvement"))
 
     def test_direct_pipeline_allowlist_accepts_supported_pipeline(self):
         self.assertEqual(crew_tools.flow_to_pipelines("pipeline:doctor"), ["doctor"])
 
-    def test_direct_pipeline_allowlist_rejects_removed_self_improve_pipeline(self):
+    def test_direct_pipeline_allowlist_rejects_native_workflow_name(self):
         with self.assertRaises(crew_tools.CrewToolsError):
-            crew_tools.flow_to_pipelines("pipeline:self_improve")
+            crew_tools.flow_to_pipelines("pipeline:repo_improvement")
 
     def test_direct_pipeline_allowlist_rejects_unsupported_pipeline(self):
         with self.assertRaises(crew_tools.CrewToolsError):
@@ -123,15 +123,15 @@ class CrewOrchestratorTests(unittest.TestCase):
         failed = next(e for e in db.events if e["event_type"] == "RUN_FAILED")
         self.assertIn("direct_pipeline_allowlist", failed["payload"])
 
-    def test_run_once_self_upgrade_uses_crewai_executor(self):
+    def test_run_once_repo_improvement_uses_crewai_executor(self):
         db = _FakeDB()
-        spec = RunSpec(project_id="teamos", workstream_id="general", objective="upgrade", flow="self_upgrade", repo_path="/tmp/team-os")
+        spec = RunSpec(project_id="teamos", workstream_id="general", objective="upgrade", flow="repo_improvement", repo_path="/tmp/team-os")
 
         with mock.patch(
             "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
         ), mock.patch(
-            "app.crewai_orchestrator.proposal_runtime.run_self_upgrade",
+            "app.crewai_orchestrator.proposal_runtime.run_repo_improvement",
             return_value={
                 "ok": True,
                 "summary": "planned",

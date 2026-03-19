@@ -22,7 +22,7 @@ class CrewAITaskRegistryTests(unittest.TestCase):
 
         self.assertEqual(spec.output_model, DeliveryReviewResult)
         self.assertIn("code_approved", spec.render_description(payload="{}"))
-        self.assertEqual(spec.task_name, "review_self_upgrade_task")
+        self.assertEqual(spec.task_name, "review_repo_improvement_task")
 
     def test_registered_task_renders_payload(self):
         spec = crewai_task_registry.DELIVERY_AUDIT_TASK_SPEC
@@ -36,7 +36,7 @@ class CrewAITaskRegistryTests(unittest.TestCase):
         self.assertIn("verification_steps", text)
 
     def test_get_task_spec_loads_yaml_backed_model_mapping(self):
-        spec = crewai_task_registry.get_task_spec("document_self_upgrade_task")
+        spec = crewai_task_registry.get_task_spec("document_repo_improvement_task")
 
         self.assertEqual(spec.output_model.__name__, "DeliveryDocumentationResult")
         self.assertIn("documentation_policy.allowed_paths", spec.render_description(payload="{}"))

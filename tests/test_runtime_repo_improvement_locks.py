@@ -127,7 +127,7 @@ class RepoImprovementLockTests(unittest.TestCase):
             "run_delivery_sweep",
             return_value={"ok": True, "processed": 0, "summary": {"total": 0}},
         ) as sweep_mock:
-            out = app_main._run_self_upgrade_delivery_iteration(
+            out = app_main._run_repo_improvement_delivery_iteration(
                 actor="test",
                 project_id="teamos",
                 target_id="wangguanran-projectmanager",
@@ -163,7 +163,7 @@ class RepoImprovementLockTests(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertEqual(out.run_id, "run-projectmanager-1")
 
-    def test_run_self_upgrade_iteration_skips_when_active_project_run_exists(self) -> None:
+    def test_run_repo_improvement_iteration_skips_when_active_project_run_exists(self) -> None:
         active_run = SimpleNamespace(
             run_id="run-projectmanager-1",
             project_id="projectmanager",
@@ -193,7 +193,7 @@ class RepoImprovementLockTests(unittest.TestCase):
                 app_main.crewai_orchestrator,
                 "run_once",
             ) as run_once_mock:
-                out = app_main._run_self_upgrade_iteration(
+                out = app_main._run_repo_improvement_iteration(
                     actor="test",
                     project_id="projectmanager",
                     workstream_id="general",
