@@ -1,8 +1,8 @@
-task_name: review_repo_improvement_task
+task_name: review_team_task
 expected_output: A structured JSON review decision.
 output_model: DeliveryReviewResult
 description_template: |
-  Review the current repository diff for this repo-improvement task.
+  Review the current repository diff for this team task.
   Return a structured review decision with separate code_approved and docs_approved fields.
   Rules:
   - Review both code changes and documentation changes under allowed_paths.

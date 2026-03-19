@@ -58,9 +58,9 @@ def load_plan_yaml(project_id: str) -> Optional[dict[str, Any]]:
 
 def _runtime_milestones_path(project_id: str) -> Path:
     if str(project_id) == "teamos":
-        return runtime_state_root() / "repo_improvement_milestones.yaml"
+        return runtime_state_root() / "team_workflow_milestones.yaml"
     ensure_project_scaffold(project_id)
-    return project_state_dir(project_id) / "plan" / "repo_improvement_milestones.yaml"
+    return project_state_dir(project_id) / "plan" / "team_workflow_milestones.yaml"
 
 
 def _load_runtime_milestones_yaml(project_id: str) -> dict[str, Any]:

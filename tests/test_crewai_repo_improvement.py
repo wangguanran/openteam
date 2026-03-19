@@ -17,7 +17,7 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 os.environ.setdefault("TEAMOS_RUNTIME_LOCALIZE_ZH", "0")
 
-from app.domains.repo_improvement import proposal_runtime  # noqa: E402
+from app.domains.team_workflow import proposal_runtime  # noqa: E402
 
 
 class _FakeDB:
@@ -55,23 +55,23 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
             (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
 
             fake_proc = SimpleNamespace(returncode=0, stdout=" M src/demo.py\n", stderr="")
-            with mock.patch("app.domains.repo_improvement.proposal_runtime.subprocess.run", return_value=fake_proc):
+            with mock.patch("app.domains.team_workflow.proposal_runtime.subprocess.run", return_value=fake_proc):
                 ctx = proposal_runtime.collect_repo_context(repo_root=repo)
 
             self.assertTrue(ctx["git_status_dirty"])
             self.assertEqual(ctx["git_status_sample"], [" M src/demo.py"])
 
-    def test_run_repo_improvement_returns_skipped_when_no_enabled_workflows(self):
+    def test_run_team_workflow_returns_skipped_when_no_enabled_workflows(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
             target = {"target_id": "demo-target", "project_id": "teamos", "repo_root": str(repo), "repo_locator": "foo/bar"}
-            with mock.patch("app.domains.repo_improvement.proposal_runtime._resolve_target", return_value=target), mock.patch(
-                "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.list_workflows",
+            with mock.patch("app.domains.team_workflow.proposal_runtime._resolve_target", return_value=target), mock.patch(
+                "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.list_workflows",
                 return_value=(),
             ):
-                out = proposal_runtime.run_repo_improvement(
+                out = proposal_runtime.run_team_workflow(
                     db=db,
                     spec=self._spec(repo),
                     actor="test",
@@ -82,9 +82,9 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertTrue(out["skipped"])
         self.assertEqual(out["reason"], "no_enabled_workflows")
-        self.assertTrue(any(event.get("event_type") == "REPO_IMPROVEMENT_SKIPPED" for event in db.events))
+        self.assertTrue(any(event.get("event_type") == "TEAM_WORKFLOW_SKIPPED" for event in db.events))
 
-    def test_run_repo_improvement_aggregates_workflow_runner_outputs(self):
+    def test_run_team_workflow_aggregates_workflow_runner_outputs(self):
         db = _FakeDB()
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -133,23 +133,23 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
                 },
             }
 
-            with mock.patch("app.domains.repo_improvement.proposal_runtime._resolve_target", return_value=target), mock.patch(
-                "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.list_workflows",
+            with mock.patch("app.domains.team_workflow.proposal_runtime._resolve_target", return_value=target), mock.patch(
+                "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.list_workflows",
                 return_value=(bug_workflow, feature_workflow),
             ), mock.patch(
-                "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
+                "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
                 return_value=allowed_policy,
             ), mock.patch(
-                "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.update_workflow_runtime_state",
+                "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.update_workflow_runtime_state",
                 return_value={},
             ), mock.patch(
                 "app.engines.crewai.workflow_runner.run_workflow",
                 side_effect=[bug_result, feature_result],
             ), mock.patch(
-                "app.domains.repo_improvement.proposal_runtime._update_bug_lane_state",
+                "app.domains.team_workflow.proposal_runtime._update_bug_lane_state",
                 return_value={"status": "active"},
-            ), mock.patch("app.domains.repo_improvement.proposal_runtime.improvement_store.save_report"):
-                out = proposal_runtime.run_repo_improvement(
+            ), mock.patch("app.domains.team_workflow.proposal_runtime.improvement_store.save_report"):
+                out = proposal_runtime.run_team_workflow(
                     db=db,
                     spec=self._spec(repo),
                     actor="test",
@@ -186,13 +186,13 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         }
 
         with mock.patch(
-            "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.list_workflows",
+            "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.list_workflows",
             return_value=(feature_workflow, quality_workflow),
         ), mock.patch(
-            "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
+            "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
             return_value=allowed_policy,
         ), mock.patch(
-            "app.domains.repo_improvement.proposal_runtime.crewai_workflow_registry.update_workflow_runtime_state",
+            "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.update_workflow_runtime_state",
             return_value={},
         ), mock.patch(
             "app.engines.crewai.workflow_runner.run_workflow",
@@ -222,8 +222,8 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
                 "TEAMOS_CREWAI_AUTH_MODE": "",
             },
             clear=False,
-        ), mock.patch("app.domains.repo_improvement.proposal_runtime.crewai_runtime.require_crewai_importable", return_value={"importable": True}), mock.patch(
-            "app.domains.repo_improvement.proposal_runtime.codex_llm.codex_login_status",
+        ), mock.patch("app.domains.team_workflow.proposal_runtime.crewai_runtime.require_crewai_importable", return_value={"importable": True}), mock.patch(
+            "app.domains.team_workflow.proposal_runtime.codex_llm.codex_login_status",
             return_value=(False, {}),
         ), mock.patch.dict(sys.modules, {"crewai.llm": fake_module}):
             proposal_runtime._crewai_llm()

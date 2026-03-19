@@ -131,7 +131,7 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_PROCESS_OPTIMIZATION_ANALYST: CrewRoleSpec(
         role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST,
-        goal="Use recent execution telemetry to identify improvements in the repo-improvement process itself.",
+        goal="Use recent execution telemetry to identify improvements in the team workflow process itself.",
         backstory="You optimize the team workflow by looking at timings, failures, repeated blockers, and wasted motion.",
     ),
     ROLE_CODE_QUALITY_ANALYST: CrewRoleSpec(
@@ -164,31 +164,31 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_CODING_AGENT,
-        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved team task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_FEATURE_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_FEATURE_CODING_AGENT,
-        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved team task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_BUGFIX_CODING_AGENT: CrewRoleSpec(
         role_id=ROLE_BUGFIX_CODING_AGENT,
-        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved team task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_PROCESS_OPTIMIZATION_AGENT: CrewRoleSpec(
         role_id=ROLE_PROCESS_OPTIMIZATION_AGENT,
-        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved team task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
     ROLE_CODE_QUALITY_AGENT: CrewRoleSpec(
         role_id=ROLE_CODE_QUALITY_AGENT,
-        goal="Implement the approved repo-improvement task directly in the repository while staying inside the declared issue scope.",
+        goal="Implement the approved team task directly in the repository while staying inside the declared issue scope.",
         backstory="You are a disciplined software engineer. You only change allowed paths, you run validation before stopping, and you do not add unrelated improvements.",
         tool_profile="write",
     ),
@@ -212,7 +212,7 @@ ROLE_SPECS: dict[str, CrewRoleSpec] = {
     ),
     ROLE_MILESTONE_MANAGER: CrewRoleSpec(
         role_id=ROLE_MILESTONE_MANAGER,
-        goal="Plan release lines and milestones for approved repo-improvement work.",
+        goal="Plan release lines and milestones for approved team workflow work.",
         backstory="You keep milestones coherent, incremental, and traceable to the workstream plan.",
     ),
     ROLE_SCHEDULER_AGENT: CrewRoleSpec(
@@ -271,24 +271,25 @@ def _default_team_id() -> str:
     return team_registry.default_team_id()
 
 
-def role_display_zh(role_id: str) -> str:
+def role_display_zh(role_id: str, *, team_id: str = "") -> str:
     rid = str(role_id or "").strip()
-    loaded = crewai_spec_loader.role_doc(rid)
+    loaded = crewai_spec_loader.role_doc(rid, team_id=str(team_id or "").strip())
     label = str(loaded.get("display_name_zh") or "").strip()
     if label:
         return label
     return ROLE_DISPLAY_ZH.get(rid, rid or "未命名角色")
 
 
-def get_role_spec(role_id: str, *, fallback_role_id: str = "") -> CrewRoleSpec:
+def get_role_spec(role_id: str, *, fallback_role_id: str = "", team_id: str = "") -> CrewRoleSpec:
     rid = str(role_id or "").strip()
-    loaded = crewai_spec_loader.role_doc(rid)
+    resolved_team_id = str(team_id or "").strip()
+    loaded = crewai_spec_loader.role_doc(rid, team_id=resolved_team_id)
     if loaded:
         return _role_spec_from_doc(loaded)
     if rid in ROLE_SPECS:
         return ROLE_SPECS[rid]
     fallback = str(fallback_role_id or "").strip()
-    loaded_fallback = crewai_spec_loader.role_doc(fallback)
+    loaded_fallback = crewai_spec_loader.role_doc(fallback, team_id=resolved_team_id)
     if loaded_fallback:
         spec = _role_spec_from_doc(loaded_fallback)
         return CrewRoleSpec(role_id=rid or spec.role_id, display_name_zh=spec.display_name_zh, goal=spec.goal, backstory=spec.backstory, tool_profile=spec.tool_profile)
@@ -346,7 +347,7 @@ def delivery_team_blueprint(*, owner_role: str, review_role: str, qa_role: str, 
     return TeamBlueprint(
         team_id=STAGE_DELIVERY,
         members=(
-            TeamMemberSpec(role_id=ROLE_SCHEDULER_AGENT, state="RUNNING", current_action="dispatching repo-improvement task"),
+            TeamMemberSpec(role_id=ROLE_SCHEDULER_AGENT, state="RUNNING", current_action="dispatching team task"),
             TeamMemberSpec(role_id=ROLE_ISSUE_AUDIT_AGENT, state="IDLE", current_action="waiting for issue audit"),
             TeamMemberSpec(role_id=ROLE_BUG_TESTCASE_AGENT, state="IDLE", current_action="waiting for failing test bootstrap"),
             TeamMemberSpec(role_id=ROLE_BUG_REPRO_AGENT, state="IDLE", current_action="waiting for bug reproduction"),

@@ -57,7 +57,6 @@ _UNSET = object()
 
 _LABEL_DEFAULTS: dict[str, tuple[str, str]] = {
     "teamos": ("1d76db", "Team OS managed issue"),
-    "source:repo-improvement": ("0e8a16", "Created or updated by Team OS repo-improvement"),
     "type:feature": ("1d76db", "Feature work item"),
     "type:bug": ("d73a4a", "Bug fix work item"),
     "type:process": ("6f42c1", "Process improvement item"),
@@ -144,6 +143,8 @@ def _label_spec(name: str) -> tuple[str, str]:
     lbl = _norm(name)
     if lbl in _LABEL_DEFAULTS:
         return _LABEL_DEFAULTS[lbl]
+    if lbl.startswith("source:"):
+        return ("0e8a16", f"Created or updated by Team OS {lbl.split(':', 1)[1]}")
     if lbl.startswith("module:"):
         return ("bfd4f2", f"Module scope: {lbl.split(':', 1)[1]}")
     if lbl.startswith("milestone:"):

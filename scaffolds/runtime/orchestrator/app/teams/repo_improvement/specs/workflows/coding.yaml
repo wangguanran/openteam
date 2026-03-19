@@ -3,7 +3,7 @@ lane: shared
 phase: coding
 display_name_zh: 通用编码流程
 enabled: true
-description: Deliver queued repo-improvement tasks through the common audit, proof, coding, review, QA, and release pipeline.
+description: Deliver queued team tasks through the common audit, proof, coding, review, QA, and release pipeline.
 task_source: direct_task
 requires_user_confirmation: false
 materialize_requires_approval: false
@@ -43,4 +43,4 @@ agents:
 tasks:
   - task_id: delivery_pipeline
     kind: skill
-    skill_id: delivery.run-task-pipeline
+    skill_id: team.run-coding-pipeline

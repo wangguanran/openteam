@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from .pydantic_compat import BaseModel, Field
 
 
 class DeliveryImplementationResult(BaseModel):

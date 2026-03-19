@@ -12,13 +12,14 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import yaml
-from pydantic import BaseModel, Field
 
 from app import codex_llm
 from app import crew_tools
 from app import crewai_agent_factory
+from app import crewai_llm_factory
 from app import crewai_role_registry
 from app import crewai_runtime
+from app import crewai_team_registry
 from app import crewai_workflow_registry
 from app import improvement_store
 from app import workspace_store
@@ -27,16 +28,17 @@ from app.github_projects_client import GitHubAPIError, GitHubAuthError
 from app.panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from app.panel_mapping import PanelMappingError, get_project_cfg, load_mapping
 from app.plan_store import upsert_runtime_milestone
+from app.pydantic_compat import BaseModel, Field
 from app.state_store import ledger_tasks_dir, runtime_state_root, team_os_root
-from app.domains.repo_improvement.models import ProposalDiscussionResponse
-from app.domains.repo_improvement.models import StructuredBugCandidate
-from app.domains.repo_improvement.models import StructuredBugScanResult
-from app.domains.repo_improvement.models import UpgradeFinding
-from app.domains.repo_improvement.models import UpgradePlan
-from app.domains.repo_improvement.models import UpgradeWorkItem
+from app.workflow_models import ProposalDiscussionResponse
+from app.workflow_models import StructuredBugCandidate
+from app.workflow_models import StructuredBugScanResult
+from app.workflow_models import UpgradeFinding
+from app.workflow_models import UpgradePlan
+from app.workflow_models import UpgradeWorkItem
 
 
-class RepoImprovementError(RuntimeError):
+class TeamWorkflowError(RuntimeError):
     pass
 
 
@@ -70,7 +72,7 @@ ROLE_CODE_QUALITY_AGENT = crewai_role_registry.ROLE_CODE_QUALITY_AGENT
 
 MODULE_ALIASES = {
     "runtime": "Runtime",
-    "repo-improvement": "Repo-Improvement",
+    "team-workflow": "Team-Workflow",
     "ci": "CI",
     "doctor": "Doctor",
     "bootstrap": "Bootstrap",
@@ -102,7 +104,7 @@ MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
     (("requirements", "raw_inputs", "requirement"), "Requirements"),
     (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
     (("security", "auth", "oauth", "token"), "Security"),
-    (("repo_improvement", "repo-improvement"), "Repo-Improvement"),
+    (("team_workflow",), "Team-Workflow"),
     (("control-plane", "orchestrator", "main.py", "runtime"), "Runtime"),
 ]
 
@@ -160,20 +162,37 @@ def _slug(text: str, *, default: str = "item") -> str:
     return s or default
 
 
+def _default_team_id() -> str:
+    return str(crewai_team_registry.default_team_id() or "").strip()
+
+
+def _normalize_team_id(team_id: Any = "") -> str:
+    return str(team_id or "").strip() or _default_team_id()
+
+
+def _team_flow_id(team_id: Any = "") -> str:
+    return f"team:{_normalize_team_id(team_id)}"
+
+
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{3,}")
 role_display_zh = crewai_role_registry.role_display_zh
 
 
 def _module_slug(module: str) -> str:
-    return _slug(module, default="repo-improvement")
+    return _slug(module, default="team-workflow")
 
 
-def _is_repo_improvement_flow(flow: Any) -> bool:
-    return str(flow or "").strip().lower() == "repo_improvement"
+def _is_team_flow(flow: Any, *, team_id: Any = "") -> bool:
+    normalized = str(flow or "").strip().lower()
+    if not normalized.startswith("team:"):
+        return False
+    if str(team_id or "").strip():
+        return normalized == _team_flow_id(team_id).lower()
+    return True
 
 
-def _repo_improvement_section(doc: dict[str, Any], *, key: str) -> dict[str, Any]:
+def _team_section(doc: dict[str, Any], *, key: str) -> dict[str, Any]:
     value = doc.get(key)
     return dict(value) if isinstance(value, dict) else {}
 
@@ -188,8 +207,15 @@ def _normalize_module_name(
     lane: str = "",
 ) -> str:
     raw_slug = _module_slug(raw)
-    if raw_slug in MODULE_ALIASES:
-        return MODULE_ALIASES[raw_slug]
+    team_aliases = {
+        _module_slug(str(spec.team_id or "")): "Team-Workflow"
+        for spec in crewai_team_registry.list_teams()
+        if str(spec.team_id or "").strip()
+    }
+    aliases = dict(MODULE_ALIASES)
+    aliases.update(team_aliases)
+    if raw_slug in aliases:
+        return aliases[raw_slug]
 
     bag = " | ".join(
         [
@@ -200,15 +226,17 @@ def _normalize_module_name(
             " ".join([str(x).strip() for x in (paths or []) if str(x).strip()]),
         ]
     ).lower()
+    if any(team_slug and team_slug in bag for team_slug in team_aliases):
+        return "Team-Workflow"
     for needles, module in MODULE_RULES:
         if any(needle in bag for needle in needles):
             return module
 
     if raw_slug and raw_slug not in ("item", "general"):
-        return "-".join([part.capitalize() for part in raw_slug.split("-") if part]) or "Repo-Improvement"
+        return "-".join([part.capitalize() for part in raw_slug.split("-") if part]) or "Team-Workflow"
     if str(lane or "").strip().lower() == "bug":
         return "Runtime"
-    return "Repo-Improvement"
+    return "Team-Workflow"
 
 
 def _normalize_repo_doc_path(path: str) -> str:
@@ -223,7 +251,7 @@ def _documentation_allowed_paths(*, module: str, lane: str, allowed_paths: list[
     module_norm = _normalize_module_name(module, paths=allowed_paths, lane=lane)
     lane_norm = str(lane or "").strip().lower()
     path_bag = [_normalize_repo_doc_path(x) for x in (allowed_paths or []) if _normalize_repo_doc_path(x)]
-    if module_norm in ("CLI", "Doctor", "Bootstrap", "Runtime", "Repo-Improvement", "CI", "Release", "GitHub-Project"):
+    if module_norm in ("CLI", "Doctor", "Bootstrap", "Runtime", "Team-Workflow", "CI", "Release", "GitHub-Project"):
         out.extend(
             [
                 "docs/runbooks/EXECUTION_RUNBOOK.md",
@@ -254,7 +282,7 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
     reasons: list[str] = []
     if lane in ("feature", "process"):
         reasons.append("该任务属于功能增强或流程优化，默认需要同步说明文档。")
-    if module in ("CLI", "Doctor", "Bootstrap", "Runtime", "Repo-Improvement", "CI", "Release", "GitHub-Project"):
+    if module in ("CLI", "Doctor", "Bootstrap", "Runtime", "Team-Workflow", "CI", "Release", "GitHub-Project"):
         reasons.append(f"模块 `{module}` 对外行为或运维流程敏感，需要记录使用/回滚说明。")
     if any(path == "README.md" or path.startswith("docs/") or path.startswith(".github/workflows") or path == "teamos" for path in paths):
         reasons.append("任务涉及入口脚本、文档或工作流路径，需要同步说明和操作手册。")
@@ -369,7 +397,7 @@ def _proposal_issue_marker(doc: dict[str, Any]) -> str:
 
 def _task_issue_marker(*, repo_locator: str, repo_root: Path, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> str:
     fingerprint = _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding) + "-" + _slug(work_item.title, default="work")
-    return f"<!-- teamos:repo_improvement:{fingerprint} -->"
+    return f"<!-- teamos:team_workflow:{fingerprint} -->"
 
 
 def _normalize_owner_role(role_id: str, lane: str) -> str:
@@ -1252,7 +1280,7 @@ def _prepare_discovery_repo(*, source_repo_root: Path, target: dict[str, Any]) -
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
-            raise RepoImprovementError(f"failed to prepare discovery worktree: {detail or 'git worktree add failed'}")
+            raise TeamWorkflowError(f"failed to prepare discovery worktree: {detail or 'git worktree add failed'}")
 
     if not scan_root.exists() or _git_dir(scan_root) is None:
         _recreate()
@@ -1282,7 +1310,7 @@ def _prepare_discovery_repo(*, source_repo_root: Path, target: dict[str, Any]) -
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
-            raise RepoImprovementError(f"failed to sync discovery worktree: {detail or 'git reset/clean failed'}")
+            raise TeamWorkflowError(f"failed to sync discovery worktree: {detail or 'git reset/clean failed'}")
     return scan_root
 
 
@@ -1343,7 +1371,7 @@ def _bug_dormant_after_zero_scans(*, project_id: str) -> int:
 
 def _has_unresolved_bug_tasks(*, project_id: str, target_id: str) -> bool:
     for task in improvement_store.list_delivery_tasks(project_id=project_id, target_id=target_id):
-        su = dict(task.get("repo_improvement") or {}) if isinstance(task.get("repo_improvement"), dict) else {}
+        su = dict(task.get("team_workflow") or {}) if isinstance(task.get("team_workflow"), dict) else {}
         orchestration = dict(task.get("orchestration") or {}) if isinstance(task.get("orchestration"), dict) else {}
         lane = str(su.get("lane") or orchestration.get("finding_lane") or "").strip().lower()
         status = str(task.get("status") or task.get("state") or "").strip().lower()
@@ -1473,7 +1501,7 @@ def _update_bug_lane_state(
     )
     if previous_status != "dormant" and status == "dormant":
         db.add_event(
-            event_type="REPO_IMPROVEMENT_BUG_LANE_DORMANT",
+            event_type="TEAM_WORKFLOW_BUG_LANE_DORMANT",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -1486,7 +1514,7 @@ def _update_bug_lane_state(
         )
     elif previous_status == "dormant" and status != "dormant":
         db.add_event(
-            event_type="REPO_IMPROVEMENT_BUG_LANE_RESUMED",
+            event_type="TEAM_WORKFLOW_BUG_LANE_RESUMED",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -1783,7 +1811,7 @@ def _localize_proposal_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
 def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
     if not _zh_localization_enabled():
         return dict(doc)
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -1851,7 +1879,7 @@ def _localize_task_doc_to_zh(doc: dict[str, Any]) -> dict[str, Any]:
         lane=lane,
     )
     su_out["work_item"] = wi_out
-    out["repo_improvement"] = su_out
+    out["team_workflow"] = su_out
     out["owner_role"] = wi_out["owner_role"]
     out["owners"] = [wi_out["owner_role"]]
     out["roles_involved"] = [wi_out["owner_role"], wi_out["review_role"], wi_out["qa_role"]]
@@ -2020,7 +2048,7 @@ def _coding_contract(
             existing=existing,
         )
     if finding is None:
-        su = _repo_improvement_section(doc, key="repo_improvement")
+        su = _team_section(doc, key="team_workflow")
         lane = str(su.get("lane") or ((doc.get("orchestration") or {}) if isinstance(doc.get("orchestration"), dict) else {}).get("finding_lane") or "bug").strip().lower() or "bug"
         finding = UpgradeFinding(
             kind=str(su.get("kind") or "TASK"),
@@ -2030,7 +2058,7 @@ def _coding_contract(
             requires_user_confirmation=bool(su.get("requires_user_confirmation") or False),
         )
     if work_item is None:
-        su = _repo_improvement_section(doc, key="repo_improvement")
+        su = _team_section(doc, key="team_workflow")
         raw_work_item = su.get("work_item") or {}
         if isinstance(raw_work_item, dict):
             work_item = UpgradeWorkItem.model_validate({"title": str(raw_work_item.get("title") or doc.get("title") or "task"), **raw_work_item})
@@ -2108,104 +2136,8 @@ def _planned_version(current_version: str, findings: list[UpgradeFinding]) -> st
     return _bump_version(current_version, bump)
 
 
-def _ensure_codex_proxy_bypass() -> None:
-    bypass_hosts = [
-        "chatgpt.com",
-        ".chatgpt.com",
-        "api.openai.com",
-        ".openai.com",
-    ]
-    current = str(os.getenv("NO_PROXY") or os.getenv("no_proxy") or "").strip()
-    entries: list[str] = []
-    seen: set[str] = set()
-    for raw in current.split(","):
-        item = str(raw or "").strip()
-        if not item:
-            continue
-        key = item.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        entries.append(item)
-    for item in bypass_hosts:
-        key = item.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        entries.append(item)
-    if not entries:
-        return
-    resolved = ",".join(entries)
-    os.environ["NO_PROXY"] = resolved
-    os.environ["no_proxy"] = resolved
-
-
 def _crewai_llm(*, workflow: Any | None = None):
-    os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
-    crewai_runtime.require_crewai_importable(refresh=True)
-    from crewai.llm import LLM
-
-    model = str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
-    base_url = str(os.getenv("TEAMOS_LLM_BASE_URL") or "").strip()
-    api_key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
-    if workflow is not None:
-        override_base_url = str(getattr(workflow, "llm_url", "") or "").strip()
-        override_api_key = str(getattr(workflow, "llm_api_key", "") or "").strip()
-        if override_base_url:
-            base_url = override_base_url
-        if override_api_key:
-            api_key = override_api_key
-    auth_mode = str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower()
-
-    logged_in = False
-    if "codex" in model.lower():
-        try:
-            logged_in, _ = codex_llm.codex_login_status()
-        except codex_llm.CodexUnavailable:
-            logged_in = False
-
-    explicit_llm_credentials = bool(api_key) or bool(base_url)
-
-    if logged_in and "codex" in model.lower() and not explicit_llm_credentials:
-        os.environ["TEAMOS_CREWAI_AUTH_MODE"] = "oauth_codex"
-        os.environ.pop("OPENAI_OAUTH_ACCESS_TOKEN", None)
-        os.environ.pop("OPENAI_ACCESS_TOKEN", None)
-        api_key = ""
-        base_url = ""
-    elif (not auth_mode) and ("codex" in model.lower()) and (not api_key):
-        os.environ["TEAMOS_CREWAI_AUTH_MODE"] = "oauth_codex"
-
-    if "codex" in model.lower() and str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower() == "oauth_codex":
-        _ensure_codex_proxy_bypass()
-
-    reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "xhigh").strip().lower()
-    reasoning_effort_aliases = {
-        "highest": "xhigh",
-        "max": "xhigh",
-    }
-    reasoning_effort = reasoning_effort_aliases.get(reasoning_effort, reasoning_effort)
-    if reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
-        reasoning_effort = "xhigh"
-
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "api": "responses",
-        "is_litellm": "openrouter" in model.lower(),
-        "max_tokens": 4000,
-    }
-    max_retries_raw = str(os.getenv("TEAMOS_CREWAI_MAX_RETRIES") or "").strip()
-    if max_retries_raw:
-        try:
-            kwargs["max_retries"] = max(0, int(max_retries_raw))
-        except Exception:
-            pass
-    if any(token in model.lower() for token in ("gpt-5", "codex", "o1", "o3", "o4")):
-        kwargs["reasoning_effort"] = reasoning_effort
-    if base_url:
-        kwargs["base_url"] = base_url
-    if api_key:
-        kwargs["api_key"] = api_key
-    return LLM(**kwargs)
+    return crewai_llm_factory.build_crewai_llm(workflow=workflow)
 
 
 def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str, project_id: str = "teamos") -> UpgradePlan:
@@ -2225,7 +2157,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         text = str(raw_output or "").strip()
         match = re.search(r"\{.*\}", text, re.S)
         if not match:
-            raise RepoImprovementError("CrewAI returned no structured repo-improvement plan")
+            raise TeamWorkflowError("CrewAI returned no structured team workflow plan")
         plan = UpgradePlan.model_validate(json.loads(match.group(0)))
 
     findings: list[UpgradeFinding] = []
@@ -2345,7 +2277,7 @@ def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current
         findings.append(finding_obj)
         lane_counts[lane] = int(lane_counts.get(lane, 0)) + 1
     return UpgradePlan(
-        summary=str(plan.summary or "").strip() or "CrewAI repo-improvement analysis completed.",
+        summary=str(plan.summary or "").strip() or "CrewAI team workflow analysis completed.",
         findings=findings,
         ci_actions=[str(x).strip() for x in (plan.ci_actions or []) if str(x).strip()][:20],
         notes=[str(x).strip() for x in (plan.notes or []) if str(x).strip()][:20],
@@ -2490,7 +2422,7 @@ def _prompt_safe_repo_context(repo_context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_bug_scan_tools(*, repo_root: Path, repo_context: dict[str, Any]) -> dict[str, list[Any]]:
-    from app.domains.repo_improvement import task_runtime as delivery
+    from app.domains.team_workflow import task_runtime as delivery
 
     inspection = repo_context.get("repository_inspection") if isinstance(repo_context.get("repository_inspection"), dict) else {}
     tests_allowlist = [str(x).strip() for x in (inspection.get("test_command_candidates") or []) if str(x).strip()]
@@ -2602,6 +2534,7 @@ def _coerce_structured_task_output(raw_output: Any, model_cls: type[BaseModel], 
 
 def _structured_bug_scan_for_repo(
     *,
+    team_id: str = "",
     repo_context: dict[str, Any],
     bug_scan_limit: int,
     bug_scan_dormant: bool,
@@ -2614,6 +2547,7 @@ def _structured_bug_scan_for_repo(
     tools_by_profile = _build_bug_scan_tools(repo_root=repo_root, repo_context=repo_context)
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=ROLE_TEST_MANAGER,
+        team_id=_normalize_team_id(team_id),
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools_by_profile,
@@ -2684,6 +2618,7 @@ def _structured_bug_scan_for_chunk(
 
 def _kickoff_bug_only_plan(
     *,
+    team_id: str = "",
     repo_context: dict[str, Any],
     project_id: str,
     max_findings: int,
@@ -2701,6 +2636,7 @@ def _kickoff_bug_only_plan(
     findings_limit = max(0, int(max_findings))
 
     scan_result, debug_task = _structured_bug_scan_for_repo(
+        team_id=team_id,
         repo_context=repo_context,
         bug_scan_limit=max(1, int(bug_scan_limit or 0)),
         bug_scan_dormant=bug_scan_dormant,
@@ -2786,7 +2722,7 @@ def _kickoff_bug_only_plan(
         notes.append("已完成整仓 bug 通读扫描；本轮将把已验证缺陷统一进入 issue/task materialize。")
 
     raw_plan = {
-        "summary": "；".join([x for x in summaries if x]).strip() or "Bug-only repo-improvement analysis completed.",
+        "summary": "；".join([x for x in summaries if x]).strip() or "Bug-only team workflow analysis completed.",
         "findings": aggregated_findings[:findings_limit] if findings_limit > 0 else aggregated_findings,
         "ci_actions": ci_actions[:20],
         "notes": notes[:20],
@@ -2804,7 +2740,7 @@ def _kickoff_bug_only_plan(
     task_outputs.append(
         {
             "name": "structured_bug_plan",
-            "agent": "Repo-Improvement-Bug-Planner",
+            "agent": "Team-Workflow-Bug-Planner",
             "raw": json.dumps(raw_plan, ensure_ascii=False, indent=2)[:4000],
         }
     )
@@ -2817,6 +2753,7 @@ def _kickoff_bug_only_plan(
 
 def kickoff_upgrade_plan(
     *,
+    team_id: str = "",
     repo_context: dict[str, Any],
     project_id: str = "teamos",
     max_findings: int,
@@ -2836,6 +2773,7 @@ def kickoff_upgrade_plan(
 
     if _use_bug_only_fast_path(project_id=project_id, enabled_workflows=enabled_workflows):
         return _kickoff_bug_only_plan(
+            team_id=team_id,
             repo_context=repo_context,
             project_id=project_id,
             max_findings=max_findings,
@@ -2849,14 +2787,15 @@ def kickoff_upgrade_plan(
 
     llm = _crewai_llm()
 
-    issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, llm=llm, verbose=verbose)
-    review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, llm=llm, verbose=verbose)
-    qa_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, llm=llm, verbose=verbose)
+    normalized_team_id = _normalize_team_id(team_id)
+    issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, team_id=normalized_team_id, llm=llm, verbose=verbose)
+    review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
+    qa_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
     enabled_agents: list[Any] = [issue_drafter, review_agent, qa_agent]
     enabled_scan_tasks: list[Any] = []
 
     if feature_enabled:
-        product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, llm=llm, verbose=verbose)
+        product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, team_id=normalized_team_id, llm=llm, verbose=verbose)
         enabled_agents.append(product_manager)
         enabled_scan_tasks.append(
             Task(
@@ -2887,6 +2826,7 @@ def kickoff_upgrade_plan(
         )
         test_manager = crewai_agent_factory.build_crewai_agent(
             role_id=ROLE_TEST_MANAGER,
+            team_id=normalized_team_id,
             llm=llm,
             verbose=verbose,
             tools_by_profile=bug_scan_tools,
@@ -2908,8 +2848,8 @@ def kickoff_upgrade_plan(
             )
         )
     if quality_enabled:
-        test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, llm=llm, verbose=verbose)
-        code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, llm=llm, verbose=verbose)
+        test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
+        code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, team_id=normalized_team_id, llm=llm, verbose=verbose)
         enabled_agents.extend([test_case_gap_agent, code_quality_analyst])
         enabled_scan_tasks.extend(
             [
@@ -2960,13 +2900,13 @@ def kickoff_upgrade_plan(
             ]
         )
     if process_enabled:
-        process_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, llm=llm, verbose=verbose)
+        process_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, team_id=normalized_team_id, llm=llm, verbose=verbose)
         enabled_agents.append(process_analyst)
         enabled_scan_tasks.append(
             Task(
                 name="process_optimization_scan",
                 description=(
-                    "Review the repository context and recent repo-improvement execution telemetry.\n"
+                    "Review the repository context and recent team workflow execution telemetry.\n"
                     "Identify process improvements only if they are grounded in recent failures, delays, or workflow friction.\n"
                     "Prefer one high-value process improvement over many weak ones."
                 ),
@@ -2993,7 +2933,7 @@ def kickoff_upgrade_plan(
             "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
             "- Test-gap findings and work_items should carry target_paths, missing_paths, suggested_test_files, and why_not_covered so downstream issues can explain the exact uncovered path.\n"
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
-            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Repo-Improvement, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Team-Workflow, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
             "- Each work item must include review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding. owner_role will be normalized to Coding-Agent by the runtime.\n"
             "- Bug work items must also include reproduction_steps, repo-relative test_case_files, and verification_steps. Do not leave bug reproduction implicit.\n"
@@ -3089,16 +3029,16 @@ def _compat_file_mirror_enabled() -> bool:
     return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
 
 
-def _is_repo_improvement_task_doc(doc: dict[str, Any]) -> bool:
+def _is_team_task_doc(doc: dict[str, Any]) -> bool:
     orchestration = doc.get("orchestration") or {}
-    return isinstance(orchestration, dict) and _is_repo_improvement_flow(orchestration.get("flow"))
+    return isinstance(orchestration, dict) and _is_team_flow(orchestration.get("flow"))
 
 
-def _iter_repo_improvement_task_docs(*, project_id: str, target_id: str = "") -> list[dict[str, Any]]:
+def _iter_team_task_docs(*, project_id: str, target_id: str = "") -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for doc in improvement_store.list_delivery_tasks(project_id=str(project_id or ""), target_id=str(target_id or "")):
-        if not isinstance(doc, dict) or not _is_repo_improvement_task_doc(doc):
+        if not isinstance(doc, dict) or not _is_team_task_doc(doc):
             continue
         task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
         if task_id:
@@ -3109,7 +3049,7 @@ def _iter_repo_improvement_task_docs(*, project_id: str, target_id: str = "") ->
         return out
     for p in sorted(d.glob("*.yaml")):
         doc = _load_yaml(p)
-        if not isinstance(doc, dict) or not _is_repo_improvement_task_doc(doc):
+        if not isinstance(doc, dict) or not _is_team_task_doc(doc):
             continue
         task_id = str(doc.get("id") or doc.get("task_id") or p.stem).strip()
         if task_id in seen:
@@ -3123,7 +3063,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             doc = raw if isinstance(raw, dict) else {}
-            if _is_repo_improvement_task_doc(doc):
+            if _is_team_task_doc(doc):
                 try:
                     improvement_store.upsert_delivery_task(doc)
                 except Exception:
@@ -3139,7 +3079,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         doc = raw if isinstance(raw, dict) else {}
-        if _is_repo_improvement_task_doc(doc):
+        if _is_team_task_doc(doc):
             try:
                 improvement_store.upsert_delivery_task(doc)
             except Exception:
@@ -3151,7 +3091,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
     payload = dict(payload or {})
-    if _is_repo_improvement_task_doc(payload or {}):
+    if _is_team_task_doc(payload or {}):
         try:
             improvement_store.upsert_delivery_task(dict(payload or {}))
         except Exception:
@@ -3242,12 +3182,17 @@ def _proposal_module(doc: dict[str, Any]) -> str:
     )
 
 
+def _team_source_label(team_id: str) -> str:
+    return f"source:{_normalize_team_id(team_id)}"
+
+
 def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
     lane = str(doc.get("lane") or "feature").strip().lower() or "feature"
     module = _proposal_module(doc)
+    team_id = _normalize_team_id(str(doc.get("team_id") or ((doc.get("team") or {}) if isinstance(doc.get("team"), dict) else {}).get("team_id") or ""))
     labels = [
         "teamos",
-        "source:repo-improvement",
+        _team_source_label(team_id),
         f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'feature'}",
         f"module:{_module_slug(module)}",
         "stage:proposal",
@@ -3261,7 +3206,7 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
 
 
 def _task_issue_stage_label(doc: dict[str, Any]) -> str:
-    execution = _repo_improvement_section(doc, key="repo_improvement_execution")
+    execution = _team_section(doc, key="team_execution")
     stage = str((execution if isinstance(execution, dict) else {}).get("stage") or "").strip().lower()
     status = str(doc.get("status") or "").strip().lower()
     if status in ("needs_clarification",):
@@ -3307,15 +3252,16 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
         lane=str(finding.lane or ""),
     )
     lane = str(finding.lane or "bug").strip().lower() or "bug"
+    team_id = _normalize_team_id(str(doc.get("team_id") or ((doc.get("team") or {}) if isinstance(doc.get("team"), dict) else {}).get("team_id") or ""))
     labels = [
         "teamos",
-        "source:repo-improvement",
+        _team_source_label(team_id),
         f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'bug'}",
         f"module:{_module_slug(module)}",
         _task_issue_stage_label(doc),
         _version_label(str(finding.version_bump or "")),
     ]
-    milestone_doc = _repo_improvement_section(doc, key="repo_improvement_milestone")
+    milestone_doc = _team_section(doc, key="team_milestone")
     if not isinstance(milestone_doc, dict):
         milestone_doc = {}
     milestone_title = ""
@@ -3331,7 +3277,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
 
 
 def _task_issue_audit_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
-    audit = _repo_improvement_section(doc, key="repo_improvement_audit")
+    audit = _team_section(doc, key="team_audit")
     if not isinstance(audit, dict):
         audit = {}
     lane = str(audit.get("classification") or finding.lane or "").strip().lower() or str(finding.lane or "bug").strip().lower() or "bug"
@@ -3404,7 +3350,7 @@ def _task_issue_coding_contract_lines(doc: dict[str, Any], *, finding: UpgradeFi
 
 
 def _task_issue_milestone_lines(doc: dict[str, Any], *, finding: UpgradeFinding) -> list[str]:
-    milestone = doc.get("repo_improvement_milestone") or {}
+    milestone = doc.get("team_milestone") or {}
     if not isinstance(milestone, dict):
         milestone = {}
     milestone_title = ""
@@ -3443,9 +3389,9 @@ def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Op
         if not isinstance(doc, dict):
             return
         orchestration = doc.get("orchestration") or {}
-        if not isinstance(orchestration, dict) or not _is_repo_improvement_flow(orchestration.get("flow")):
+        if not isinstance(orchestration, dict) or not _is_team_flow(orchestration.get("flow")):
             return
-        milestone = _repo_improvement_section(doc, key="repo_improvement_milestone")
+        milestone = _team_section(doc, key="team_milestone")
         if not isinstance(milestone, dict) or str(milestone.get("milestone_id") or "").strip() != milestone_id:
             return
         total_items += 1
@@ -3470,7 +3416,7 @@ def _milestone_task_summary(*, project_id: str, milestone_id: str, extra_doc: Op
                 "issue_url": issue_url,
             }
         )
-    for doc in _iter_repo_improvement_task_docs(project_id=project_id):
+    for doc in _iter_team_task_docs(project_id=project_id):
         _collect(doc)
     extra_task_id = ""
     if isinstance(extra_doc, dict):
@@ -3600,13 +3546,13 @@ def _release_issue_body(*, project_id: str, milestone: dict[str, Any], summary: 
 def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     finding, work_item = _finding_from_task_doc(doc)
     if finding is None or work_item is None:
-        return {"ok": False, "reason": "missing_repo_improvement_finding"}
+        return {"ok": False, "reason": "missing_team_finding"}
     project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
         repo = {}
     repo_locator = str(repo.get("locator") or "").strip()
-    existing = doc.get("repo_improvement_milestone") or {}
+    existing = doc.get("team_milestone") or {}
     if not isinstance(existing, dict):
         existing = {}
     milestone = _build_milestone_doc(
@@ -3621,7 +3567,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     summary = _milestone_task_summary(
         project_id=project_id,
         milestone_id=str(milestone.get("milestone_id") or ""),
-        extra_doc={**doc, "repo_improvement_milestone": dict(milestone)},
+        extra_doc={**doc, "team_milestone": dict(milestone)},
     )
     milestone.update(
         {
@@ -3641,7 +3587,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             done_items=int(milestone.get("done_items") or 0),
         )
     if repo_locator:
-        description = f"Team OS repo-improvement release milestone for {str(milestone.get('title') or '').strip()}."
+        description = f"Team OS team workflow release milestone for {str(milestone.get('title') or '').strip()}."
         try:
             milestone_number = ensure_milestone(
                 repo_locator,
@@ -3658,7 +3604,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         labels = sorted(
             {
                 "teamos",
-                "source:repo-improvement",
+                _team_source_label(str(doc.get("team_id") or ((doc.get("team") or {}) if isinstance(doc.get("team"), dict) else {}).get("team_id") or "")),
                 "type:process",
                 "module:release",
                 "stage:release",
@@ -3692,12 +3638,12 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         except (GitHubAuthError, GitHubIssuesBusError):
             pass
     upsert_runtime_milestone(project_id, milestone)
-    doc["repo_improvement_milestone"] = milestone
+    doc["team_milestone"] = milestone
     return {"ok": True, "milestone": milestone}
 
 
 def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, doc: Optional[dict[str, Any]] = None) -> Optional[int]:
-    milestone = (doc or {}).get("repo_improvement_milestone") if isinstance(doc, dict) else None
+    milestone = (doc or {}).get("team_milestone") if isinstance(doc, dict) else None
     if isinstance(milestone, dict):
         num = int(milestone.get("github_milestone_number") or 0)
         if num > 0:
@@ -3706,19 +3652,26 @@ def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, 
     milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
     if lane not in ("feature", "bug") or not milestone_title or not repo_locator:
         return None
-    description = f"Team OS repo-improvement release milestone for {milestone_title}."
+    description = f"Team OS team workflow release milestone for {milestone_title}."
     try:
         return ensure_milestone(repo_locator, title=milestone_title, description=description)
     except (GitHubAuthError, GitHubIssuesBusError):
         return None
 
 
-def list_proposals(*, target_id: str = "", project_id: str = "", lane: str = "", status: str = "") -> list[dict[str, Any]]:
-    return improvement_store.list_proposals(target_id=str(target_id or "").strip(), project_id=str(project_id or "").strip(), lane=lane, status=status)
+def list_proposals(*, team_id: str = "", target_id: str = "", project_id: str = "", lane: str = "", status: str = "") -> list[dict[str, Any]]:
+    return improvement_store.list_proposals(
+        team_id=_normalize_team_id(team_id),
+        target_id=str(target_id or "").strip(),
+        project_id=str(project_id or "").strip(),
+        lane=lane,
+        status=status,
+    )
 
 
 def decide_proposal(
     *,
+    team_id: str = "",
     proposal_id: str,
     action: str,
     title: str = "",
@@ -3727,13 +3680,16 @@ def decide_proposal(
 ) -> dict[str, Any]:
     pid = str(proposal_id or "").strip()
     if not pid:
-        raise RepoImprovementError("proposal_id is required")
+        raise TeamWorkflowError("proposal_id is required")
     act = str(action or "").strip().lower()
     if act not in ("approve", "reject", "hold"):
-        raise RepoImprovementError("action must be one of: approve, reject, hold")
+        raise TeamWorkflowError("action must be one of: approve, reject, hold")
     doc = improvement_store.get_proposal(pid)
     if not isinstance(doc, dict):
-        raise RepoImprovementError(f"proposal not found: {pid}")
+        raise TeamWorkflowError(f"proposal not found: {pid}")
+    normalized_team_id = _normalize_team_id(team_id)
+    if str(doc.get("team_id") or "").strip() not in {"", normalized_team_id}:
+        raise TeamWorkflowError(f"proposal_team_mismatch: {pid}")
     now = _utc_now_iso()
     if title:
         doc["title"] = str(title).strip()
@@ -3742,7 +3698,7 @@ def decide_proposal(
     if version_bump:
         vb = str(version_bump).strip().lower()
         if vb not in ("major", "minor", "patch", "none"):
-            raise RepoImprovementError("version_bump must be one of: major, minor, patch, none")
+            raise TeamWorkflowError("version_bump must be one of: major, minor, patch, none")
         doc["version_bump"] = vb
         lane = str(doc.get("lane") or "").strip().lower() or "feature"
         current_version = str(doc.get("current_version") or "0.1.0").strip() or "0.1.0"
@@ -3773,10 +3729,10 @@ def _update_proposal_record(
 ) -> dict[str, Any]:
     pid = str(proposal_id or "").strip()
     if not pid:
-        raise RepoImprovementError("proposal_id is required")
+        raise TeamWorkflowError("proposal_id is required")
     doc = improvement_store.get_proposal(pid)
     if not isinstance(doc, dict):
-        raise RepoImprovementError(f"proposal not found: {pid}")
+        raise TeamWorkflowError(f"proposal not found: {pid}")
     now = _utc_now_iso()
     if title:
         doc["title"] = str(title).strip()
@@ -3785,7 +3741,7 @@ def _update_proposal_record(
     if version_bump:
         vb = str(version_bump).strip().lower()
         if vb not in ("major", "minor", "patch", "none"):
-            raise RepoImprovementError("version_bump must be one of: major, minor, patch, none")
+            raise TeamWorkflowError("version_bump must be one of: major, minor, patch, none")
         lane = str(doc.get("lane") or "").strip().lower() or "feature"
         current_version = str(doc.get("current_version") or "0.1.0").strip() or "0.1.0"
         doc["version_bump"] = vb
@@ -4007,7 +3963,12 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             for c in comments
         ],
     }
-    agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DISCUSSION_AGENT, llm=llm, verbose=verbose)
+    agent = crewai_agent_factory.build_crewai_agent(
+        role_id=ROLE_ISSUE_DISCUSSION_AGENT,
+        team_id=_normalize_team_id(str(proposal.get("team_id") or "")),
+        llm=llm,
+        verbose=verbose,
+    )
     task = Task(
         name="reply_to_improvement_proposal_discussion",
         description=(
@@ -4017,7 +3978,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             "- If the user is only asking questions or suggesting changes, keep action=pending or hold.\n"
             "- Only set action=approve when the user explicitly confirms the proposal should proceed.\n"
             "- You may refine title, summary, version_bump, or module if the user feedback clearly changes the scope.\n"
-            "- module must stay a single stable value such as Runtime, Repo-Improvement, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- module must stay a single stable value such as Runtime, Team-Workflow, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
             "- Keep the reply concise and directly answer the user's latest questions.\n"
             "- 所有 reply_body、title、summary 必须使用简体中文。\n\n"
             f"Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
@@ -4036,17 +3997,18 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
     text = str(out or "").strip()
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
-        raise RepoImprovementError("CrewAI returned no structured discussion reply")
+        raise TeamWorkflowError("CrewAI returned no structured discussion reply")
     return ProposalDiscussionResponse.model_validate(json.loads(match.group(0)))
 
 
 def reconcile_feature_discussions(
     *,
     db=None,
-    actor: str = "repo_improvement_discussion_loop",
+    actor: str = "team_workflow_discussion_loop",
     verbose: bool = False,
     project_id: str = "",
     target_id: str = "",
+    team_id: str = "",
 ) -> dict[str, Any]:
     from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
 
@@ -4055,7 +4017,7 @@ def reconcile_feature_discussions(
     normalized_target_id = str(target_id or "").strip()
     workflows = [
         workflow
-        for workflow in crewai_workflow_registry.list_workflows(project_id=normalized_project_id)
+        for workflow in crewai_workflow_registry.list_workflows(team_id=_normalize_team_id(team_id), project_id=normalized_project_id)
         if workflow.phase == crewai_workflow_registry.PHASE_DISCUSSION and workflow.enabled
     ]
     for workflow in workflows:
@@ -4095,6 +4057,7 @@ def reconcile_feature_discussions(
 
 def _upsert_proposal(
     *,
+    team_id: str = "",
     target_id: str,
     repo_root: Path,
     repo_locator: str,
@@ -4107,6 +4070,7 @@ def _upsert_proposal(
     workflow = crewai_workflow_registry.workflow_for_lane_phase(
         finding.lane,
         crewai_workflow_registry.PHASE_FINDING,
+        team_id=_normalize_team_id(team_id),
         project_id=project_id,
     )
     if finding.work_items:
@@ -4148,6 +4112,7 @@ def _upsert_proposal(
         ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     doc = {
         "proposal_id": proposal_id,
+        "team_id": _normalize_team_id(team_id),
         "workflow_id": str(existing.get("workflow_id") or workflow.workflow_id),
         "target_id": str(target_id or "").strip(),
         "lane": finding.lane,
@@ -4193,6 +4158,18 @@ def _upsert_proposal(
         "discussion_error": str(existing.get("discussion_error") or ""),
         "awaiting_user_reply": bool(existing.get("awaiting_user_reply", True)),
         "finding": finding.model_dump(),
+        "team": {
+            "team_id": _normalize_team_id(team_id),
+            "lane": finding.lane,
+            "phase": workflow.phase,
+            "workflow_id": workflow.workflow_id,
+        },
+        "orchestration": {
+            "engine": "crewai",
+            "flow": _team_flow_id(team_id),
+            "finding_lane": finding.lane,
+            "workflow_id": workflow.workflow_id,
+        },
     }
     improvement_store.upsert_proposal(doc)
     return {"proposal_id": proposal_id, **doc}
@@ -4280,7 +4257,7 @@ def _task_issue_comment_reason(doc: dict[str, Any]) -> str:
     if not isinstance(checkpoint, dict):
         checkpoint = {}
     stage = str(checkpoint.get("stage") or "").strip().lower()
-    execution = doc.get("repo_improvement_execution") or {}
+    execution = doc.get("team_execution") or {}
     if not isinstance(execution, dict):
         execution = {}
     feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
@@ -4303,6 +4280,7 @@ def _task_issue_comment_reason(doc: dict[str, Any]) -> str:
 
 def _ensure_task_record(
     *,
+    team_id: str = "",
     target_id: str,
     repo_root: Path,
     repo_locator: str,
@@ -4354,9 +4332,9 @@ def _ensure_task_record(
         doc = _load_yaml(ledger_path)
 
     if not task_id or not ledger_path:
-        raise RepoImprovementError(f"failed to materialize task record for finding={finding.title}")
+        raise TeamWorkflowError(f"failed to materialize task record for finding={finding.title}")
 
-    existing_execution = doc.get("repo_improvement_execution") or {}
+    existing_execution = doc.get("team_execution") or {}
     if not isinstance(existing_execution, dict):
         existing_execution = {}
     normalized_worktree_hint = _normalize_worktree_hint(
@@ -4375,14 +4353,14 @@ def _ensure_task_record(
     )
     work_item = work_item.model_copy(update={"worktree_hint": normalized_worktree_hint, "module": normalized_module})
     finding = finding.model_copy(update={"module": _normalize_module_name(str(finding.module or normalized_module), paths=list(finding.files or work_item.allowed_paths or []), workstream_id=str(finding.workstream_id or ""), title=str(finding.title or ""), summary=str(finding.summary or ""), lane=str(finding.lane or ""))})
-    existing_audit = doc.get("repo_improvement_audit") or {}
+    existing_audit = doc.get("team_audit") or {}
     if not isinstance(existing_audit, dict):
         existing_audit = {}
     default_docs = _default_documentation_policy(finding=finding, work_item=work_item)
     existing_docs = doc.get("documentation_policy") or {}
     if not isinstance(existing_docs, dict):
         existing_docs = {}
-    existing_milestone = doc.get("repo_improvement_milestone") or {}
+    existing_milestone = doc.get("team_milestone") or {}
     if not isinstance(existing_milestone, dict):
         existing_milestone = {}
     documentation_policy = {
@@ -4469,17 +4447,30 @@ def _ensure_task_record(
         str(documentation_policy.get("documentation_role") or ROLE_DOCUMENTATION_AGENT),
     ]
     doc["need_pm_decision"] = False
+    normalized_team_id = _normalize_team_id(team_id)
+    coding_workflow = crewai_workflow_registry.workflow_for_phase(
+        crewai_workflow_registry.PHASE_CODING,
+        team_id=normalized_team_id,
+        project_id=panel_project_id,
+    )
+    doc["team_id"] = normalized_team_id
     doc["orchestration"] = {
         "engine": "crewai",
-        "flow": "repo_improvement",
+        "flow": f"team:{normalized_team_id}",
         "finding_kind": finding.kind,
         "finding_lane": finding.lane,
         "finding_fingerprint": _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding),
         "work_item_key": work_item_key,
         "proposal_id": proposal_id,
     }
-    doc["workflows"] = ["RepoImprovement"]
-    repo_improvement_doc = {
+    doc["team"] = {
+        "team_id": normalized_team_id,
+        "lane": finding.lane,
+        "phase": coding_workflow.phase,
+        "workflow_id": coding_workflow.workflow_id,
+    }
+    doc["workflows"] = [normalized_team_id]
+    team_workflow_doc = {
         "kind": finding.kind,
         "lane": finding.lane,
         "module": finding.module,
@@ -4504,8 +4495,8 @@ def _ensure_task_record(
             "reopen_on_failed_review_or_qa": True,
         },
     }
-    doc["repo_improvement"] = dict(repo_improvement_doc)
-    repo_improvement_execution = {
+    doc["team_workflow"] = dict(team_workflow_doc)
+    team_execution = {
         "stage": str(existing_execution.get("stage") or "queued"),
         "attempt_count": int(existing_execution.get("attempt_count") or 0),
         "last_run_at": str(existing_execution.get("last_run_at") or ""),
@@ -4519,9 +4510,9 @@ def _ensure_task_record(
         "commit_sha": str(existing_execution.get("commit_sha") or ""),
         "closed_at": str(existing_execution.get("closed_at") or ""),
     }
-    doc["repo_improvement_execution"] = dict(repo_improvement_execution)
-    doc["repo_improvement_audit"] = dict(audit_doc)
-    doc["repo_improvement_milestone"] = dict(milestone_doc)
+    doc["team_execution"] = dict(team_execution)
+    doc["team_audit"] = dict(audit_doc)
+    doc["team_milestone"] = dict(milestone_doc)
     doc["documentation_policy"] = documentation_policy
     doc["coding_contract"] = coding_contract
     doc["execution_policy"] = {
@@ -4575,7 +4566,7 @@ def _issue_body(
         summary=str(work_item.summary or finding.summary or ""),
         lane=str(finding.lane or ""),
     )
-    issue_marker = str(marker or "").strip() or f"<!-- teamos:repo_improvement:{fingerprint} -->"
+    issue_marker = str(marker or "").strip() or f"<!-- teamos:team_workflow:{fingerprint} -->"
     lines = [
         issue_marker,
         "# 仓库改进任务",
@@ -4740,7 +4731,7 @@ def _issue_number_from_url(issue_url: str) -> int:
 def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     finding, work_item = _finding_from_task_doc(doc)
     if finding is None or work_item is None:
-        return {"ok": False, "reason": "missing_repo_improvement_finding"}
+        return {"ok": False, "reason": "missing_team_finding"}
     milestone_out = sync_milestone_from_doc(doc)
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
@@ -4787,7 +4778,7 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding], Optional[UpgradeWorkItem]]:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         return None, None
     work_item_raw = su.get("work_item") or {}
@@ -4858,7 +4849,7 @@ def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding
         return None, None
 
 
-def sync_existing_repo_improvement_github_content_to_zh(*, project_id: str = "teamos") -> dict[str, Any]:
+def sync_existing_team_workflow_github_content_to_zh(*, project_id: str = "teamos") -> dict[str, Any]:
     stats = {"proposals": 0, "proposal_issues": 0, "tasks": 0, "task_issues": 0, "errors": 0}
     for proposal in list_proposals():
         try:
@@ -4882,9 +4873,9 @@ def sync_existing_repo_improvement_github_content_to_zh(*, project_id: str = "te
                 stats["proposal_issues"] += 1
         except Exception:
             stats["errors"] += 1
-    for localized_doc in _iter_repo_improvement_task_docs(project_id=project_id):
+    for localized_doc in _iter_team_task_docs(project_id=project_id):
         try:
-            if not isinstance(localized_doc, dict) or not _is_repo_improvement_task_doc(localized_doc):
+            if not isinstance(localized_doc, dict) or not _is_team_task_doc(localized_doc):
                 continue
             original_doc = dict(localized_doc)
             localized_doc = _localize_task_doc_to_zh(localized_doc)
@@ -4905,7 +4896,7 @@ def sync_existing_repo_improvement_github_content_to_zh(*, project_id: str = "te
                     )
                     orchestration["work_item_key"] = str(orchestration.get("work_item_key") or _work_item_key(work_item))
                     localized_doc["orchestration"] = orchestration
-                su = localized_doc.get("repo_improvement") or {}
+                su = localized_doc.get("team_workflow") or {}
                 if isinstance(su, dict):
                     su = dict(su)
                     su["module"] = finding.module
@@ -4914,7 +4905,7 @@ def sync_existing_repo_improvement_github_content_to_zh(*, project_id: str = "te
                         wi = dict(wi)
                         wi["module"] = work_item.module
                         su["work_item"] = wi
-                    localized_doc["repo_improvement"] = su
+                    localized_doc["team_workflow"] = su
                 execution_policy = localized_doc.get("execution_policy") or {}
                 if isinstance(execution_policy, dict):
                     execution_policy = dict(execution_policy)
@@ -5015,6 +5006,7 @@ def _finish_agents(*, db, agent_ids: dict[str, str], state: str, current_action:
 
 def _record_from_materialized_item(
     *,
+    team_id: str = "",
     target_id: str,
     repo_root: Path,
     repo_locator: str,
@@ -5027,6 +5019,7 @@ def _record_from_materialized_item(
     workflow = crewai_workflow_registry.workflow_for_lane_phase(
         finding.lane,
         crewai_workflow_registry.PHASE_CODING,
+        team_id=_normalize_team_id(team_id),
         project_id=project_id,
     )
     if dry_run:
@@ -5053,6 +5046,7 @@ def _record_from_materialized_item(
         }
     issue = _ensure_issue_record(repo_locator=repo_locator, repo_root=repo_root, finding=finding, work_item=work_item)
     task = _ensure_task_record(
+        team_id=_normalize_team_id(team_id),
         target_id=target_id,
         repo_root=repo_root,
         repo_locator=repo_locator,
@@ -5095,9 +5089,10 @@ def _mark_proposal_materialized(proposal_id: str) -> None:
     improvement_store.upsert_proposal(doc)
 
 
-def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
+def run_team_workflow(*, db, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:
     from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
 
+    team_id = _normalize_team_id(crew_tools.native_team_id(str(getattr(spec, "flow", "") or "")))
     project_id = _safe_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
     workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
     target = _resolve_target(
@@ -5116,7 +5111,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
 
     workflows = [
         workflow
-        for workflow in crewai_workflow_registry.list_workflows(project_id=project_id)
+        for workflow in crewai_workflow_registry.list_workflows(team_id=team_id, project_id=project_id)
         if workflow.phase == crewai_workflow_registry.PHASE_FINDING and workflow.enabled
     ]
     if not workflows:
@@ -5124,6 +5119,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
             "ok": True,
             "skipped": True,
             "reason": "no_enabled_workflows",
+            "team_id": team_id,
             "run_id": run_id,
             "target_id": target_id,
             "repo_root": str(repo_root),
@@ -5144,7 +5140,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
             },
         )
         db.add_event(
-            event_type="REPO_IMPROVEMENT_SKIPPED",
+            event_type="TEAM_WORKFLOW_SKIPPED",
             actor=actor,
             project_id=project_id,
             workstream_id=workstream_id,
@@ -5153,7 +5149,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
         return payload
 
     db.add_event(
-        event_type="REPO_IMPROVEMENT_STARTED",
+        event_type="TEAM_WORKFLOW_STARTED",
         actor=actor,
         project_id=project_id,
         workstream_id=workstream_id,
@@ -5215,6 +5211,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
                     "repo_path": str(getattr(spec, "repo_path", "") or ""),
                     "repo_url": str(getattr(spec, "repo_url", "") or ""),
                     "repo_locator": str(getattr(spec, "repo_locator", "") or ""),
+                    "team_id": team_id,
                 },
             )
         )
@@ -5300,7 +5297,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
         },
     )
     db.add_event(
-        event_type="REPO_IMPROVEMENT_FINISHED",
+        event_type="TEAM_WORKFLOW_FINISHED",
         actor=actor,
         project_id=project_id,
         workstream_id=workstream_id,
@@ -5343,7 +5340,7 @@ def run_repo_improvement(*, db, spec: Any, actor: str, run_id: str, crewai_info:
         "dry_run": dry_run,
         "workflow_results": workflow_results,
         "write_delegate": {
-            "write_mode": "crewai_repo_improvement",
+            "write_mode": "crewai_team_workflow",
             "writer": "workflow_runner",
             "truth_sources": ["task_ledger", "github_issues", "github_projects"],
             "target_repo": repo_locator or str(repo_root),

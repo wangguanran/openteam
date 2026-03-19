@@ -1,6 +1,9 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 
 def _add_template_app_to_syspath() -> None:
@@ -121,6 +124,52 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
 
         self.assertEqual(spec.display_name_zh, "测试缺口分析 Agent")
         self.assertIn("black-box", spec.goal)
+
+    def test_get_role_spec_prefers_team_local_role_doc(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            global_roles = root / "role_library" / "specs"
+            team_roles = root / "teams" / "demo_team" / "specs" / "roles"
+            global_roles.mkdir(parents=True, exist_ok=True)
+            team_roles.mkdir(parents=True, exist_ok=True)
+            (global_roles / "shared-role.yaml").write_text(
+                "\n".join(
+                    [
+                        "role_id: Shared-Agent",
+                        "display_name_zh: 全局角色",
+                        "goal: global goal",
+                        "backstory: global backstory",
+                        "tool_profile: read",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (team_roles / "shared-role.yaml").write_text(
+                "\n".join(
+                    [
+                        "role_id: Shared-Agent",
+                        "display_name_zh: 团队角色",
+                        "goal: team goal",
+                        "backstory: team backstory",
+                        "tool_profile: write",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(crewai_spec_loader, "role_specs_root", return_value=global_roles), mock.patch.object(
+                crewai_spec_loader,
+                "teams_root",
+                return_value=root / "teams",
+            ):
+                crewai_spec_loader.clear_spec_caches()
+                team_spec = crewai_role_registry.get_role_spec("Shared-Agent", team_id="demo-team")
+                global_spec = crewai_role_registry.get_role_spec("Shared-Agent")
+
+            self.assertEqual(team_spec.display_name_zh, "团队角色")
+            self.assertEqual(team_spec.tool_profile, "write")
+            self.assertEqual(global_spec.display_name_zh, "全局角色")
+            self.assertEqual(global_spec.tool_profile, "read")
+        crewai_spec_loader.clear_spec_caches()
 
 
 if __name__ == "__main__":

@@ -51,43 +51,51 @@
         }
       }
     },
-    "repo_improvement": {
+    "teams": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "workflow_settings": {
+      },
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+(?:-[A-Za-z0-9_-]+)*$": {
           "type": "object",
-          "additionalProperties": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "disabled_reason": {
-                "type": "string"
-              },
-              "max_candidates": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "active_window_start_hour": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 23
-              },
-              "active_window_end_hour": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 24
-              },
-              "max_continuous_runtime_minutes": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "dormant_after_zero_scans": {
-                "type": "integer",
-                "minimum": 0
+          "additionalProperties": false,
+          "properties": {
+            "workflow_settings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "disabled_reason": {
+                    "type": "string"
+                  },
+                  "max_candidates": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "active_window_start_hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  },
+                  "active_window_end_hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 24
+                  },
+                  "max_continuous_runtime_minutes": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "dormant_after_zero_scans": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
               }
             }
           }

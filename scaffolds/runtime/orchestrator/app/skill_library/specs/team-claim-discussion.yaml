@@ -1,5 +1,5 @@
-skill_id: github.claim-issue-discussion
-handler_id: github.claim-issue-discussion
+skill_id: team.claim-discussion
+handler_id: team.claim-discussion
 display_name_zh: 领取 Issue 讨论
 description: Read new user comments from a proposal discussion issue and return the pending discussion payload.
 category: github

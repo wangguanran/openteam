@@ -1,5 +1,5 @@
-skill_id: planning.materialize-findings
-handler_id: planning.materialize-findings
+skill_id: team.materialize-findings
+handler_id: team.materialize-findings
 display_name_zh: 物化发现结果
 description: Convert structured findings into queued tasks or proposals according to workflow policy.
 category: planning

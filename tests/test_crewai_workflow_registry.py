@@ -39,7 +39,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
 
         self.assertFalse(spec.uses_proposal)
         self.assertEqual(spec.default_version_bump, "patch")
-        self.assertEqual(spec.max_candidates(), 3)
+        self.assertEqual(spec.max_candidates(), 0)
         self.assertEqual(spec.dormant_after_zero_scans(), 3)
         self.assertEqual(spec.default_baseline_action("patch"), "patch_release")
         self.assertTrue(spec.should_materialize(status="", due=False))
@@ -57,11 +57,13 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         with mock.patch(
             "app.crewai_workflow_registry.project_config_store.load_project_config",
             return_value={
-                "repo_improvement": {
-                    "workflow_settings": {
-                        "feature-finding": {
-                            "enabled": False,
-                            "disabled_reason": "disabled_for_repo",
+                "teams": {
+                    "repo-improvement": {
+                        "workflow_settings": {
+                            "feature-finding": {
+                                "enabled": False,
+                                "disabled_reason": "disabled_for_repo",
+                            }
                         }
                     }
                 }
@@ -77,10 +79,12 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         with mock.patch(
             "app.crewai_workflow_registry.project_config_store.load_project_config",
             return_value={
-                "repo_improvement": {
-                    "workflow_settings": {
-                        "feature-finding": {
-                            "runtime_policy": {"max_candidates": 2},
+                "teams": {
+                    "repo-improvement": {
+                        "workflow_settings": {
+                            "feature-finding": {
+                                "runtime_policy": {"max_candidates": 2},
+                            }
                         }
                     }
                 }
@@ -94,10 +98,12 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         with mock.patch(
             "app.crewai_workflow_registry.project_config_store.load_project_config",
             return_value={
-                "repo_improvement": {
-                    "workflow_settings": {
-                        "bug-finding": {
-                            "runtime_policy": {"dormant_after_zero_scans": 1},
+                "teams": {
+                    "repo-improvement": {
+                        "workflow_settings": {
+                            "bug-finding": {
+                                "runtime_policy": {"dormant_after_zero_scans": 1},
+                            }
                         }
                     }
                 }
@@ -111,13 +117,15 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         with mock.patch(
             "app.crewai_workflow_registry.project_config_store.load_project_config",
             return_value={
-                "repo_improvement": {
-                    "workflow_settings": {
-                        "bug-finding": {
-                            "runtime_policy": {
-                                "active_window_start_hour": 9,
-                                "active_window_end_hour": 18,
-                                "max_continuous_runtime_minutes": 60,
+                "teams": {
+                    "repo-improvement": {
+                        "workflow_settings": {
+                            "bug-finding": {
+                                "runtime_policy": {
+                                    "active_window_start_hour": 9,
+                                    "active_window_end_hour": 18,
+                                    "max_continuous_runtime_minutes": 60,
+                                }
                             }
                         }
                     }
@@ -143,7 +151,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertEqual(bug_finding.loop.concurrency, 1)
         self.assertTrue(any(agent.agent_id == "scanner" for agent in bug_finding.agents))
         self.assertTrue(any(task.task_id == "materialize_plan" for task in bug_finding.tasks))
-        self.assertTrue(any(task.skill_id == "planning.materialize-findings" for task in bug_finding.tasks))
+        self.assertTrue(any(task.skill_id == "team.materialize-findings" for task in bug_finding.tasks))
 
         coding = next(spec for spec in workflows if spec.workflow_id == "coding")
         self.assertEqual(coding.phase, crewai_workflow_registry.PHASE_CODING)

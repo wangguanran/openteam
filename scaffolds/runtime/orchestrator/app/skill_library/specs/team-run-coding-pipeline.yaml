@@ -1,5 +1,5 @@
-skill_id: delivery.run-task-pipeline
-handler_id: delivery.run-task-pipeline
+skill_id: team.run-coding-pipeline
+handler_id: team.run-coding-pipeline
 display_name_zh: 执行任务交付流水线
 description: Claim queued delivery tasks and run the coding/review/qa/release pipeline for the current workflow lane.
 category: delivery

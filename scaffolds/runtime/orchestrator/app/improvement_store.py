@@ -327,6 +327,7 @@ def upsert_proposal(doc: dict[str, Any]) -> dict[str, Any]:
     )
     payload = dict(doc)
     payload["target_id"] = target_id
+    payload["team_id"] = str(payload.get("team_id") or _team_id_from_flow(((payload.get("orchestration") or {}) if isinstance(payload.get("orchestration"), dict) else {}).get("flow")) or "").strip()
     put_doc(
         PROPOSAL_NAMESPACE,
         proposal_id,
@@ -344,7 +345,7 @@ def get_proposal(proposal_id: str) -> Optional[dict[str, Any]]:
     return dict(doc) if isinstance(doc, dict) else None
 
 
-def list_proposals(*, target_id: str = "", project_id: str = "", lane: str = "", status: str = "") -> list[dict[str, Any]]:
+def list_proposals(*, target_id: str = "", project_id: str = "", lane: str = "", status: str = "", team_id: str = "") -> list[dict[str, Any]]:
     items = list_docs(
         PROPOSAL_NAMESPACE,
         project_id=str(project_id or ""),
@@ -355,8 +356,11 @@ def list_proposals(*, target_id: str = "", project_id: str = "", lane: str = "",
     )
     lane_filter = str(lane or "").strip().lower()
     status_filter = str(status or "").strip().upper()
+    team_filter = str(team_id or "").strip()
     out: list[dict[str, Any]] = []
     for doc in items:
+        if team_filter and str(doc.get("team_id") or "").strip() != team_filter:
+            continue
         if lane_filter and str(doc.get("lane") or "").strip().lower() != lane_filter:
             continue
         if status_filter and str(doc.get("status") or "").strip().upper() != status_filter:
@@ -380,9 +384,9 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
     orchestration = doc.get("orchestration") or {}
     if not isinstance(orchestration, dict):
         orchestration = {}
-    repo_improvement = doc.get("repo_improvement")
-    if not isinstance(repo_improvement, dict):
-        repo_improvement = {}
+    team = doc.get("team")
+    if not isinstance(team, dict):
+        team = {}
     target_id = str((doc.get("target") or {}).get("target_id") if isinstance(doc.get("target"), dict) else "").strip() or str(doc.get("target_id") or "").strip()
     if not target_id:
         target_id = _target_id_for(
@@ -393,13 +397,14 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
         )
     payload = dict(doc)
     payload["target_id"] = target_id
+    payload["team_id"] = str(payload.get("team_id") or team.get("team_id") or _team_id_from_flow(orchestration.get("flow")) or "").strip()
     put_doc(
         DELIVERY_TASK_NAMESPACE,
         task_id,
         project_id=str(doc.get("project_id") or "teamos"),
         scope_id=target_id,
         state=str(doc.get("status") or doc.get("state") or "").strip(),
-        category=str(repo_improvement.get("lane") or orchestration.get("finding_lane") or "").strip(),
+        category=str(team.get("lane") or orchestration.get("finding_lane") or "").strip(),
         value=payload,
     )
     return payload
@@ -410,7 +415,7 @@ def get_delivery_task(task_id: str) -> Optional[dict[str, Any]]:
     return dict(doc) if isinstance(doc, dict) else None
 
 
-def list_delivery_tasks(*, target_id: str = "", project_id: str = "", status: str = "") -> list[dict[str, Any]]:
+def list_delivery_tasks(*, target_id: str = "", project_id: str = "", status: str = "", team_id: str = "") -> list[dict[str, Any]]:
     items = list_docs(
         DELIVERY_TASK_NAMESPACE,
         project_id=str(project_id or ""),
@@ -420,7 +425,10 @@ def list_delivery_tasks(*, target_id: str = "", project_id: str = "", status: st
     )
     out: list[dict[str, Any]] = []
     status_filter = str(status or "").strip().lower()
+    team_filter = str(team_id or "").strip()
     for doc in items:
+        if team_filter and str(doc.get("team_id") or "").strip() != team_filter:
+            continue
         st = str(doc.get("status") or doc.get("state") or "").strip().lower()
         if status_filter and st != status_filter:
             continue
@@ -550,16 +558,35 @@ def _events_for_run(db: Any, run_id: str, *, limit: int = 200) -> list[dict[str,
     return rows[-max_rows:]
 
 
-def repo_improvement_logs_dir(project_id: str) -> Path:
+def _team_id_from_flow(flow: Any) -> str:
+    raw = str(flow or "").strip()
+    if raw.startswith("team:"):
+        return raw.split(":", 1)[1].strip()
+    return ""
+
+
+def _run_team_id(*, db: Any, run_id: str) -> str:
+    for item in _events_for_run(db, run_id, limit=500):
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        team_id = _team_id_from_flow(payload.get("flow"))
+        if team_id:
+            return team_id
+        team_id = str(payload.get("team_id") or "").strip()
+        if team_id:
+            return team_id
+    return ""
+
+
+def team_logs_dir(project_id: str, team_id: str) -> Path:
     workspace_store.ensure_project_scaffold(str(project_id or "teamos"))
-    root = workspace_store.logs_repo_improvement_dir(str(project_id or "teamos"))
+    root = workspace_store.logs_team_dir(str(project_id or "teamos"), str(team_id or "team"))
     runs = root / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     return runs
 
 
-def repo_improvement_run_log_paths(*, project_id: str, run_id: str) -> dict[str, str]:
-    base = repo_improvement_logs_dir(project_id)
+def team_run_log_paths(*, project_id: str, team_id: str, run_id: str) -> dict[str, str]:
+    base = team_logs_dir(project_id, team_id)
     safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(run_id or "").strip()) or "run"
     return {
         "json_path": str((base / f"{safe_run_id}.json").resolve()),
@@ -567,7 +594,7 @@ def repo_improvement_run_log_paths(*, project_id: str, run_id: str) -> dict[str,
     }
 
 
-def build_repo_improvement_run_logs_payload(*, db: Any, run_id: str, limit: int = 200) -> dict[str, Any]:
+def build_team_run_logs_payload(*, db: Any, run_id: str, limit: int = 200) -> dict[str, Any]:
     row = db.get_run(run_id)
     if not row:
         raise KeyError(f"run_not_found:{run_id}")
@@ -588,8 +615,10 @@ def build_repo_improvement_run_logs_payload(*, db: Any, run_id: str, limit: int 
         )
     plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
     project_id = str(run.get("project_id") or report.get("project_id") or "teamos").strip() or "teamos"
+    team_id = str(report.get("team_id") or _run_team_id(db=db, run_id=run_id) or "team").strip() or "team"
     payload = {
         "run": run,
+        "team_id": team_id,
         "report_available": bool(report),
         "summary": str(report.get("summary") or plan.get("summary") or ""),
         "target_id": str(report.get("target_id") or ""),
@@ -598,7 +627,7 @@ def build_repo_improvement_run_logs_payload(*, db: Any, run_id: str, limit: int 
         "pending_proposals": list(report.get("pending_proposals") or []),
         "planning_agent_logs": agent_logs,
         "events": _events_for_run(db, run_id, limit=limit),
-        "saved_logs": repo_improvement_run_log_paths(project_id=project_id, run_id=run_id),
+        "saved_logs": team_run_log_paths(project_id=project_id, team_id=team_id, run_id=run_id),
     }
     return payload
 
@@ -630,14 +659,16 @@ def _display_event_type(event_type: Any) -> str:
     return str(event_type or "").strip()
 
 
-def render_repo_improvement_run_logs_markdown(payload: dict[str, Any]) -> str:
+def render_team_run_logs_markdown(payload: dict[str, Any]) -> str:
     run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
     saved_logs = payload.get("saved_logs") if isinstance(payload.get("saved_logs"), dict) else {}
+    team_id = str(payload.get("team_id") or "").strip() or "team"
     lines: list[str] = [
-        f"# Repo Improvement Run `{run.get('run_id', '')}`",
+        f"# Team Run `{run.get('run_id', '')}`",
         "",
         "## Summary",
         "",
+        f"- team_id: `{team_id}`",
         f"- state: `{run.get('state', '')}`",
         f"- project_id: `{run.get('project_id', '')}`",
         f"- workstream_id: `{run.get('workstream_id', '')}`",
@@ -694,12 +725,12 @@ def render_repo_improvement_run_logs_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def persist_repo_improvement_run_logs(*, db: Any, run_id: str, limit: int = 200) -> dict[str, Any]:
-    payload = build_repo_improvement_run_logs_payload(db=db, run_id=run_id, limit=limit)
+def persist_team_run_logs(*, db: Any, run_id: str, limit: int = 200) -> dict[str, Any]:
+    payload = build_team_run_logs_payload(db=db, run_id=run_id, limit=limit)
     saved_logs = payload.get("saved_logs") if isinstance(payload.get("saved_logs"), dict) else {}
     json_path = Path(str(saved_logs.get("json_path") or "")).resolve()
     markdown_path = Path(str(saved_logs.get("markdown_path") or "")).resolve()
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    markdown_path.write_text(render_repo_improvement_run_logs_markdown(payload), encoding="utf-8")
+    markdown_path.write_text(render_team_run_logs_markdown(payload), encoding="utf-8")
     return payload

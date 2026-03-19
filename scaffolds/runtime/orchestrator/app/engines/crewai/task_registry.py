@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Type
 
-from pydantic import BaseModel
-
 from app import crewai_spec_loader
+from app.pydantic_compat import BaseModel
 from app.crewai_task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
@@ -42,8 +41,8 @@ TASK_OUTPUT_MODEL_MAP: dict[str, Type[BaseModel]] = {
 FALLBACK_TASK_SPECS: dict[str, CrewTaskSpec] = {}
 
 
-FALLBACK_TASK_SPECS["implement_repo_improvement_task"] = CrewTaskSpec(
-    task_name="implement_repo_improvement_task",
+FALLBACK_TASK_SPECS["implement_team_task"] = CrewTaskSpec(
+    task_name="implement_team_task",
     expected_output="A structured JSON summary of the implementation attempt.",
     description_template=(
         "Implement the task directly in the repository using the provided tools.\n"
@@ -60,11 +59,11 @@ FALLBACK_TASK_SPECS["implement_repo_improvement_task"] = CrewTaskSpec(
 )
 
 
-FALLBACK_TASK_SPECS["review_repo_improvement_task"] = CrewTaskSpec(
-    task_name="review_repo_improvement_task",
+FALLBACK_TASK_SPECS["review_team_task"] = CrewTaskSpec(
+    task_name="review_team_task",
     expected_output="A structured JSON review decision.",
     description_template=(
-        "Review the current repository diff for this repo-improvement task.\n"
+        "Review the current repository diff for this team task.\n"
         "Return a structured review decision with separate code_approved and docs_approved fields.\n"
         "Rules:\n"
         "- Review both code changes and documentation changes under allowed_paths.\n"
@@ -80,8 +79,8 @@ FALLBACK_TASK_SPECS["review_repo_improvement_task"] = CrewTaskSpec(
 )
 
 
-FALLBACK_TASK_SPECS["qa_repo_improvement_task"] = CrewTaskSpec(
-    task_name="qa_repo_improvement_task",
+FALLBACK_TASK_SPECS["qa_team_task"] = CrewTaskSpec(
+    task_name="qa_team_task",
     expected_output="A structured JSON QA decision.",
     description_template=(
         "Act as the QA gate for this task.\n"
@@ -93,11 +92,11 @@ FALLBACK_TASK_SPECS["qa_repo_improvement_task"] = CrewTaskSpec(
 )
 
 
-FALLBACK_TASK_SPECS["audit_repo_improvement_issue"] = CrewTaskSpec(
-    task_name="audit_repo_improvement_issue",
+FALLBACK_TASK_SPECS["audit_team_issue"] = CrewTaskSpec(
+    task_name="audit_team_issue",
     expected_output="A structured JSON audit decision.",
     description_template=(
-        "Audit this repo-improvement execution issue before scheduling.\n"
+        "Audit this team workflow issue before scheduling.\n"
         "Rules:\n"
         "- Confirm whether the issue is really a bug, feature, quality, or process item.\n"
         "- Confirm whether the issue description is closed-loop enough to execute now.\n"
@@ -148,11 +147,11 @@ FALLBACK_TASK_SPECS["bootstrap_bug_testcase"] = CrewTaskSpec(
 )
 
 
-FALLBACK_TASK_SPECS["document_repo_improvement_task"] = CrewTaskSpec(
-    task_name="document_repo_improvement_task",
+FALLBACK_TASK_SPECS["document_team_task"] = CrewTaskSpec(
+    task_name="document_team_task",
     expected_output="A structured JSON documentation decision.",
     description_template=(
-        "Update documentation for this repo-improvement task.\n"
+        "Update documentation for this team task.\n"
         "Rules:\n"
         "- Edit only documentation paths listed in documentation_policy.allowed_paths.\n"
         "- Keep user-facing natural language in 简体中文.\n"
@@ -178,9 +177,9 @@ def _task_spec_from_doc(doc: dict[str, Any]) -> CrewTaskSpec:
     )
 
 
-def get_task_spec(task_name: str) -> CrewTaskSpec:
+def get_task_spec(task_name: str, *, team_id: str = "") -> CrewTaskSpec:
     name = str(task_name or "").strip()
-    loaded = crewai_spec_loader.task_doc(name)
+    loaded = crewai_spec_loader.task_doc(name, team_id=str(team_id or "").strip())
     if loaded:
         return _task_spec_from_doc(loaded)
     if name in FALLBACK_TASK_SPECS:
@@ -188,13 +187,13 @@ def get_task_spec(task_name: str) -> CrewTaskSpec:
     raise KeyError(f"unknown task spec: {name}")
 
 
-DELIVERY_CODING_TASK_SPEC = get_task_spec("implement_repo_improvement_task")
-DELIVERY_REVIEW_TASK_SPEC = get_task_spec("review_repo_improvement_task")
-DELIVERY_QA_TASK_SPEC = get_task_spec("qa_repo_improvement_task")
-DELIVERY_AUDIT_TASK_SPEC = get_task_spec("audit_repo_improvement_issue")
+DELIVERY_CODING_TASK_SPEC = get_task_spec("implement_team_task")
+DELIVERY_REVIEW_TASK_SPEC = get_task_spec("review_team_task")
+DELIVERY_QA_TASK_SPEC = get_task_spec("qa_team_task")
+DELIVERY_AUDIT_TASK_SPEC = get_task_spec("audit_team_issue")
 DELIVERY_BUG_REPRO_TASK_SPEC = get_task_spec("reproduce_bug_before_fix")
 DELIVERY_BUG_TESTCASE_TASK_SPEC = get_task_spec("bootstrap_bug_testcase")
-DELIVERY_DOCUMENTATION_TASK_SPEC = get_task_spec("document_repo_improvement_task")
+DELIVERY_DOCUMENTATION_TASK_SPEC = get_task_spec("document_team_task")
 
 
 def kickoff_registered_task(*, kickoff_fn: Any, agent: Any, spec: CrewTaskSpec, payload: str, verbose: bool) -> BaseModel:

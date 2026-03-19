@@ -1,8 +1,8 @@
-task_name: document_repo_improvement_task
+task_name: document_team_task
 expected_output: A structured JSON documentation decision.
 output_model: DeliveryDocumentationResult
 description_template: |
-  Update documentation for this repo-improvement task.
+  Update documentation for this team task.
   Rules:
   - Edit only documentation paths listed in documentation_policy.allowed_paths.
   - Keep user-facing natural language in 简体中文.

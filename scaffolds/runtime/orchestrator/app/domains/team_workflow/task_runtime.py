@@ -13,17 +13,17 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel
 
 from app import cluster_manager
 from app import crewai_agent_factory
 from app import crewai_role_registry
 from app import crewai_runtime
+from app import crewai_team_registry
 from app import crewai_task_registry
 from app import crewai_workflow_registry
 from app import improvement_store
 from app import workspace_store
-from app.domains.repo_improvement import proposal_runtime as planning
+from app.domains.team_workflow import proposal_runtime as planning
 from app.crewai_task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
@@ -34,6 +34,7 @@ from app.crewai_task_models import (
     DeliveryReviewResult,
 )
 from app.github_issues_bus import GitHubAuthError, GitHubIssuesBusError, create_issue_comment, get_issue, update_issue
+from app.pydantic_compat import BaseModel
 from app.state_store import ensure_instance_id
 
 
@@ -62,7 +63,7 @@ _SAFE_TEST_PREFIXES = (
     "cargo test",
 )
 
-_DELIVERY_LEASE_SCOPE = "repo_improvement_delivery"
+_DELIVERY_LEASE_SCOPE = "team_workflow_coding"
 
 
 def _utc_now_iso() -> str:
@@ -75,6 +76,14 @@ def _slug(text: str, *, default: str = "item") -> str:
 
 def _env_truthy(name: str, default: str = "0") -> bool:
     return planning._env_truthy(name, default)
+
+
+def _default_team_id() -> str:
+    return str(crewai_team_registry.default_team_id() or "").strip()
+
+
+def _normalize_team_id(team_id: Any = "") -> str:
+    return str(team_id or "").strip() or _default_team_id()
 
 
 def _compat_file_mirror_enabled() -> bool:
@@ -184,14 +193,26 @@ def _logs_dir_for_doc(doc: dict[str, Any], *, ledger_path: Path, source_repo_roo
     return (ledger_path.parent.parent.parent / "logs" / "tasks" / task_id).resolve()
 
 
-def _is_repo_improvement_task(doc: dict[str, Any]) -> bool:
+def _task_team_id(doc: dict[str, Any]) -> str:
+    team = doc.get("team") or {}
+    if not isinstance(team, dict):
+        team = {}
+    return str(doc.get("team_id") or team.get("team_id") or "").strip()
+
+
+def _is_team_task(doc: dict[str, Any], *, team_id: str) -> bool:
     orchestration = doc.get("orchestration") or {}
     if not isinstance(orchestration, dict):
         return False
+    normalized_team_id = _normalize_team_id(team_id)
     return (
         str(orchestration.get("engine") or "").strip().lower() == "crewai"
-        and planning._is_repo_improvement_flow(orchestration.get("flow"))
+        and str(orchestration.get("flow") or "").strip().lower() == f"team:{normalized_team_id}"
     )
+
+
+def _is_team_workflow_task(doc: dict[str, Any], *, team_id: str = "") -> bool:
+    return _is_team_task(doc, team_id=_normalize_team_id(team_id))
 
 
 def _current_status(doc: dict[str, Any]) -> str:
@@ -207,7 +228,7 @@ def _source_repo_root(doc: dict[str, Any]) -> Path:
         target = {}
     project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
     target_id = str(target.get("target_id") or "").strip()
-    exec_state = planning._repo_improvement_section(doc, key="repo_improvement_execution")
+    exec_state = planning._team_section(doc, key="team_execution")
     candidates = [
         exec_state.get("source_repo_root"),
         repo.get("source_workdir"),
@@ -229,7 +250,7 @@ def _source_repo_root(doc: dict[str, Any]) -> Path:
             if p.exists():
                 if str(exec_state.get("source_repo_root") or "").strip() != str(p):
                     exec_state["source_repo_root"] = str(p)
-                    doc["repo_improvement_execution"] = dict(exec_state)
+                    doc["team_execution"] = dict(exec_state)
                 if str(repo.get("source_workdir") or "").strip() != str(p):
                     repo["source_workdir"] = str(p)
                 if str(repo.get("workdir") or "").strip() == s:
@@ -255,7 +276,7 @@ def _worktree_repo_root(doc: dict[str, Any]) -> Optional[Path]:
 
 
 def _execution_state(doc: dict[str, Any]) -> dict[str, Any]:
-    return planning._repo_improvement_section(doc, key="repo_improvement_execution")
+    return planning._team_section(doc, key="team_execution")
 
 
 def _delivery_lease_key(*, project_id: str, task_id: str) -> str:
@@ -382,7 +403,7 @@ def _release_delivery_task_lease(*, db: Any, lease: Optional[dict[str, Any]]) ->
 
 
 def _task_lane(doc: dict[str, Any]) -> str:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         su = {}
     lane = str(su.get("lane") or "").strip().lower()
@@ -390,7 +411,7 @@ def _task_lane(doc: dict[str, Any]) -> str:
 
 
 def _task_work_item(doc: dict[str, Any]) -> dict[str, Any]:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         return {}
     work_item = su.get("work_item") or {}
@@ -466,7 +487,7 @@ def _allowed_paths(doc: dict[str, Any]) -> list[str]:
 
 
 def _tests_allowlist(doc: dict[str, Any]) -> list[str]:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -477,7 +498,7 @@ def _tests_allowlist(doc: dict[str, Any]) -> list[str]:
 
 
 def _acceptance_items(doc: dict[str, Any]) -> list[str]:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -488,13 +509,13 @@ def _acceptance_items(doc: dict[str, Any]) -> list[str]:
 
 
 def _bug_contract(doc: dict[str, Any], *, extra: Optional[dict[str, Any]] = None) -> dict[str, list[str]]:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
     if not isinstance(work_item, dict):
         work_item = {}
-    audit = doc.get("repo_improvement_audit") or {}
+    audit = doc.get("team_audit") or {}
     if not isinstance(audit, dict):
         audit = {}
     extra_doc = dict(extra or {})
@@ -723,7 +744,7 @@ def _clear_validation_evidence(doc: dict[str, Any]) -> dict[str, Any]:
     execution["validation_evidence"] = {}
     execution["last_validation_at"] = ""
     execution["last_validation_stage"] = ""
-    doc["repo_improvement_execution"] = execution
+    doc["team_execution"] = execution
     return doc
 
 
@@ -734,7 +755,7 @@ def _persist_validation_evidence(ledger_path: Path, doc: dict[str, Any], *, stag
     execution["validation_evidence"] = all_evidence
     execution["last_validation_stage"] = str(stage or "").strip()
     execution["last_validation_at"] = _utc_now_iso() if evidence else str(execution.get("last_validation_at") or "")
-    doc["repo_improvement_execution"] = execution
+    doc["team_execution"] = execution
     _write_yaml(ledger_path, doc)
     return doc
 
@@ -880,7 +901,7 @@ def _merge_bug_contract_into_doc(
     verification_steps: list[str],
     verification_commands: list[str],
 ) -> dict[str, Any]:
-    su = doc.get("repo_improvement") or {}
+    su = doc.get("team_workflow") or {}
     if not isinstance(su, dict):
         su = {}
     work_item = su.get("work_item") or {}
@@ -896,9 +917,9 @@ def _merge_bug_contract_into_doc(
     if work_item.get("verification_steps"):
         work_item["acceptance"] = _clean_text_list((work_item.get("acceptance") or []) + work_item["verification_steps"])
     su["work_item"] = work_item
-    doc["repo_improvement"] = su
+    doc["team_workflow"] = su
 
-    audit = doc.get("repo_improvement_audit") or {}
+    audit = doc.get("team_audit") or {}
     if not isinstance(audit, dict):
         audit = {}
     audit.update(
@@ -911,7 +932,7 @@ def _merge_bug_contract_into_doc(
             "updated_at": _utc_now_iso(),
         }
     )
-    doc["repo_improvement_audit"] = audit
+    doc["team_audit"] = audit
 
     execution_policy = doc.get("execution_policy") or {}
     if not isinstance(execution_policy, dict):
@@ -1096,7 +1117,7 @@ def _issue_close_comment_body(
     task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
     reason = str(close_reason or "").strip() or "completed_and_released"
     lines = [
-        "Team OS is closing this repo-improvement issue.",
+        "Team OS is closing this team workflow issue.",
         "",
         f"Task: {task_id or '(unknown)'}",
         f"Reason: `{reason}`",
@@ -1139,7 +1160,7 @@ def _issue_sync_comment_body(*, doc: dict[str, Any]) -> str:
     feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
     last_error = str(execution.get("last_error") or "").strip()
     lines = [
-        "Team OS is updating this repo-improvement issue.",
+        "Team OS is updating this team workflow issue.",
         "",
         f"Task: {task_id or '(unknown)'}",
         f"Reason: status={status or 'unknown'}; stage={stage or 'unknown'}",
@@ -1252,7 +1273,7 @@ def _update_task_state(
     execution["history"] = history[-50:]
     if isinstance(extra_execution, dict):
         execution.update(extra_execution)
-    doc["repo_improvement_execution"] = execution
+    doc["team_execution"] = execution
     doc["updated_at"] = now
     if owner_role:
         doc["owners"] = [owner_role]
@@ -1315,7 +1336,7 @@ def _ensure_task_worktree(ledger_path: Path, doc: dict[str, Any]) -> tuple[dict[
         source_repo_root=source_repo_root,
         raw_hint=desired_raw,
     )
-    branch_name = str(execution.get("branch_name") or f"codex/repo-improvement/{_slug(task_id.lower(), default='task')}").strip()
+    branch_name = str(execution.get("branch_name") or f"codex/team/{_slug(task_id.lower(), default='task')}").strip()
     base_branch_out = _run(["git", "-C", str(source_repo_root), "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_repo_root, timeout_sec=30)
     base_branch = str(base_branch_out.get("stdout") or "").strip() or "main"
     legacy_roots: list[Path] = []
@@ -1360,10 +1381,10 @@ def _ensure_task_worktree(ledger_path: Path, doc: dict[str, Any]) -> tuple[dict[
     work_item = _task_work_item(doc)
     if work_item:
         work_item["worktree_hint"] = str(worktree_root)
-        su = doc.get("repo_improvement") or {}
+        su = doc.get("team_workflow") or {}
         if isinstance(su, dict):
             su["work_item"] = work_item
-            doc["repo_improvement"] = su
+            doc["team_workflow"] = su
     execution_policy["worktree_hint"] = str(worktree_root)
     doc["execution_policy"] = execution_policy
     execution.update(
@@ -1375,7 +1396,7 @@ def _ensure_task_worktree(ledger_path: Path, doc: dict[str, Any]) -> tuple[dict[
             "worktree_ready_at": str(execution.get("worktree_ready_at") or _utc_now_iso()),
         }
     )
-    doc["repo_improvement_execution"] = execution
+    doc["team_execution"] = execution
     _write_yaml(ledger_path, doc)
     return doc, worktree_root, source_repo_root
 
@@ -1544,6 +1565,7 @@ def _kickoff_task_output(*, agent: Any, name: str, description: str, expected_ou
 def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback: list[str], verbose: bool) -> DeliveryImplementationResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     task_id = str(task_doc.get("id") or "").strip()
     allowed_paths = _allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
@@ -1557,8 +1579,8 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
         {
             "task_id": task_id,
             "title": task_doc.get("title") or "",
-            "summary": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("summary") or "",
-            "rationale": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("rationale") or "",
+            "summary": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("rationale") or "",
             "issue_url": _issue_url(task_doc),
             "repo_locator": repo.get("locator") or "",
             "allowed_paths": allowed_paths,
@@ -1576,6 +1598,7 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
     owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or planning.ROLE_CODING_AGENT).strip() or planning.ROLE_CODING_AGENT
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=owner_role,
+        team_id=team_id,
         template_role_id=planning.ROLE_CODING_AGENT,
         llm=llm,
         verbose=verbose,
@@ -1584,7 +1607,7 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_CODING_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("implement_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1594,6 +1617,7 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
 def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryReviewResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     allowed_paths = _review_allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
     tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
@@ -1617,6 +1641,7 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
     review_role = str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=review_role,
+        team_id=team_id,
         template_role_id=planning.ROLE_REVIEW_AGENT,
         llm=llm,
         verbose=verbose,
@@ -1625,7 +1650,7 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_REVIEW_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("review_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1635,6 +1660,7 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
 def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryQAResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     allowed_paths = _allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
     tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
@@ -1654,6 +1680,7 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
     qa_role = str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=qa_role,
+        team_id=team_id,
         template_role_id=planning.ROLE_QA_AGENT,
         llm=llm,
         verbose=verbose,
@@ -1662,7 +1689,7 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_QA_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("qa_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1869,6 +1896,7 @@ def _normalize_review_result(*, task_doc: dict[str, Any], result: DeliveryReview
 def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryAuditResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     allowed_paths = _allowed_paths(task_doc)
     tests_allowlist = _tests_allowlist(task_doc)
     tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
@@ -1881,8 +1909,8 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
             "title": task_doc.get("title") or "",
             "current_lane": _task_lane(task_doc),
             "module": str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("module")) or ""),
-            "summary": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("summary") or "",
-            "rationale": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("rationale") or "",
+            "summary": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("rationale") or "",
             "allowed_paths": allowed_paths,
             "tests": tests_allowlist,
             "acceptance": _acceptance_items(task_doc),
@@ -1896,6 +1924,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
     )
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=planning.ROLE_ISSUE_AUDIT_AGENT,
+        team_id=team_id,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
@@ -1903,7 +1932,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_AUDIT_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("audit_team_issue", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1927,6 +1956,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
 def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryBugTestCaseResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     allowed_paths = _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root)
     tests_allowlist = _tests_allowlist(task_doc)
     tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
@@ -1946,6 +1976,7 @@ def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, ve
     )
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=planning.ROLE_BUG_TESTCASE_AGENT,
+        team_id=team_id,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
@@ -1953,7 +1984,7 @@ def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, ve
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_BUG_TESTCASE_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("bootstrap_bug_testcase", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1967,6 +1998,7 @@ def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, ve
 def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryBugReproResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     allowed_paths = _merge_allowed_paths(_allowed_paths(task_doc), _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root))
     tests_allowlist = _tests_allowlist(task_doc)
     tools = _build_repo_tools(repo_root=worktree_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist)
@@ -1985,6 +2017,7 @@ def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbo
     )
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=planning.ROLE_BUG_REPRO_AGENT,
+        team_id=team_id,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
@@ -1992,7 +2025,7 @@ def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbo
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_BUG_REPRO_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("reproduce_bug_before_fix", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -2013,6 +2046,7 @@ def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbo
 def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryDocumentationResult:
     crewai_runtime.require_crewai_importable()
 
+    team_id = _task_team_id(task_doc)
     policy = _documentation_policy(task_doc)
     docs_paths = [str(x).strip() for x in (policy.get("allowed_paths") or []) if str(x).strip()]
     llm = planning._crewai_llm()
@@ -2021,8 +2055,8 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
         {
             "task_id": task_doc.get("id") or "",
             "title": task_doc.get("title") or "",
-            "summary": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("summary") or "",
-            "rationale": ((task_doc.get("repo_improvement") or {}) if isinstance(task_doc.get("repo_improvement"), dict) else {}).get("rationale") or "",
+            "summary": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("summary") or "",
+            "rationale": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("rationale") or "",
             "issue_url": _issue_url(task_doc),
             "documentation_policy": policy,
             "git_status": _git_status_text(worktree_root),
@@ -2034,6 +2068,7 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
     documentation_role = str(policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT)
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=documentation_role,
+        team_id=team_id,
         template_role_id=planning.ROLE_DOCUMENTATION_AGENT,
         llm=llm,
         verbose=verbose,
@@ -2042,7 +2077,7 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
     out = crewai_task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.DELIVERY_DOCUMENTATION_TASK_SPEC,
+        spec=crewai_task_registry.get_task_spec("document_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -2061,7 +2096,7 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
     if not isinstance(execution_policy, dict):
         execution_policy = {}
     execution = _execution_state(task_doc)
-    commit_message = str(execution_policy.get("commit_message_template") or f"{task_id}: {task_doc.get('title') or 'repo-improvement task'}").strip()
+    commit_message = str(execution_policy.get("commit_message_template") or f"{task_id}: {task_doc.get('title') or 'team task'}").strip()
     base_branch = str(execution.get("base_branch") or "main").strip() or "main"
     branch_name = str(execution.get("branch_name") or _run(["git", "-C", str(worktree_root), "rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_root, timeout_sec=30).get("stdout") or "").strip()
     add_cmd = ["git", "-C", str(worktree_root), "add", "-A", "--"]
@@ -2235,7 +2270,7 @@ def _close_bug_task(
     )
     _append_metric(
         logs_dir,
-        event_type="REPO_IMPROVEMENT_BUG_VALIDATION_CLOSED",
+        event_type="TEAM_WORKFLOW_BUG_VALIDATION_CLOSED",
         actor=actor,
         task_id=task_id,
         project_id=project_id,
@@ -2245,7 +2280,7 @@ def _close_bug_task(
     )
     _emit_event(
         db,
-        event_type="REPO_IMPROVEMENT_TASK_BUG_VALIDATION_CLOSED",
+        event_type="TEAM_WORKFLOW_TASK_BUG_VALIDATION_CLOSED",
         actor=actor,
         task_doc=doc,
         payload={"task_id": task_id, "reason": close_reason, "feedback": feedback, "summary": summary},
@@ -2343,9 +2378,9 @@ def execute_task_delivery(
         prior_status = status
         resume_with_existing_fix = False
         _append_markdown(logs_dir, "03_work.md", "Delivery Started", [f"task_id: {task_id}", f"worktree: {worktree_root}", f"owner_role: {owner_role}"])
-        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
-        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
-        audit_doc = dict(doc.get("repo_improvement_audit") or {}) if isinstance(doc.get("repo_improvement_audit"), dict) else {}
+        _append_metric(logs_dir, event_type="TEAM_WORKFLOW_DELIVERY_STARTED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery started", payload={"worktree": str(worktree_root)})
+        _emit_event(db, event_type="TEAM_WORKFLOW_TASK_DELIVERY_STARTED", actor=actor, task_doc=doc, payload={"task_id": task_id, "ledger_path": str(ledger_path), "worktree": str(worktree_root)})
+        audit_doc = dict(doc.get("team_audit") or {}) if isinstance(doc.get("team_audit"), dict) else {}
         if force or str(audit_doc.get("status") or "").strip().lower() != "approved":
             doc = _update_task_state(
                 ledger_path,
@@ -2360,7 +2395,7 @@ def execute_task_delivery(
             if lease_guard:
                 lease_guard.assert_held(task_id=task_id)
             doc = _load_yaml(ledger_path)
-            audit_doc = dict(doc.get("repo_improvement_audit") or {}) if isinstance(doc.get("repo_improvement_audit"), dict) else {}
+            audit_doc = dict(doc.get("team_audit") or {}) if isinstance(doc.get("team_audit"), dict) else {}
             audit_doc.update(
                 {
                     "status": "approved" if audit_result.approved else audit_result.closure,
@@ -2384,7 +2419,7 @@ def execute_task_delivery(
                     "issue_title_snapshot": str((_issue_snapshot(doc).get("title") or "")),
                 }
             )
-            doc["repo_improvement_audit"] = audit_doc
+            doc["team_audit"] = audit_doc
             doc_policy = _documentation_policy(doc)
             doc_policy.update(
                 {
@@ -2418,8 +2453,8 @@ def execute_task_delivery(
                         *_validation_evidence_lines(list(audit_result.reproduction_evidence or [])),
                     ],
                 )
-                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
-                _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
+                _append_metric(logs_dir, event_type="TEAM_WORKFLOW_ISSUE_AUDIT_APPROVED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="issue audit approved", payload=audit_result.model_dump())
+                _emit_event(db, event_type="TEAM_WORKFLOW_TASK_ISSUE_AUDIT_APPROVED", actor=actor, task_doc=doc, payload={"task_id": task_id, **audit_result.model_dump()})
             else:
                 if proof_failure_policy == "close":
                     close_reason = "proof_rejected_by_audit"
@@ -2470,7 +2505,7 @@ def execute_task_delivery(
                 )
                 _append_metric(
                     logs_dir,
-                    event_type="REPO_IMPROVEMENT_ISSUE_AUDIT_BLOCKED",
+                    event_type="TEAM_WORKFLOW_ISSUE_AUDIT_BLOCKED",
                     actor=actor,
                     task_id=task_id,
                     project_id=project_id,
@@ -2481,7 +2516,7 @@ def execute_task_delivery(
                 )
                 _emit_event(
                     db,
-                    event_type="REPO_IMPROVEMENT_TASK_ISSUE_AUDIT_BLOCKED",
+                    event_type="TEAM_WORKFLOW_TASK_ISSUE_AUDIT_BLOCKED",
                     actor=actor,
                     task_doc=doc,
                     payload={"task_id": task_id, **audit_result.model_dump()},
@@ -2543,7 +2578,7 @@ def execute_task_delivery(
                 )
                 _append_metric(
                     logs_dir,
-                    event_type="REPO_IMPROVEMENT_BUG_TESTCASE_BOOTSTRAPPED",
+                    event_type="TEAM_WORKFLOW_BUG_TESTCASE_BOOTSTRAPPED",
                     actor=actor,
                     task_id=task_id,
                     project_id=project_id,
@@ -2553,7 +2588,7 @@ def execute_task_delivery(
                 )
                 _emit_event(
                     db,
-                    event_type="REPO_IMPROVEMENT_TASK_BUG_TESTCASE_BOOTSTRAPPED",
+                    event_type="TEAM_WORKFLOW_TASK_BUG_TESTCASE_BOOTSTRAPPED",
                     actor=actor,
                     task_doc=doc,
                     payload={"task_id": task_id, **bug_testcase_result.model_dump()},
@@ -2598,7 +2633,7 @@ def execute_task_delivery(
                 stage="proof_verify",
                 evidence=list(bug_repro_result.reproduction_evidence or []),
             )
-            audit_doc = dict(doc.get("repo_improvement_audit") or {}) if isinstance(doc.get("repo_improvement_audit"), dict) else {}
+            audit_doc = dict(doc.get("team_audit") or {}) if isinstance(doc.get("team_audit"), dict) else {}
             audit_doc.update(
                 {
                     "reproduction_commands": list(bug_repro_result.reproduction_commands or audit_doc.get("reproduction_commands") or []),
@@ -2607,7 +2642,7 @@ def execute_task_delivery(
                     "updated_at": _utc_now_iso(),
                 }
             )
-            doc["repo_improvement_audit"] = audit_doc
+            doc["team_audit"] = audit_doc
             _write_yaml(ledger_path, doc)
             if not bug_repro_result.approved:
                 if _has_post_fix_candidate_changes(doc, worktree_root=worktree_root):
@@ -2637,7 +2672,7 @@ def execute_task_delivery(
                     )
                     _append_metric(
                         logs_dir,
-                        event_type="REPO_IMPROVEMENT_BUG_REPRO_CLEARED_AFTER_FIX",
+                        event_type="TEAM_WORKFLOW_BUG_REPRO_CLEARED_AFTER_FIX",
                         actor=actor,
                         task_id=task_id,
                         project_id=project_id,
@@ -2647,7 +2682,7 @@ def execute_task_delivery(
                     )
                     _emit_event(
                         db,
-                        event_type="REPO_IMPROVEMENT_TASK_BUG_REPRO_CLEARED_AFTER_FIX",
+                        event_type="TEAM_WORKFLOW_TASK_BUG_REPRO_CLEARED_AFTER_FIX",
                         actor=actor,
                         task_doc=doc,
                         payload={"task_id": task_id, **bug_repro_result.model_dump()},
@@ -2692,7 +2727,7 @@ def execute_task_delivery(
                 )
                 _append_metric(
                     logs_dir,
-                    event_type="REPO_IMPROVEMENT_BUG_REPRO_CONFIRMED",
+                    event_type="TEAM_WORKFLOW_BUG_REPRO_CONFIRMED",
                     actor=actor,
                     task_id=task_id,
                     project_id=project_id,
@@ -2702,7 +2737,7 @@ def execute_task_delivery(
                 )
                 _emit_event(
                     db,
-                    event_type="REPO_IMPROVEMENT_TASK_BUG_REPRO_CONFIRMED",
+                    event_type="TEAM_WORKFLOW_TASK_BUG_REPRO_CONFIRMED",
                     actor=actor,
                     task_doc=doc,
                     payload={"task_id": task_id, **bug_repro_result.model_dump()},
@@ -2720,7 +2755,7 @@ def execute_task_delivery(
             _append_markdown(logs_dir, "03_work.md", "Merge Conflict Recovery", ["Scheduler-Agent reassigned the task back to coding after a release-time merge conflict."])
             _append_metric(
                 logs_dir,
-                event_type="REPO_IMPROVEMENT_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
+                event_type="TEAM_WORKFLOW_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
                 actor=actor,
                 task_id=task_id,
                 project_id=project_id,
@@ -2730,7 +2765,7 @@ def execute_task_delivery(
             )
             _emit_event(
                 db,
-                event_type="REPO_IMPROVEMENT_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
+                event_type="TEAM_WORKFLOW_TASK_DELIVERY_MERGE_CONFLICT_RECOVERY_STARTED",
                 actor=actor,
                 task_doc=doc,
                 payload={"task_id": task_id, "worktree": str(worktree_root)},
@@ -2786,12 +2821,12 @@ def execute_task_delivery(
                 doc = _load_yaml(ledger_path)
                 doc = _persist_validation_evidence(ledger_path, doc, stage="coding", evidence=coding_evidence)
                 _append_markdown(logs_dir, "03_work.md", f"Coding Attempt {attempt}", [impl.summary or "(no summary)", *[f"changed_file: {p}" for p in impl.changed_files], *[f"unresolved: {u}" for u in impl.unresolved]])
-                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
+                _append_metric(logs_dir, event_type="TEAM_WORKFLOW_CODING_ATTEMPT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"coding attempt {attempt}", payload=impl.model_dump())
                 if coding_evidence:
                     _append_markdown(logs_dir, "04_test.md", f"Coding Validation Evidence {attempt}", _validation_evidence_lines(coding_evidence))
                     _append_metric(
                         logs_dir,
-                        event_type="REPO_IMPROVEMENT_CODING_VALIDATION_EVIDENCE",
+                        event_type="TEAM_WORKFLOW_CODING_VALIDATION_EVIDENCE",
                         actor=actor,
                         task_id=task_id,
                         project_id=project_id,
@@ -2850,7 +2885,7 @@ def execute_task_delivery(
                         extra_execution={"active_role": documentation_role, "last_feedback": list(last_docs.followups or []), "last_error": "" if last_docs.approved else str(last_docs.summary or "documentation update blocked")},
                     )
                     _append_markdown(logs_dir, "05_release.md", f"Documentation Attempt {attempt}.{docs_round}", [last_docs.summary or "(no summary)", *[f"changed_file: {x}" for x in last_docs.changed_files], *[f"followup: {x}" for x in last_docs.followups]])
-                    _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}.{docs_round}", payload=last_docs.model_dump())
+                    _append_metric(logs_dir, event_type="TEAM_WORKFLOW_DOCUMENTATION_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"documentation attempt {attempt}.{docs_round}", payload=last_docs.model_dump())
                     _set_agent_state(db, agent_ids, documentation_role, state="DONE" if last_docs.approved else "FAILED", action=f"documentation attempt {attempt}.{docs_round} {'approved' if last_docs.approved else 'blocked'}")
                     if not last_docs.approved:
                         feedback = list(last_docs.followups or ([last_docs.summary] if last_docs.summary else ["documentation update blocked"]))
@@ -2886,7 +2921,7 @@ def execute_task_delivery(
                         *[f"feedback: {x}" for x in last_review.feedback],
                     ],
                 )
-                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_REVIEW_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"review attempt {attempt}.{max(1, docs_round)}", payload=last_review.model_dump())
+                _append_metric(logs_dir, event_type="TEAM_WORKFLOW_REVIEW_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"review attempt {attempt}.{max(1, docs_round)}", payload=last_review.model_dump())
                 _set_agent_state(db, agent_ids, review_role, state="DONE" if last_review.approved else "FAILED", action=f"review attempt {attempt}.{max(1, docs_round)} {'approved' if last_review.approved else 'rejected'}")
                 if not bool(last_review.code_approved):
                     feedback = list(last_review.code_feedback or last_review.feedback or ([last_review.summary] if last_review.summary else ["review rejected the code changes"]))
@@ -2931,7 +2966,7 @@ def execute_task_delivery(
                         *_validation_evidence_lines(qa_evidence),
                     ],
                 )
-                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
+                _append_metric(logs_dir, event_type="TEAM_WORKFLOW_QA_RESULT", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message=f"qa attempt {attempt}", payload=last_qa.model_dump())
                 _set_agent_state(db, agent_ids, qa_role, state="DONE" if last_qa.approved else "FAILED", action=f"qa attempt {attempt} {'approved' if last_qa.approved else 'rejected'}")
                 if not last_qa.approved:
                     feedback = list(last_qa.failures or ([last_qa.summary] if last_qa.summary else ["qa rejected the task"]))
@@ -2953,7 +2988,7 @@ def execute_task_delivery(
                     _append_markdown(logs_dir, "05_release.md", f"Release Scope Violation Attempt {attempt}", feedback)
                     _append_metric(
                         logs_dir,
-                        event_type="REPO_IMPROVEMENT_RELEASE_SCOPE_VIOLATION",
+                        event_type="TEAM_WORKFLOW_RELEASE_SCOPE_VIOLATION",
                         actor=actor,
                         task_id=task_id,
                         project_id=project_id,
@@ -2964,7 +2999,7 @@ def execute_task_delivery(
                     )
                     _emit_event(
                         db,
-                        event_type="REPO_IMPROVEMENT_TASK_DELIVERY_RELEASE_SCOPE_VIOLATION",
+                        event_type="TEAM_WORKFLOW_TASK_DELIVERY_RELEASE_SCOPE_VIOLATION",
                         actor=actor,
                         task_doc=doc,
                         payload={
@@ -3006,7 +3041,7 @@ def execute_task_delivery(
                         _append_markdown(logs_dir, "05_release.md", f"Merge Conflict Attempt {attempt}", [conflict_error])
                         _append_metric(
                             logs_dir,
-                            event_type="REPO_IMPROVEMENT_DELIVERY_MERGE_CONFLICT",
+                            event_type="TEAM_WORKFLOW_DELIVERY_MERGE_CONFLICT",
                             actor=actor,
                             task_id=task_id,
                             project_id=project_id,
@@ -3017,7 +3052,7 @@ def execute_task_delivery(
                         )
                         _emit_event(
                             db,
-                            event_type="REPO_IMPROVEMENT_TASK_DELIVERY_MERGE_CONFLICT",
+                            event_type="TEAM_WORKFLOW_TASK_DELIVERY_MERGE_CONFLICT",
                             actor=actor,
                             task_doc=doc,
                             payload={"task_id": task_id, "error": conflict_error, "attempt": attempt, "owner_role": owner_role},
@@ -3061,8 +3096,8 @@ def execute_task_delivery(
                 _set_agent_state(db, agent_ids, "Release-Agent", state="DONE", action="task released")
                 _finish_delivery_agents(db, agent_ids, state="DONE", action="delivery finished")
                 _append_markdown(logs_dir, "05_release.md", "Release", [f"branch: {release_result.get('branch') or ''}", f"commit_sha: {release_result.get('commit_sha') or ''}", f"pull_request_url: {release_result.get('pull_request_url') or ''}"])
-                _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_FINISHED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery finished", payload=release_result)
-                _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_FINISHED", actor=actor, task_doc=doc, payload={"task_id": task_id, "release": release_result})
+                _append_metric(logs_dir, event_type="TEAM_WORKFLOW_DELIVERY_FINISHED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery finished", payload=release_result)
+                _emit_event(db, event_type="TEAM_WORKFLOW_TASK_DELIVERY_FINISHED", actor=actor, task_doc=doc, payload={"task_id": task_id, "release": release_result})
                 return {"ok": True, "task_id": task_id, "status": "closed", "attempt_count": attempt, "release": release_result, "worktree": str(worktree_root), "project_id": project_id}
 
             if docs_retry_exhausted:
@@ -3073,8 +3108,8 @@ def execute_task_delivery(
         doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_feedback": feedback, "last_error": blocked_reason})
         _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery blocked")
         _append_markdown(logs_dir, "07_retro.md", "Delivery Blocked", [blocked_reason, *[f"feedback: {x}" for x in feedback]])
-        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_BLOCKED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery blocked", payload={"feedback": feedback, "audit": last_audit.model_dump(), "review": last_review.model_dump(), "qa": last_qa.model_dump(), "documentation": last_docs.model_dump()}, severity="ERROR")
-        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_BLOCKED", actor=actor, task_doc=doc, payload={"task_id": task_id, "feedback": feedback})
+        _append_metric(logs_dir, event_type="TEAM_WORKFLOW_DELIVERY_BLOCKED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery blocked", payload={"feedback": feedback, "audit": last_audit.model_dump(), "review": last_review.model_dump(), "qa": last_qa.model_dump(), "documentation": last_docs.model_dump()}, severity="ERROR")
+        _emit_event(db, event_type="TEAM_WORKFLOW_TASK_DELIVERY_BLOCKED", actor=actor, task_doc=doc, payload={"task_id": task_id, "feedback": feedback})
         return {"ok": False, "task_id": task_id, "status": "blocked", "feedback": feedback, "worktree": str(worktree_root), "project_id": project_id}
     except Exception as e:
         doc = _load_yaml(ledger_path)
@@ -3082,17 +3117,18 @@ def execute_task_delivery(
         doc = _update_task_state(ledger_path, doc, status="blocked", stage="blocked", owner_role=owner_role, extra_execution={"last_error": normalized_error})
         _finish_delivery_agents(db, agent_ids, state="FAILED", action="delivery failed")
         _append_markdown(logs_dir, "07_retro.md", "Delivery Failed", [normalized_error[:800]])
-        _append_metric(logs_dir, event_type="REPO_IMPROVEMENT_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": normalized_error[:800]}, severity="ERROR")
-        _emit_event(db, event_type="REPO_IMPROVEMENT_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": normalized_error})
+        _append_metric(logs_dir, event_type="TEAM_WORKFLOW_DELIVERY_FAILED", actor=actor, task_id=task_id, project_id=project_id, workstream_id=workstream_id, message="delivery failed", payload={"error": normalized_error[:800]}, severity="ERROR")
+        _emit_event(db, event_type="TEAM_WORKFLOW_TASK_DELIVERY_FAILED", actor=actor, task_doc=doc, payload={"task_id": task_id, "error": normalized_error})
         raise
     finally:
         if lease_guard is not None:
             lease_guard.stop()
 
 
-def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: str = "") -> list[dict[str, Any]]:
+def list_delivery_tasks(*, team_id: str = "", project_id: str = "", target_id: str = "", status: str = "") -> list[dict[str, Any]]:
     project_ids: list[str]
     pid = str(project_id or "").strip()
+    normalized_team_id = _normalize_team_id(team_id)
     if pid:
         project_ids = [pid]
     else:
@@ -3101,8 +3137,13 @@ def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: st
     out: list[dict[str, Any]] = []
     seen_task_ids: set[str] = set()
     for current_pid in project_ids:
-        for doc in improvement_store.list_delivery_tasks(project_id=current_pid, target_id=str(target_id or "").strip(), status=status_filter):
-            if not _is_repo_improvement_task(doc):
+        for doc in improvement_store.list_delivery_tasks(
+            team_id=normalized_team_id,
+            project_id=current_pid,
+            target_id=str(target_id or "").strip(),
+            status=status_filter,
+        ):
+            if not _is_team_task(doc, team_id=normalized_team_id):
                 continue
             execution = _execution_state(doc)
             task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
@@ -3135,7 +3176,7 @@ def list_delivery_tasks(*, project_id: str = "", target_id: str = "", status: st
             continue
         for path in sorted(task_dir.glob("*.yaml")):
             doc = _load_yaml(path)
-            if not _is_repo_improvement_task(doc):
+            if not _is_team_task(doc, team_id=normalized_team_id):
                 continue
             task_id = str(doc.get("id") or path.stem)
             if task_id in seen_task_ids:
@@ -3175,7 +3216,7 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
             str(task.get("ledger_path") or _fallback_ledger_path(project_id=str(task.get("project_id") or "teamos"), task_id=str(task.get("task_id") or "")))
         ).expanduser().resolve()
         doc = _load_yaml(ledger_path)
-        if not _is_repo_improvement_task(doc):
+        if not _is_team_workflow_task(doc, team_id=normalized_team_id):
             continue
         source_repo_root = _source_repo_root(doc)
         repo = doc.get("repo") or {}
@@ -3208,10 +3249,10 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
         work_item = _task_work_item(doc)
         if work_item and str(work_item.get("worktree_hint") or "") != str(target_root):
             work_item["worktree_hint"] = str(target_root)
-            su = doc.get("repo_improvement") or {}
+            su = doc.get("team_workflow") or {}
             if isinstance(su, dict):
                 su["work_item"] = work_item
-                doc["repo_improvement"] = su
+                doc["team_workflow"] = su
             changed = True
         if str(execution.get("worktree_path") or "") != str(target_root):
             execution["worktree_path"] = str(target_root)
@@ -3229,15 +3270,15 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
         if changed:
             doc["repo"] = repo
             doc["execution_policy"] = execution_policy
-            doc["repo_improvement_execution"] = execution
+            doc["team_execution"] = execution
             _write_yaml(ledger_path, doc)
             updated += 1
             touched.append({"task_id": str(doc.get("id") or ledger_path.stem), "ledger_path": str(ledger_path), "worktree_path": str(target_root)})
     return {"ok": True, "updated": updated, "moved": moved, "tasks": touched}
 
 
-def delivery_summary(*, project_id: str = "", target_id: str = "") -> dict[str, Any]:
-    tasks = list_delivery_tasks(project_id=project_id, target_id=target_id)
+def delivery_summary(*, team_id: str = "", project_id: str = "", target_id: str = "") -> dict[str, Any]:
+    tasks = list_delivery_tasks(team_id=_normalize_team_id(team_id), project_id=project_id, target_id=target_id)
     return {
         "total": len(tasks),
         "queued": len([t for t in tasks if str(t.get("status") or "") == "todo"]),
@@ -3281,15 +3322,16 @@ def _execute_delivery_candidate(
         _release_delivery_task_lease(db=db, lease=lease)
 
 
-def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: str = "", task_id: str = "", dry_run: bool = False, force: bool = False, concurrency: Optional[int] = None) -> dict[str, Any]:
-    candidates = list_delivery_tasks(project_id=project_id, target_id=target_id)
+def run_delivery_sweep(*, db: Any, actor: str, team_id: str = "", project_id: str = "", target_id: str = "", task_id: str = "", dry_run: bool = False, force: bool = False, concurrency: Optional[int] = None) -> dict[str, Any]:
+    normalized_team_id = _normalize_team_id(team_id)
+    candidates = list_delivery_tasks(team_id=normalized_team_id, project_id=project_id, target_id=target_id)
     wanted_task_id = str(task_id or "").strip()
     out: list[dict[str, Any]] = []
     scanned = 0
     processed = 0
     worker_concurrency = _delivery_worker_concurrency(concurrency)
     future_map: dict[Any, tuple[str, str]] = {}
-    with ThreadPoolExecutor(max_workers=worker_concurrency, thread_name_prefix="repo-improvement-delivery") as executor:
+    with ThreadPoolExecutor(max_workers=worker_concurrency, thread_name_prefix=f"{normalized_team_id}-coding") as executor:
         for task in candidates:
             if wanted_task_id and str(task.get("task_id") or "") != wanted_task_id:
                 continue
@@ -3300,6 +3342,7 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
             task_target_id = str(task.get("target_id") or target_id or "").strip()
             workflow = crewai_workflow_registry.workflow_for_phase(
                 crewai_workflow_registry.PHASE_CODING,
+                team_id=normalized_team_id,
                 project_id=task_project_id,
             )
             runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
@@ -3375,5 +3418,5 @@ def run_delivery_sweep(*, db: Any, actor: str, project_id: str = "", target_id: 
         "scanned": scanned,
         "processed": processed,
         "tasks": out,
-        "summary": delivery_summary(project_id=project_id, target_id=target_id),
+        "summary": delivery_summary(team_id=normalized_team_id, project_id=project_id, target_id=target_id),
     }

@@ -19,8 +19,8 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 os.environ.setdefault("TEAMOS_RUNTIME_LOCALIZE_ZH", "0")
 
-from app.domains.repo_improvement import task_runtime  # noqa: E402
-from app.skill_library import repo_skills as workflow_skills  # noqa: E402
+from app.domains.team_workflow import task_runtime  # noqa: E402
+from app.skill_library import builtin_skills as workflow_skills  # noqa: E402
 
 
 class _FakeDB:
@@ -40,6 +40,7 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
         context = SimpleNamespace(
             db=_FakeDB(),
             workflow=_workflow("bug"),
+            extra={},
             actor="test",
             project_id="demo",
             target_id="target-a",
@@ -48,8 +49,8 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
             force=False,
         )
 
-        with mock.patch("app.skill_library.repo_skills.task_runtime.list_delivery_tasks", return_value=[]), mock.patch(
-            "app.skill_library.repo_skills.task_runtime.delivery_summary",
+        with mock.patch("app.skill_library.builtin_skills.team_workflow_runtime.list_delivery_tasks", return_value=[]), mock.patch(
+            "app.skill_library.builtin_skills.team_workflow_runtime.delivery_summary",
             return_value={"total": 0, "queued": 0},
         ):
             out = workflow_skills.run_delivery_pipeline_skill(context=context, inputs={}, state={}, spec=None)
@@ -64,19 +65,19 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
             bug_doc = {
                 "id": "BUG-1",
                 "status": "todo",
-                "repo_improvement": {"lane": "bug"},
+                "team_workflow": {"lane": "bug"},
                 "execution_policy": {"allowed_paths": ["src/demo.py"]},
             }
             feature_doc = {
                 "id": "FEATURE-1",
                 "status": "todo",
-                "repo_improvement": {"lane": "feature"},
+                "team_workflow": {"lane": "feature"},
                 "execution_policy": {"allowed_paths": ["src/demo.py"]},
             }
             second_bug_doc = {
                 "id": "BUG-2",
                 "status": "todo",
-                "repo_improvement": {"lane": "bug"},
+                "team_workflow": {"lane": "bug"},
                 "execution_policy": {"allowed_paths": ["src/demo.py"]},
             }
             bug_path = task_dir / "BUG-1.yaml"
@@ -94,6 +95,7 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
             context = SimpleNamespace(
                 db=_FakeDB(),
                 workflow=_workflow("bug", max_units_per_tick=1),
+                extra={},
                 actor="test",
                 project_id="demo",
                 target_id="target-a",
@@ -102,14 +104,20 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
                 force=False,
             )
 
-            with mock.patch("app.skill_library.repo_skills.task_runtime.list_delivery_tasks", return_value=tasks), mock.patch(
-                "app.skill_library.repo_skills.task_runtime._claim_delivery_task_lease",
+            with mock.patch("app.skill_library.builtin_skills.team_workflow_runtime.list_delivery_tasks", return_value=tasks), mock.patch(
+                "app.skill_library.builtin_skills.team_workflow_runtime.load_yaml",
+                side_effect=[bug_doc, feature_doc, second_bug_doc],
+            ), mock.patch(
+                "app.skill_library.builtin_skills.team_workflow_runtime.task_lane",
+                side_effect=["bug", "feature", "bug"],
+            ), mock.patch(
+                "app.skill_library.builtin_skills.team_workflow_runtime.claim_delivery_task_lease",
                 return_value={"lease_key": "lease-1"},
             ), mock.patch(
-                "app.skill_library.repo_skills.task_runtime._execute_delivery_candidate",
+                "app.skill_library.builtin_skills.team_workflow_runtime.execute_delivery_candidate",
                 return_value={"ok": True, "task_id": "BUG-1", "status": "closed", "project_id": "demo"},
             ) as execute_mock, mock.patch(
-                "app.skill_library.repo_skills.task_runtime.delivery_summary",
+                "app.skill_library.builtin_skills.team_workflow_runtime.delivery_summary",
                 return_value={"total": 3, "queued": 1},
             ):
                 out = workflow_skills.run_delivery_pipeline_skill(context=context, inputs={}, state={}, spec=None)
@@ -124,7 +132,7 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
 
     def test_list_delivery_tasks_reads_runtime_docs(self):
         with mock.patch(
-            "app.domains.repo_improvement.task_runtime.improvement_store.list_delivery_tasks",
+            "app.domains.team_workflow.task_runtime.improvement_store.list_delivery_tasks",
             return_value=[
                 {
                     "id": "TASK-1",
@@ -132,14 +140,15 @@ class CrewAIRepoImprovementDeliveryTests(unittest.TestCase):
                     "project_id": "demo",
                     "workstream_id": "general",
                     "status": "todo",
+                    "team_id": "repo-improvement",
                     "owner_role": "Coding-Agent",
-                    "orchestration": {"engine": "crewai", "flow": "repo_improvement"},
+                    "orchestration": {"engine": "crewai", "flow": "team:repo-improvement"},
                     "artifacts": {"ledger_path": "/tmp/TASK-1.yaml"},
-                    "repo_improvement_execution": {"stage": "coding", "attempt_count": 1},
+                    "team_execution": {"stage": "coding", "attempt_count": 1},
                     "links": {"issue": "https://github.com/foo/bar/issues/1"},
                 }
             ],
-        ), mock.patch("app.domains.repo_improvement.task_runtime.workspace_store.list_projects", return_value=[]):
+        ), mock.patch("app.domains.team_workflow.task_runtime.workspace_store.list_projects", return_value=[]):
             tasks = task_runtime.list_delivery_tasks(project_id="demo")
 
         self.assertEqual(len(tasks), 1)

@@ -3,7 +3,7 @@ display_name_zh: 交付阶段
 members:
   - role_id: Scheduler-Agent
     state: RUNNING
-    current_action: dispatching repo-improvement task
+    current_action: dispatching team task
   - role_id: Issue-Audit-Agent
     state: IDLE
     current_action: waiting for issue audit

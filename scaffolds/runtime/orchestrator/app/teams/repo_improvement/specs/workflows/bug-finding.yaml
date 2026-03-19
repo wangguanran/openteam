@@ -12,7 +12,7 @@ baseline_action_default: patch_release
 stages:
   - planning
 runtime_policy:
-  max_candidates: 3
+  max_candidates: 0
   active_window_start_hour: 0
   active_window_end_hour: 24
   max_continuous_runtime_minutes: 0
@@ -42,7 +42,7 @@ agents:
 tasks:
   - task_id: prepare_context
     kind: skill
-    skill_id: repo.collect-context
+    skill_id: team.collect-context
   - task_id: bug_scan
     kind: crewai_task
     agent_id: scanner
@@ -133,7 +133,7 @@ tasks:
     expected_output: QA-approved UpgradePlan JSON.
   - task_id: materialize_plan
     kind: skill
-    skill_id: planning.materialize-findings
+    skill_id: team.materialize-findings
     inputs:
       plan: $tasks.qa_gate.outputs.json
       project_id: $tasks.prepare_context.outputs.project_id

@@ -15,7 +15,7 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
-from app.domains.repo_improvement import task_runtime as repo_delivery  # noqa: E402
+from app.domains.team_workflow import task_runtime as repo_delivery  # noqa: E402
 
 
 class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
                 "target_id": "target-a",
                 "status": "todo",
                 "ledger_path": "/tmp/TASK-1.yaml",
-                "repo_improvement": {"lane": "bug"},
+                "team_workflow": {"lane": "bug"},
             },
             {
                 "task_id": "TASK-2",
@@ -38,7 +38,7 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
                 "target_id": "target-a",
                 "status": "todo",
                 "ledger_path": "/tmp/TASK-2.yaml",
-                "repo_improvement": {"lane": "bug"},
+                "team_workflow": {"lane": "bug"},
             },
         ]
 
@@ -61,29 +61,29 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
         fake_workflow = mock.Mock(workflow_id="coding")
         fake_runtime_policy = mock.Mock(allowed=True, reason="")
 
-        with mock.patch("app.domains.repo_improvement.task_runtime.list_delivery_tasks", return_value=tasks), mock.patch(
-            "app.domains.repo_improvement.task_runtime.crewai_workflow_registry.workflow_for_phase",
+        with mock.patch("app.domains.team_workflow.task_runtime.list_delivery_tasks", return_value=tasks), mock.patch(
+            "app.domains.team_workflow.task_runtime.crewai_workflow_registry.workflow_for_phase",
             return_value=fake_workflow,
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
+            "app.domains.team_workflow.task_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
             return_value=fake_runtime_policy,
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime.crewai_workflow_registry.update_workflow_runtime_state",
+            "app.domains.team_workflow.task_runtime.crewai_workflow_registry.update_workflow_runtime_state",
             return_value={},
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime._claim_delivery_task_lease",
+            "app.domains.team_workflow.task_runtime._claim_delivery_task_lease",
             side_effect=[object(), object()],
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime._load_yaml",
+            "app.domains.team_workflow.task_runtime._load_yaml",
             return_value={},
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime.execute_task_delivery",
+            "app.domains.team_workflow.task_runtime.execute_task_delivery",
             side_effect=_fake_execute,
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime._release_delivery_task_lease",
+            "app.domains.team_workflow.task_runtime._release_delivery_task_lease",
             return_value=None,
         ), mock.patch(
-            "app.domains.repo_improvement.task_runtime.delivery_summary",
+            "app.domains.team_workflow.task_runtime.delivery_summary",
             return_value={"total": 2, "queued": 0, "coding": 2},
         ):
             out = repo_delivery.run_delivery_sweep(

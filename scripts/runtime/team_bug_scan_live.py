@@ -13,8 +13,10 @@ ORCHESTRATOR_ROOT = REPO_ROOT / "scaffolds" / "runtime" / "orchestrator"
 if str(ORCHESTRATOR_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_ROOT))
 
+from app import crewai_llm_factory  # noqa: E402
+from app import crewai_workflow_registry  # noqa: E402
 from app import improvement_store  # noqa: E402
-from app.domains.repo_improvement import proposal_runtime as planning  # noqa: E402
+from app import team_workflow_runtime  # noqa: E402
 
 
 def _print_section(title: str) -> None:
@@ -31,14 +33,14 @@ def _resolve_target(*, target_id: str, project_id: str) -> dict:
     existing = improvement_store.get_target(target_id)
     if existing:
         project_id = str(existing.get("project_id") or project_id or "teamos").strip() or "teamos"
-        return planning._resolve_target(
+        return team_workflow_runtime.resolve_target(
             target_id=target_id,
             repo_path=str(existing.get("repo_root") or "").strip(),
             repo_url=str(existing.get("repo_url") or "").strip(),
             repo_locator=str(existing.get("repo_locator") or "").strip(),
             project_id=project_id,
         )
-    return planning._resolve_target(
+    return team_workflow_runtime.resolve_target(
         target_id=target_id,
         repo_path="",
         repo_url="",
@@ -48,27 +50,39 @@ def _resolve_target(*, target_id: str, project_id: str) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run repo-improvement bug discovery live and print the whole-repository CrewAI scan result.")
+    parser = argparse.ArgumentParser(description="Run a live whole-repository bug scan for a configured team.")
+    parser.add_argument("--team-id", required=True, help="Team id")
     parser.add_argument("--target-id", required=True, help="Improvement target id")
     parser.add_argument("--project-id", default="", help="Project id override")
     parser.add_argument("--json", action="store_true", help="Print the structured repository scan result as JSON")
     args = parser.parse_args()
 
+    team_id = str(args.team_id or "").strip()
+    if not team_id:
+        raise RuntimeError("team_id is required")
     project_id = str(args.project_id or "teamos").strip() or "teamos"
+    workflow = crewai_workflow_registry.workflow_for_lane_phase(
+        "bug",
+        crewai_workflow_registry.PHASE_FINDING,
+        team_id=team_id,
+        project_id=project_id,
+    )
     target = _resolve_target(target_id=str(args.target_id).strip(), project_id=project_id)
     repo_root = Path(str(target.get("repo_root") or "")).expanduser().resolve()
-    scan_repo_root = planning._prepare_discovery_repo(source_repo_root=repo_root, target=target)
-    repo_context = planning.collect_repo_context(
+    scan_repo_root = team_workflow_runtime.prepare_discovery_repo(source_repo_root=repo_root, target=target)
+    repo_context = team_workflow_runtime.collect_repo_context(
         repo_root=repo_root,
         scan_repo_root=scan_repo_root,
         explicit_repo_locator=str(target.get("repo_locator") or ""),
         target_id=str(target.get("target_id") or ""),
     )
-    bug_scan_limit = planning._scan_limit(0, planning._lane_max_candidates("bug", project_id=project_id))
-    llm = planning._crewai_llm()
+    bug_scan_limit = team_workflow_runtime.scan_limit(0, workflow.max_candidates())
+    llm = crewai_llm_factory.build_crewai_llm(workflow=workflow)
 
     if not args.json:
-        _print_section("Repo Improvement Bug Scan Live")
+        _print_section("Team Bug Scan Live")
+        print(f"team_id: {team_id}")
+        print(f"workflow_id: {workflow.workflow_id}")
         print(f"target_id: {target.get('target_id')}")
         print(f"project_id: {project_id}")
         print(f"repo_root: {repo_root}")
@@ -89,7 +103,8 @@ def main() -> int:
         _print_section("Repository Scan")
         print("calling CrewAI...")
     overall_started = time.time()
-    result, debug_task = planning._structured_bug_scan_for_repo(
+    result, debug_task = team_workflow_runtime.structured_bug_scan_for_repo(
+        team_id=team_id,
         repo_context=repo_context,
         bug_scan_limit=max(1, int(bug_scan_limit or 0)),
         bug_scan_dormant=False,
@@ -98,6 +113,8 @@ def main() -> int:
     elapsed = time.time() - overall_started
     finding_count = len(list(result.findings or []))
     payload = {
+        "team_id": team_id,
+        "workflow_id": workflow.workflow_id,
         "elapsed_sec": round(elapsed, 2),
         "finding_count": finding_count,
         "result": result.model_dump(),
@@ -114,6 +131,8 @@ def main() -> int:
 
     _print_section("Summary")
     print("scan_mode: repository")
+    print(f"team_id: {team_id}")
+    print(f"workflow_id: {workflow.workflow_id}")
     print(f"total_findings: {finding_count}")
     print(f"total_elapsed_sec: {elapsed:.2f}")
     return 0

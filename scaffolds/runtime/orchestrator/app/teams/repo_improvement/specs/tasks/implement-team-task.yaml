@@ -1,4 +1,4 @@
-task_name: implement_repo_improvement_task
+task_name: implement_team_task
 expected_output: A structured JSON summary of the implementation attempt.
 output_model: DeliveryImplementationResult
 description_template: |

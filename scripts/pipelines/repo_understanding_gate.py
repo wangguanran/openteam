@@ -86,8 +86,8 @@ def main(argv: list[str] | None = None) -> int:
             "$ rg -n \"@app.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head",
             _run(repo, ["bash", "-lc", "rg -n \"@app\\.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head -n 40 || true"], timeout_sec=10),
             "",
-            "$ rg -n \"cmd_task_new|cmd_req_add|cmd_repo_improvement\" teamos",
-            _run(repo, ["bash", "-lc", "rg -n \"cmd_task_new|cmd_req_add|cmd_repo_improvement\" teamos | head -n 80 || true"], timeout_sec=10),
+            "$ rg -n \"cmd_task_new|cmd_req_add|cmd_team_run|cmd_team_coding_run\" teamos",
+            _run(repo, ["bash", "-lc", "rg -n \"cmd_task_new|cmd_req_add|cmd_team_run|cmd_team_coding_run\" teamos | head -n 80 || true"], timeout_sec=10),
         ]
     ).strip()
     evidence_scripts = "\n\n".join(
@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
                 [
                     "- 所有真相源写入改为 pipelines 统一入口 + schema 校验。",
                     "- `teamos task close` 作为 commit/push 前闸门（tests/purity/secrets）。",
-                    "- prompt/requirements/projects sync/repo-improvement 全部幂等化并可全量重建。",
+                    "- prompt/requirements/projects sync/team workflow 全部幂等化并可全量重建。",
                 ]
             ),
             "ROLLBACK": "\n".join(

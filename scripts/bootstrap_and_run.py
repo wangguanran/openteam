@@ -517,10 +517,17 @@ def _ensure_crewai_ready(base_url: str) -> dict[str, Any]:
     }
 
 
-def _repo_improvement_state_path(runtime_root: Path) -> Path:
-    return runtime_root / "state" / "deprecated-repo_improvement_state.json"
+def _default_team_id(base_url: str) -> str:
+    teams = _http_json("GET", base_url + "/v1/teams", None, timeout_sec=5)
+    items = list(teams.get("teams") or []) if isinstance(teams, dict) else []
+    for item in items:
+        team_id = str(item.get("team_id") or "").strip()
+        if team_id:
+            return team_id
+    raise BootstrapError("no configured teams found in control plane")
 
-def _read_repo_improvement_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
+
+def _read_default_team_state(runtime_root: Path, *, base_url: str = "") -> dict[str, Any]:
     _ = runtime_root
     url = str(base_url or "").strip().rstrip("/")
     if not url:
@@ -529,19 +536,26 @@ def _read_repo_improvement_state(runtime_root: Path, *, base_url: str = "") -> d
         status = _http_json("GET", url + "/v1/status", None, timeout_sec=5)
     except Exception:
         return {}
-    repo_improvement = status.get("repo_improvement") if isinstance(status, dict) else {}
-    return dict(repo_improvement) if isinstance(repo_improvement, dict) else {}
+    team_id = str(status.get("default_team_id") or "").strip()
+    teams = status.get("teams") if isinstance(status, dict) else {}
+    if not team_id and isinstance(teams, dict) and teams:
+        team_id = sorted(str(key) for key in teams.keys() if str(key).strip())[0]
+    if not team_id or not isinstance(teams, dict):
+        return {}
+    team_state = teams.get(team_id)
+    return dict(team_state) if isinstance(team_state, dict) else {}
 
 
-def _run_repo_improvement_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
+def _run_default_team_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
+    team_id = _default_team_id(base_url)
     out = _http_json(
         "POST",
-        base_url + "/v1/repo_improvement/run",
+        base_url + f"/v1/teams/{team_id}/run",
         {
             "project_id": "teamos",
             "workstream_id": "general",
             "repo_path": str(repo),
-            "objective": "Bootstrap repo-improvement for current repository",
+            "objective": f"Bootstrap team:{team_id} for current repository",
             "dry_run": False,
             "force": True,
             "trigger": "bootstrap",
@@ -549,7 +563,7 @@ def _run_repo_improvement_bootstrap(repo: Path, base_url: str) -> dict[str, Any]
         timeout_sec=900,
     )
     if not bool(out.get("ok")):
-        raise BootstrapError(f"repo-improvement bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
+        raise BootstrapError(f"team bootstrap run failed: {json.dumps(out, ensure_ascii=False)[:600]}")
     return out
 
 
@@ -594,10 +608,10 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
     except Exception as e:
         hub_status = {"ok": False, "error": str(e)[:300]}
 
-    repo_improvement_state = _read_repo_improvement_state(runtime_root, base_url=base_url)
-    repo_improvement_last = (
-        (repo_improvement_state.get("last_run") or {})
-        if isinstance(repo_improvement_state.get("last_run"), dict)
+    team_state = _read_default_team_state(runtime_root, base_url=base_url)
+    team_last = (
+        (team_state.get("last_run") or {})
+        if isinstance(team_state.get("last_run"), dict)
         else {}
     )
 
@@ -609,8 +623,8 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "llm": _llm_config(),
         "hub": hub_status,
         "control_plane": control,
-        "repo_improvement": {
-            "last_run": repo_improvement_last,
+        "default_team": {
+            "last_run": team_last,
             "state_backend": "control_plane_status",
         },
     }
@@ -679,15 +693,15 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     crew_ready = _ensure_crewai_ready(base_url)
     _append_audit(runtime_root, "crewai orchestrator readiness check passed")
 
-    # 9) force one bootstrap repo-improvement run (must actually execute)
-    repo_improvement_bootstrap = _run_repo_improvement_bootstrap(repo, base_url)
-    _append_audit(runtime_root, "repo-improvement bootstrap run executed")
+    # 9) force one bootstrap team run (must actually execute)
+    team_bootstrap = _run_default_team_bootstrap(repo, base_url)
+    _append_audit(runtime_root, "default team bootstrap run executed")
 
     # hard check: last_run must exist after bootstrap
-    st = _read_repo_improvement_state(runtime_root, base_url=base_url)
+    st = _read_default_team_state(runtime_root, base_url=base_url)
     last_run = (st.get("last_run") or {}) if isinstance(st, dict) else {}
     if not str(last_run.get("ts") or "").strip():
-        raise BootstrapError("repo-improvement bootstrap not persisted: missing last_run.ts")
+        raise BootstrapError("team bootstrap not persisted: missing last_run.ts")
 
     # 10) resume unfinished tasks
     recovered = _resume_tasks(base_url)
@@ -707,7 +721,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
                 "python_dependencies": python_deps,
                 "control_plane": control_plane,
                 "crewai_ready": crew_ready,
-                "repo_improvement_bootstrap": repo_improvement_bootstrap,
+                "team_bootstrap": team_bootstrap,
                 "recovery": recovered,
             }
         }
@@ -729,7 +743,7 @@ def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, keep_hub
             hub_down = {"ok": False, "error": str(e)[:300]}
 
     _append_audit(runtime_root, "stop completed")
-    return {"ok": True, "repo_improvement": {"ok": True, "mode": "no_daemon"}, "control_plane": cp_stop, "hub": hub_down}
+    return {"ok": True, "default_team": {"ok": True, "mode": "no_daemon"}, "control_plane": cp_stop, "hub": hub_down}
 
 
 def _doctor(repo: Path, workspace_root: Path) -> dict[str, Any]:

@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -55,16 +56,16 @@ class CrewOrchestratorTests(unittest.TestCase):
     def test_flow_alias_maps_to_deterministic_pipeline_chain(self):
         self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor", "db_migrate"])
 
-    def test_repo_improvement_is_native_crewai_flow(self):
-        self.assertEqual(crew_tools.normalize_flow("repo_improvement"), "repo_improvement")
-        self.assertTrue(crew_tools.is_native_crewai_flow("repo_improvement"))
+    def test_team_flow_is_native_crewai_flow(self):
+        self.assertEqual(crew_tools.normalize_flow("team:repo-improvement"), "team:repo-improvement")
+        self.assertTrue(crew_tools.is_native_crewai_flow("team:repo-improvement"))
 
     def test_direct_pipeline_allowlist_accepts_supported_pipeline(self):
         self.assertEqual(crew_tools.flow_to_pipelines("pipeline:doctor"), ["doctor"])
 
     def test_direct_pipeline_allowlist_rejects_native_workflow_name(self):
         with self.assertRaises(crew_tools.CrewToolsError):
-            crew_tools.flow_to_pipelines("pipeline:repo_improvement")
+            crew_tools.flow_to_pipelines("pipeline:team:repo-improvement")
 
     def test_direct_pipeline_allowlist_rejects_unsupported_pipeline(self):
         with self.assertRaises(crew_tools.CrewToolsError):
@@ -123,28 +124,34 @@ class CrewOrchestratorTests(unittest.TestCase):
         failed = next(e for e in db.events if e["event_type"] == "RUN_FAILED")
         self.assertIn("direct_pipeline_allowlist", failed["payload"])
 
-    def test_run_once_repo_improvement_uses_crewai_executor(self):
+    def test_run_once_team_workflow_uses_team_runtime_adapter(self):
         db = _FakeDB()
-        spec = RunSpec(project_id="teamos", workstream_id="general", objective="upgrade", flow="repo_improvement", repo_path="/tmp/team-os")
+        spec = RunSpec(project_id="teamos", workstream_id="general", objective="upgrade", flow="team:repo-improvement", repo_path="/tmp/team-os")
+        adapter = SimpleNamespace(
+            run_once_fn=mock.Mock(
+                return_value={
+                    "ok": True,
+                    "summary": "planned",
+                    "records": [{"title": "Add CI", "task_id": "TEAMOS-0001"}],
+                    "panel_sync": {"ok": True},
+                    "report_path": "/tmp/report.json",
+                    "write_delegate": {"writer": "crewai_agents", "write_mode": "workflow_runner"},
+                }
+            )
+        )
 
         with mock.patch(
             "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
         ), mock.patch(
-            "app.crewai_orchestrator.proposal_runtime.run_repo_improvement",
-            return_value={
-                "ok": True,
-                "summary": "planned",
-                "records": [{"title": "Add CI", "task_id": "TEAMOS-0001"}],
-                "panel_sync": {"ok": True},
-                "report_path": "/tmp/report.json",
-                "write_delegate": {"writer": "crewai_agents", "write_mode": "workflow_runner"},
-            },
-        ) as mocked_run:
+            "app.crewai_orchestrator.team_runtime_registry.team_runtime_adapter",
+            return_value=adapter,
+        ) as mocked_adapter:
             out = run_once(db=db, spec=spec, actor="test")
 
         self.assertTrue(out["ok"])
-        mocked_run.assert_called_once()
+        mocked_adapter.assert_called_once_with("repo-improvement")
+        adapter.run_once_fn.assert_called_once()
         started = next(e for e in db.events if e["event_type"] == "RUN_STARTED")
         self.assertEqual(started["payload"]["write_delegate"]["writer"], "crewai_agents")
         finished = next(e for e in db.events if e["event_type"] == "RUN_FINISHED")

@@ -101,8 +101,8 @@ class ImprovementStoreTests(unittest.TestCase):
                     "status": "todo",
                     "target": {"target_id": "demo-target"},
                     "repo": {"locator": "owner/demo", "workdir": "/tmp/demo-repo"},
-                    "orchestration": {"flow": "repo_improvement", "finding_lane": "bug"},
-                    "repo_improvement": {"lane": "bug"},
+                    "orchestration": {"flow": "team_workflow", "finding_lane": "bug"},
+                    "team_workflow": {"lane": "bug"},
                 }
             )
             self.assertEqual(task["target_id"], "demo-target")
@@ -160,7 +160,7 @@ class ImprovementStoreTests(unittest.TestCase):
             self.assertEqual(target["repo_root"], str(repo))
             self.assertEqual(improvement_store.get_target("demo-target")["repo_root"], str(repo))
 
-    def test_repo_improvement_run_logs_are_persisted_by_default(self) -> None:
+    def test_team_run_logs_are_persisted_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             self._configure_runtime(td)
 
@@ -191,7 +191,7 @@ class ImprovementStoreTests(unittest.TestCase):
                         run_id="run-1",
                         project_id="demo",
                         workstream_id="general",
-                        objective="repo-improvement dry run",
+                        objective="team:repo-improvement dry run",
                         state="DONE",
                     )
 
@@ -218,14 +218,14 @@ class ImprovementStoreTests(unittest.TestCase):
                     ]
                     return [item for item in items if item.id > after_id][:limit]
 
-            payload = improvement_store.persist_repo_improvement_run_logs(db=_FakeDB(), run_id="run-1", limit=50)
+            payload = improvement_store.persist_team_run_logs(db=_FakeDB(), run_id="run-1", limit=50)
             saved_logs = payload["saved_logs"]
             md_path = Path(saved_logs["markdown_path"])
             json_path = Path(saved_logs["json_path"])
 
             self.assertTrue(md_path.exists())
             self.assertTrue(json_path.exists())
-            self.assertIn("Repo Improvement Run `run-1`", md_path.read_text(encoding="utf-8"))
+            self.assertIn("Team Run `run-1`", md_path.read_text(encoding="utf-8"))
             self.assertIn('"run_id": "run-1"', json_path.read_text(encoding="utf-8"))
 
     def test_materialize_target_repo_clones_remote_repo(self) -> None:

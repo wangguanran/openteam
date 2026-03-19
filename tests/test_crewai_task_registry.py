@@ -1,6 +1,9 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 
 def _add_template_app_to_syspath() -> None:
@@ -12,6 +15,7 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
+from app import crewai_spec_loader  # noqa: E402
 from app import crewai_task_registry  # noqa: E402
 from app.crewai_task_models import DeliveryBugReproResult, DeliveryBugTestCaseResult, DeliveryReviewResult  # noqa: E402
 
@@ -22,7 +26,7 @@ class CrewAITaskRegistryTests(unittest.TestCase):
 
         self.assertEqual(spec.output_model, DeliveryReviewResult)
         self.assertIn("code_approved", spec.render_description(payload="{}"))
-        self.assertEqual(spec.task_name, "review_repo_improvement_task")
+        self.assertEqual(spec.task_name, "review_team_task")
 
     def test_registered_task_renders_payload(self):
         spec = crewai_task_registry.DELIVERY_AUDIT_TASK_SPEC
@@ -36,7 +40,7 @@ class CrewAITaskRegistryTests(unittest.TestCase):
         self.assertIn("verification_steps", text)
 
     def test_get_task_spec_loads_yaml_backed_model_mapping(self):
-        spec = crewai_task_registry.get_task_spec("document_repo_improvement_task")
+        spec = crewai_task_registry.get_task_spec("document_team_task")
 
         self.assertEqual(spec.output_model.__name__, "DeliveryDocumentationResult")
         self.assertIn("documentation_policy.allowed_paths", spec.render_description(payload="{}"))
@@ -49,6 +53,44 @@ class CrewAITaskRegistryTests(unittest.TestCase):
         self.assertEqual(testcase.output_model, DeliveryBugTestCaseResult)
         self.assertIn("reproduction_commands", repro.render_description(payload="{}"))
         self.assertIn("test_case_files", testcase.render_description(payload="{}"))
+
+    def test_get_task_spec_prefers_team_local_task_doc(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            default_tasks = root / "teams" / "aaa_default" / "specs" / "tasks"
+            team_tasks = root / "teams" / "demo_team" / "specs" / "tasks"
+            default_tasks.mkdir(parents=True, exist_ok=True)
+            team_tasks.mkdir(parents=True, exist_ok=True)
+            (default_tasks / "shared-task.yaml").write_text(
+                "\n".join(
+                    [
+                        "task_name: shared_task",
+                        "expected_output: global output",
+                        "description_template: Global {payload}",
+                        "output_model: DeliveryReviewResult",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (team_tasks / "shared-task.yaml").write_text(
+                "\n".join(
+                    [
+                        "task_name: shared_task",
+                        "expected_output: team output",
+                        "description_template: Team {payload}",
+                        "output_model: DeliveryReviewResult",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(crewai_spec_loader, "teams_root", return_value=root / "teams"):
+                crewai_spec_loader.clear_spec_caches()
+                team_spec = crewai_task_registry.get_task_spec("shared_task", team_id="demo-team")
+                global_spec = crewai_task_registry.get_task_spec("shared_task")
+
+            self.assertIn("Team {}", team_spec.render_description(payload="{}"))
+            self.assertIn("Global {}", global_spec.render_description(payload="{}"))
+        crewai_spec_loader.clear_spec_caches()
 
 
 if __name__ == "__main__":

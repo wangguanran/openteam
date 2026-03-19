@@ -35,6 +35,14 @@ def team_specs_root(team_id: str) -> Path:
     return (team_root(team_id) / "specs").resolve()
 
 
+def team_role_specs_root(team_id: str) -> Path:
+    return (team_specs_root(team_id) / "roles").resolve()
+
+
+def team_skill_specs_root(team_id: str) -> Path:
+    return (team_specs_root(team_id) / "skills").resolve()
+
+
 def _load_yaml_file(path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -52,6 +60,29 @@ def _sorted_yaml_docs(root: Path) -> tuple[dict[str, Any], ...]:
         if doc:
             docs.append(doc)
     return tuple(docs)
+
+
+def _first_doc_by_key(docs: tuple[dict[str, Any], ...], key_name: str, key_value: str) -> dict[str, Any]:
+    wanted = str(key_value or "").strip()
+    if not wanted:
+        return {}
+    for doc in docs:
+        if str(doc.get(key_name) or "").strip() == wanted:
+            return dict(doc)
+    return {}
+
+
+def _merge_docs_by_key(key_name: str, *collections: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for docs in collections:
+        for doc in docs:
+            key = str(doc.get(key_name) or "").strip()
+            if not key or key in seen:
+                continue
+            merged.append(dict(doc))
+            seen.add(key)
+    return tuple(merged)
 
 
 @lru_cache(maxsize=8)
@@ -105,20 +136,60 @@ def list_team_stage_docs(team_id: str) -> tuple[dict[str, Any], ...]:
     return _sorted_yaml_docs(team_specs_root(wanted) / "stages")
 
 
-def role_doc(role_id: str) -> dict[str, Any]:
+@lru_cache(maxsize=16)
+def list_team_role_docs(team_id: str) -> tuple[dict[str, Any], ...]:
+    wanted = str(team_id or "").strip()
+    if not wanted:
+        return ()
+    return _sorted_yaml_docs(team_role_specs_root(wanted))
+
+
+@lru_cache(maxsize=16)
+def list_team_skill_docs(team_id: str) -> tuple[dict[str, Any], ...]:
+    wanted = str(team_id or "").strip()
+    if not wanted:
+        return ()
+    return _sorted_yaml_docs(team_skill_specs_root(wanted))
+
+
+@lru_cache(maxsize=16)
+def list_team_task_docs(team_id: str) -> tuple[dict[str, Any], ...]:
+    wanted = str(team_id or "").strip()
+    if not wanted:
+        return ()
+    return _sorted_yaml_docs(team_specs_root(wanted) / "tasks")
+
+
+def role_doc(role_id: str, *, team_id: str = "") -> dict[str, Any]:
+    wanted_team = str(team_id or "").strip()
+    if wanted_team:
+        loaded = _first_doc_by_key(list_team_role_docs(wanted_team), "role_id", role_id)
+        if loaded:
+            return loaded
     return spec_doc_by_key("roles", "role_id", role_id)
 
 
-def list_role_docs() -> tuple[dict[str, Any], ...]:
-    return list_spec_docs("roles")
+def list_role_docs(*, team_id: str = "") -> tuple[dict[str, Any], ...]:
+    wanted_team = str(team_id or "").strip()
+    if not wanted_team:
+        return list_spec_docs("roles")
+    return _merge_docs_by_key("role_id", list_team_role_docs(wanted_team), list_spec_docs("roles"))
 
 
-def skill_doc(skill_id: str) -> dict[str, Any]:
+def skill_doc(skill_id: str, *, team_id: str = "") -> dict[str, Any]:
+    wanted_team = str(team_id or "").strip()
+    if wanted_team:
+        loaded = _first_doc_by_key(list_team_skill_docs(wanted_team), "skill_id", skill_id)
+        if loaded:
+            return loaded
     return spec_doc_by_key("skills", "skill_id", skill_id)
 
 
-def list_skill_docs() -> tuple[dict[str, Any], ...]:
-    return list_spec_docs("skills")
+def list_skill_docs(*, team_id: str = "") -> tuple[dict[str, Any], ...]:
+    wanted_team = str(team_id or "").strip()
+    if not wanted_team:
+        return list_spec_docs("skills")
+    return _merge_docs_by_key("skill_id", list_team_skill_docs(wanted_team), list_spec_docs("skills"))
 
 
 def team_doc(team_id: str) -> dict[str, Any]:
@@ -147,7 +218,12 @@ def team_stage_doc(team_id: str, stage_id: str) -> dict[str, Any]:
     return _load_yaml_file(team_specs_root(wanted_team) / "stages" / f"{wanted_stage}.yaml")
 
 
-def task_doc(task_name: str) -> dict[str, Any]:
+def task_doc(task_name: str, *, team_id: str = "") -> dict[str, Any]:
+    wanted_team = str(team_id or "").strip()
+    if wanted_team:
+        loaded = _first_doc_by_key(list_team_task_docs(wanted_team), "task_name", task_name)
+        if loaded:
+            return loaded
     return spec_doc_by_key("tasks", "task_name", task_name)
 
 
@@ -156,3 +232,6 @@ def clear_spec_caches() -> None:
     spec_doc_by_key.cache_clear()
     list_team_workflow_docs.cache_clear()
     list_team_stage_docs.cache_clear()
+    list_team_role_docs.cache_clear()
+    list_team_skill_docs.cache_clear()
+    list_team_task_docs.cache_clear()

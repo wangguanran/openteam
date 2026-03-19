@@ -1,5 +1,5 @@
-skill_id: repo.collect-context
-handler_id: repo.collect-context
+skill_id: team.collect-context
+handler_id: team.collect-context
 display_name_zh: 采集仓库上下文
 description: Resolve the target repository and collect normalized repo context for downstream workflow tasks.
 category: repository

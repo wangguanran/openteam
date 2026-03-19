@@ -15,7 +15,7 @@ from .state_store import runtime_state_root, team_os_root
 
 
 _DEFAULT_EVENT_TYPES = [
-    "REPO_IMPROVEMENT_*",
+    "TEAM_*",
     "RUN_FAILED",
     "RUN_FINISHED",
     "TASK_NEW",

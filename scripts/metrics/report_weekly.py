@@ -21,7 +21,7 @@ def _md(title: str, body: str) -> str:
 
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Generate a weekly evolution report from Team OS metrics/logs")
-    ap.add_argument("--out", default=str(_repo_root() / ".team-os" / "ledger" / "repo_improvement" / f"weekly_{_utc_today()}.md"))
+    ap.add_argument("--out", default=str(_repo_root() / ".team-os" / "ledger" / "team_workflow" / f"weekly_{_utc_today()}.md"))
     ap.add_argument("--tasks-dir", default=str(_repo_root() / ".team-os" / "logs" / "tasks"))
     args = ap.parse_args(argv)
 

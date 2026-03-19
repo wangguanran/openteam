@@ -116,11 +116,11 @@ class RepoImprovementLockTests(unittest.TestCase):
             app_main,
             "_cleanup_stale_repo_improvement_activity",
         ), mock.patch.object(
-            app_main._REPO_IMPROVEMENT_DELIVERY_LOCKS,
+            app_main._TEAM_WORKFLOW_DELIVERY_LOCKS,
             "acquire",
             return_value=True,
         ), mock.patch.object(
-            app_main._REPO_IMPROVEMENT_DELIVERY_LOCKS,
+            app_main._TEAM_WORKFLOW_DELIVERY_LOCKS,
             "release",
         ) as release_mock, mock.patch.object(
             app_main.task_runtime,
@@ -186,8 +186,8 @@ class RepoImprovementLockTests(unittest.TestCase):
         original_db = app_main.DB
         try:
             app_main.DB = fake_db
-            with mock.patch.object(app_main._REPO_IMPROVEMENT_LOCKS, "acquire", return_value=True), mock.patch.object(
-                app_main._REPO_IMPROVEMENT_LOCKS,
+            with mock.patch.object(app_main._TEAM_WORKFLOW_LOCKS, "acquire", return_value=True), mock.patch.object(
+                app_main._TEAM_WORKFLOW_LOCKS,
                 "release",
             ) as release_mock, mock.patch.object(
                 app_main.crewai_orchestrator,
@@ -207,7 +207,7 @@ class RepoImprovementLockTests(unittest.TestCase):
             self.assertEqual(out["existing_run_id"], "run-projectmanager-1")
             run_once_mock.assert_not_called()
             release_mock.assert_called_once_with("project:projectmanager")
-            self.assertTrue(any(call.get("event_type") == "REPO_IMPROVEMENT_ALREADY_RUNNING" for call in fake_db.event_calls))
+            self.assertTrue(any(call.get("event_type") == "TEAM_WORKFLOW_ALREADY_RUNNING" for call in fake_db.event_calls))
         finally:
             app_main.DB = original_db
 
@@ -245,19 +245,19 @@ class RepoImprovementLockTests(unittest.TestCase):
         fake_db.add_event = _add_event
 
         original_db = app_main.DB
-        original_ttl = os.environ.get("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC")
+        original_ttl = os.environ.get("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC")
         try:
             app_main.DB = fake_db
-            os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
+            os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = "300"
             app_main._cleanup_stale_repo_improvement_activity()
             self.assertEqual(fake_db.update_run_state_calls, [("run-123", "FAILED")])
-            self.assertTrue(any(call[0] == "REPO_IMPROVEMENT_STALE_RUN_CLEANED" for call in fake_db.event_calls))
+            self.assertTrue(any(call[0] == "TEAM_WORKFLOW_STALE_RUN_CLEANED" for call in fake_db.event_calls))
         finally:
             app_main.DB = original_db
             if original_ttl is None:
-                os.environ.pop("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
+                os.environ.pop("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", None)
             else:
-                os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
+                os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = original_ttl
 
     def test_cleanup_stale_repo_improvement_run_cleans_gap_and_milestone_agents(self) -> None:
         stale_agents = [
@@ -299,23 +299,23 @@ class RepoImprovementLockTests(unittest.TestCase):
         fake_db.add_event = _add_event
 
         original_db = app_main.DB
-        original_ttl = os.environ.get("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC")
+        original_ttl = os.environ.get("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC")
         try:
             app_main.DB = fake_db
-            os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = "300"
+            os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = "300"
             app_main._cleanup_stale_repo_improvement_activity()
             cleaned_ids = {str(call.get("agent_id") or "") for call in fake_db.update_calls}
             self.assertEqual(cleaned_ids, {"agent-gap", "agent-ms"})
             self.assertEqual(
-                sum(1 for call in fake_db.event_calls if call.get("event_type") == "REPO_IMPROVEMENT_STALE_AGENT_CLEANED"),
+                sum(1 for call in fake_db.event_calls if call.get("event_type") == "TEAM_WORKFLOW_STALE_AGENT_CLEANED"),
                 2,
             )
         finally:
             app_main.DB = original_db
             if original_ttl is None:
-                os.environ.pop("TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC", None)
+                os.environ.pop("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", None)
             else:
-                os.environ["TEAMOS_RUNTIME_REPO_IMPROVEMENT_STALE_TTL_SEC"] = original_ttl
+                os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = original_ttl
 
 
 if __name__ == "__main__":

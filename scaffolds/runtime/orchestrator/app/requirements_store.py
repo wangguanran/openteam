@@ -91,6 +91,38 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
+def _reserved_team_users() -> set[str]:
+    reserved: set[str] = set()
+    try:
+        from . import crewai_team_registry
+
+        for spec in crewai_team_registry.list_teams():
+            team_id = str(spec.team_id or "").strip().lower()
+            if not team_id:
+                continue
+            reserved.add(team_id)
+            reserved.add(f"{team_id}-daemon")
+    except Exception:
+        pass
+    return reserved
+
+
+def _is_reserved_system_actor(user: str) -> bool:
+    normalized = str(user or "").strip().lower()
+    if normalized.startswith("system:"):
+        return True
+    if normalized in _reserved_team_users():
+        return True
+    return any(normalized.startswith(f"{team_id}:") for team_id in _reserved_team_users())
+
+
+def _is_reserved_system_source(source: str) -> bool:
+    normalized = str(source or "").strip().lower()
+    if normalized.startswith("system"):
+        return True
+    return normalized in _reserved_team_users() or any(normalized.startswith(team_id) for team_id in _reserved_team_users())
+
+
 def _snapshot_if_workspace(req_dir: Path, *, names: list[str], reason: str) -> None:
     """
     Workspace scopes do not have git history. Keep lightweight local snapshots for rollback.
@@ -130,8 +162,8 @@ def _validate_raw_input(item: dict[str, Any]) -> None:
     if ch not in _RAW_INPUT_CHANNELS:
         raise RequirementsError(f"raw_input schema violation: invalid channel={ch!r}")
     user = str(item.get("user") or "").strip()
-    # Raw inputs must be user-originated verbatim text only; system/repo-improvement must never write here.
-    if user.startswith("system:") or user in ("repo-improvement-daemon", "repo-improvement") or user.lower().startswith("repo-improvement"):
+    # Raw inputs must be user-originated verbatim text only; system/team workflow actors must never write here.
+    if _is_reserved_system_actor(user):
         raise RequirementsError("raw_input schema violation: reserved/system user not allowed in raw inputs")
     txt = str(item.get("text") or "")
     if not txt.strip():
@@ -1100,22 +1132,14 @@ def add_requirement_raw_first(
     5) conflict/duplicate check + expand requirements.yaml
     6) post-check (drift check again)
 
-    NOTE: System/repo-improvement inputs must not write to raw_inputs.jsonl.
+    NOTE: System/team workflow inputs must not write to raw_inputs.jsonl.
     """
     scope = _scope_from_project_id(project_id)
     # Raw-first: do NOT create/modify Expanded artifacts before capturing the raw input.
     req_dir.mkdir(parents=True, exist_ok=True)
 
     def _is_system_input(*, source: str, user: str) -> bool:
-        u = str(user or "").strip().lower()
-        s = str(source or "").strip().lower()
-        if u.startswith("system:"):
-            return True
-        if u in ("repo-improvement", "repo-improvement-daemon") or u.startswith("repo-improvement"):
-            return True
-        if s.startswith("repo-improvement") or s.startswith("system"):
-            return True
-        return False
+        return _is_reserved_system_actor(user) or _is_reserved_system_source(source)
 
     is_system = _is_system_input(source=source, user=user)
 

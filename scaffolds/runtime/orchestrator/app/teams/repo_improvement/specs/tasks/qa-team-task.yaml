@@ -1,4 +1,4 @@
-task_name: qa_repo_improvement_task
+task_name: qa_team_task
 expected_output: A structured JSON QA decision.
 output_model: DeliveryQAResult
 description_template: |

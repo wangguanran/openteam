@@ -1,5 +1,5 @@
-skill_id: github.apply-issue-discussion
-handler_id: github.apply-issue-discussion
+skill_id: team.apply-discussion
+handler_id: team.apply-discussion
 display_name_zh: 应用 Issue 讨论决策
 description: Persist a structured discussion response and sync the reply back to the GitHub issue thread.
 category: github

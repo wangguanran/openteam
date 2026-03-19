@@ -152,8 +152,9 @@ def logs_tasks_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
     return project_state_dir(project_id, root=root) / "logs" / "tasks"
 
 
-def logs_repo_improvement_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
-    return project_state_dir(project_id, root=root) / "logs" / "repo_improvement"
+def logs_team_dir(project_id: str, team_id: str, *, root: Optional[Path] = None) -> Path:
+    safe_team_id = _safe_project_id(str(team_id or "team").replace("-", "_"))
+    return project_state_dir(project_id, root=root) / "logs" / "teams" / safe_team_id
 
 
 def requirements_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
@@ -195,7 +196,7 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     s = pdir / "state"
     (s / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
     (s / "logs" / "tasks").mkdir(parents=True, exist_ok=True)
-    (s / "logs" / "repo_improvement" / "runs").mkdir(parents=True, exist_ok=True)
+    (s / "logs" / "teams").mkdir(parents=True, exist_ok=True)
     (s / "locks").mkdir(parents=True, exist_ok=True)
     (s / "requirements" / "conflicts").mkdir(parents=True, exist_ok=True)
     (s / "requirements" / "baseline").mkdir(parents=True, exist_ok=True)

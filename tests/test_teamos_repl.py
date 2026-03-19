@@ -99,27 +99,28 @@ class TeamosReplTests(unittest.TestCase):
         self.assertEqual(payload["source"], "cli")
         self.assertEqual(payload["workstream_id"], "general")
 
-    def test_repo_improvement_logs_defaults_to_latest_run(self) -> None:
+    def test_team_logs_defaults_to_latest_run(self) -> None:
         calls = []
 
         def fake_http(method, url, payload=None, timeout_sec=10, **kwargs):
             calls.append((method, url, payload, timeout_sec, kwargs))
             if url.endswith("/v1/status"):
-                return {"repo_improvement": {"last_run": {"run_id": "run-123"}}}
-            if url.endswith("/v1/repo_improvement/runs/run-123/logs?limit=25"):
+                return {"teams": {"repo-improvement": {"last_run": {"run_id": "run-123"}}}}
+            if url.endswith("/v1/teams/repo-improvement/runs/run-123/logs?limit=25"):
                 return {
                     "run": {
                         "run_id": "run-123",
                         "state": "DONE",
                         "project_id": "teamos",
                         "workstream_id": "general",
-                        "objective": "CLI-triggered CrewAI repo-improvement",
+                        "objective": "CLI-triggered team:repo-improvement",
                     },
                     "report_available": True,
                     "summary": "no provable defect signal found this round",
+                    "team_id": "repo-improvement",
                     "saved_logs": {
-                        "markdown_path": "/tmp/repo-improvement/run-123.md",
-                        "json_path": "/tmp/repo-improvement/run-123.json",
+                        "markdown_path": "/tmp/team/repo-improvement/run-123.md",
+                        "json_path": "/tmp/team/repo-improvement/run-123.json",
                     },
                     "planning_agent_logs": [
                         {
@@ -133,22 +134,23 @@ class TeamosReplTests(unittest.TestCase):
                 }
             raise AssertionError(f"unexpected url: {url}")
 
-        args = argparse.Namespace(profile=None, run_id="", limit=25, json=False)
+        args = argparse.Namespace(profile=None, team_id="repo-improvement", run_id="", limit=25, json=False)
         stdout = io.StringIO()
         with mock.patch.object(self.teamos, "_base_url", return_value=("http://cp.local", {"name": "local"})), mock.patch.object(
             self.teamos, "_http_json", side_effect=fake_http
         ), contextlib.redirect_stdout(stdout):
-            self.teamos.cmd_repo_improvement_logs(args)
+            self.teamos.cmd_team_logs(args)
 
         out = stdout.getvalue()
-        self.assertIn("Repo Improvement Run", out)
+        self.assertIn("Team Run", out)
+        self.assertIn("team_id: repo-improvement", out)
         self.assertIn("run_id: run-123", out)
         self.assertIn("Planning Agent Logs", out)
         self.assertIn("1. Test-Manager :: bug_scan", out)
         self.assertIn("0 bug findings", out)
-        self.assertIn("/tmp/repo-improvement/run-123.md", out)
+        self.assertIn("/tmp/team/repo-improvement/run-123.md", out)
 
-    def test_repo_improvement_watch_prints_sse_stream(self) -> None:
+    def test_team_watch_prints_sse_stream(self) -> None:
         class _FakeStream:
             def __init__(self, chunks: bytes) -> None:
                 self._buf = io.BytesIO(chunks)
@@ -169,18 +171,18 @@ class TeamosReplTests(unittest.TestCase):
                 b"event: agent\n",
                 b'data: {"role_id":"Bug-TestCase-Agent","state":"RUNNING","task_id":"PROJECTMANAGER-0001","current_action":"bootstrapping failing bug test case"}\n\n',
                 b"event: runtime_event\n",
-                b'data: {"ts":"2026-03-12T08:21:15Z","event_type":"REPO_IMPROVEMENT_PLANNING_TASK_OUTPUT","actor":"repo_improvement_api","payload":{"agent":"Test-Manager","task_name":"qa_bug_scan_src-ai-llm","raw":"found one bug"}}\n\n',
+                b'data: {"ts":"2026-03-12T08:21:15Z","event_type":"TEAM_WORKFLOW_PLANNING_TASK_OUTPUT","actor":"repo_improvement_api","payload":{"agent":"Test-Manager","task_name":"qa_bug_scan_src-ai-llm","raw":"found one bug"}}\n\n',
                 b"event: end\n",
                 b'data: {"run":{"run_id":"run-123","state":"DONE"}}\n\n',
             ]
         )
 
-        args = argparse.Namespace(profile=None, project_id="projectmanager", run_id="", timeout=30, json=False)
+        args = argparse.Namespace(profile=None, team_id="repo-improvement", project_id="projectmanager", run_id="", timeout=30, json=False)
         stdout = io.StringIO()
         with mock.patch.object(self.teamos, "_base_url", return_value=("http://cp.local", {"name": "local"})), mock.patch.object(
-            self.teamos, "_resolve_repo_improvement_watch_run_id", return_value="run-123"
+            self.teamos, "_resolve_team_watch_run_id", return_value="run-123"
         ), mock.patch.object(self.teamos.urllib.request, "urlopen", return_value=_FakeStream(sse)), contextlib.redirect_stdout(stdout):
-            self.teamos.cmd_repo_improvement_watch(args)
+            self.teamos.cmd_team_watch(args)
 
         out = stdout.getvalue()
         self.assertIn("[run] run_id=run-123 state=RUNNING project_id=projectmanager", out)

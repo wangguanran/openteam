@@ -5,12 +5,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from pydantic import BaseModel
-
 from app import crewai_agent_factory
+from app import crewai_llm_factory
 from app import crewai_runtime
 from app import crewai_task_registry
 from app import crewai_workflow_registry as workflow_registry
+from app.pydantic_compat import BaseModel
 from app.crewai_task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
@@ -20,7 +20,11 @@ from app.crewai_task_models import (
     DeliveryQAResult,
     DeliveryReviewResult,
 )
-from app.domains.repo_improvement import proposal_runtime as proposal_domain
+from app.workflow_models import ProposalDiscussionResponse
+from app.workflow_models import StructuredBugScanResult
+from app.workflow_models import UpgradeFinding
+from app.workflow_models import UpgradePlan
+from app.workflow_models import UpgradeWorkItem
 
 
 @dataclass
@@ -41,6 +45,7 @@ class WorkflowRunContext:
 
 def _workflow_spec_payload(workflow: workflow_registry.WorkflowSpec) -> dict[str, Any]:
     return {
+        "team_id": workflow.team_id,
         "workflow_id": workflow.workflow_id,
         "lane": workflow.lane,
         "phase": workflow.phase,
@@ -140,11 +145,11 @@ def _resolve_output_model(name: str) -> type[BaseModel] | None:
     if wanted in crewai_task_registry.TASK_OUTPUT_MODEL_MAP:
         return crewai_task_registry.TASK_OUTPUT_MODEL_MAP[wanted]
     runtime_models = {
-        "UpgradePlan": getattr(proposal_domain, "UpgradePlan", None),
-        "StructuredBugScanResult": getattr(proposal_domain, "StructuredBugScanResult", None),
-        "ProposalDiscussionResponse": getattr(proposal_domain, "ProposalDiscussionResponse", None),
-        "UpgradeFinding": getattr(proposal_domain, "UpgradeFinding", None),
-        "UpgradeWorkItem": getattr(proposal_domain, "UpgradeWorkItem", None),
+        "UpgradePlan": UpgradePlan,
+        "StructuredBugScanResult": StructuredBugScanResult,
+        "ProposalDiscussionResponse": ProposalDiscussionResponse,
+        "UpgradeFinding": UpgradeFinding,
+        "UpgradeWorkItem": UpgradeWorkItem,
         "DeliveryAuditResult": DeliveryAuditResult,
         "DeliveryBugReproResult": DeliveryBugReproResult,
         "DeliveryBugTestCaseResult": DeliveryBugTestCaseResult,
@@ -207,12 +212,11 @@ def _execute_skill(task: workflow_registry.WorkflowTaskSpec, *, context: Workflo
 def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: WorkflowRunContext, inputs: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     crewai_runtime.require_crewai_importable()
     from crewai import Crew, Process, Task
-    from app.domains.repo_improvement import proposal_runtime as planning_module
 
     model_cls = _resolve_output_model(task.output_model)
     template_spec = None
     if task.task_template:
-        template_spec = crewai_task_registry.get_task_spec(task.task_template)
+        template_spec = crewai_task_registry.get_task_spec(task.task_template, team_id=context.workflow.team_id)
         if model_cls is None:
             model_cls = template_spec.output_model
 
@@ -236,10 +240,11 @@ def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
     elif template_spec is not None:
         expected_output = template_spec.expected_output
 
-    llm = planning_module._crewai_llm(workflow=context.workflow)
+    llm = crewai_llm_factory.build_crewai_llm(workflow=context.workflow)
     tools_by_profile = task_inputs.get("tools_by_profile") if isinstance(task_inputs.get("tools_by_profile"), dict) else None
     agent = crewai_agent_factory.build_crewai_agent(
         role_id=str(task_inputs.get("role_id") or agent_spec.role_id or "").strip(),
+        team_id=context.workflow.team_id,
         template_role_id=str(task_inputs.get("template_role_id") or agent_spec.template_role_id or "").strip(),
         goal=str(task_inputs.get("goal") or agent_spec.goal or "").strip(),
         backstory=str(task_inputs.get("backstory") or agent_spec.backstory or "").strip(),

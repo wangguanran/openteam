@@ -10,6 +10,7 @@ def build_crewai_agent(
     role_id: str,
     llm: Any,
     verbose: bool,
+    team_id: str = "",
     tools_by_profile: Optional[dict[str, list[Any]]] = None,
     template_role_id: str = "",
     goal: str = "",
@@ -19,7 +20,7 @@ def build_crewai_agent(
 ) -> Any:
     from crewai import Agent
 
-    spec = crewai_role_registry.get_role_spec(role_id, fallback_role_id=template_role_id)
+    spec = crewai_role_registry.get_role_spec(role_id, fallback_role_id=template_role_id, team_id=team_id)
     resolved_goal = str(goal or spec.goal or "").strip()
     resolved_backstory = str(backstory or spec.backstory or "").strip()
     resolved_profile = str(tool_profile or spec.tool_profile or "").strip()

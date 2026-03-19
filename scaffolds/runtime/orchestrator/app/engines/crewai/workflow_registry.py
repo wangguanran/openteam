@@ -91,12 +91,15 @@ def _team_workflow_override(team_id: str, workflow_id: str, *, lane: str = "") -
     return {}
 
 
-def _project_workflow_override(project_id: str, workflow_id: str, *, lane: str = "") -> dict[str, Any]:
+def _project_workflow_override(project_id: str, team_id: str, workflow_id: str, *, lane: str = "") -> dict[str, Any]:
     config = project_config_store.load_project_config(str(project_id or "").strip() or "teamos")
-    repo_improvement = config.get("repo_improvement") or {}
-    if not isinstance(repo_improvement, dict):
+    teams = config.get("teams") or {}
+    if not isinstance(teams, dict):
         return {}
-    raw = repo_improvement.get("workflow_settings") or {}
+    team = teams.get(str(team_id or "").strip()) or {}
+    if not isinstance(team, dict):
+        return {}
+    raw = team.get("workflow_settings") or {}
     if not isinstance(raw, dict):
         return {}
     for key in _workflow_override_keys(workflow_id, lane=lane):
@@ -166,6 +169,7 @@ class WorkflowTaskSpec:
 
 @dataclass(frozen=True)
 class WorkflowSpec:
+    team_id: str
     workflow_id: str
     lane: str
     phase: str = ""
@@ -391,6 +395,7 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
     loop_doc = dict(doc.get("loop") or {}) if isinstance(doc.get("loop"), dict) else {}
     process_doc = dict(doc.get("process") or {}) if isinstance(doc.get("process"), dict) else {}
     return WorkflowSpec(
+        team_id=str(doc.get("team_id") or "").strip() or _default_team_id(),
         workflow_id=str(doc.get("workflow_id") or "").strip(),
         lane=str(doc.get("lane") or "").strip().lower(),
         phase=str(doc.get("phase") or "").strip().lower(),
@@ -436,7 +441,8 @@ def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: 
         base_doc.setdefault("disabled_reason", "workflow_not_in_team_workflow_ids")
 
     merged = _deep_merge(base_doc, _team_workflow_override(team_id, canonical, lane=lane))
-    merged = _deep_merge(merged, _project_workflow_override(project_id, canonical, lane=lane))
+    merged = _deep_merge(merged, _project_workflow_override(project_id, team_id, canonical, lane=lane))
+    merged["team_id"] = str(team_id or "").strip()
     return merged
 
 

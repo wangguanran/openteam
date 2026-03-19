@@ -37,7 +37,7 @@ agents:
 tasks:
   - task_id: claim_discussion
     kind: skill
-    skill_id: github.claim-issue-discussion
+    skill_id: team.claim-discussion
   - task_id: reply_discussion
     kind: crewai_task
     agent_id: responder
@@ -62,7 +62,7 @@ tasks:
     expected_output: Structured discussion reply JSON.
   - task_id: apply_discussion
     kind: skill
-    skill_id: github.apply-issue-discussion
+    skill_id: team.apply-discussion
     inputs:
       proposal: $tasks.claim_discussion.outputs.proposal
       latest_comment_id: $tasks.claim_discussion.outputs.latest_comment_id

@@ -6,12 +6,12 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from . import crewai_team_registry
+
 
 class CrewToolsError(ValueError):
     pass
 
-
-_NATIVE_CREWAI_FLOWS = frozenset({"repo_improvement"})
 
 # CrewAI flow aliases route to supported runtime pipelines only.
 _FLOW_PIPELINES: dict[str, list[str]] = {
@@ -42,8 +42,19 @@ def normalize_flow(raw: Optional[str]) -> str:
     return str(raw or "standard").strip().lower()
 
 
+def native_team_flows() -> list[str]:
+    return sorted([f"team:{spec.team_id}" for spec in crewai_team_registry.list_teams()])
+
+
+def native_team_id(flow: Optional[str]) -> str:
+    normalized = normalize_flow(flow)
+    if normalized.startswith("team:"):
+        return normalized.split(":", 1)[1].strip()
+    return ""
+
+
 def supported_flows() -> list[str]:
-    return sorted(set(_FLOW_PIPELINES.keys()) | set(_NATIVE_CREWAI_FLOWS))
+    return sorted(set(_FLOW_PIPELINES.keys()) | set(native_team_flows()))
 
 
 def direct_pipeline_allowlist() -> list[str]:
@@ -51,11 +62,14 @@ def direct_pipeline_allowlist() -> list[str]:
 
 
 def native_crewai_flows() -> list[str]:
-    return sorted(_NATIVE_CREWAI_FLOWS)
+    return native_team_flows()
 
 
 def is_native_crewai_flow(flow: str) -> bool:
-    return normalize_flow(flow) in _NATIVE_CREWAI_FLOWS
+    team_id = native_team_id(flow)
+    if not team_id:
+        return False
+    return any(spec.team_id == team_id for spec in crewai_team_registry.list_teams())
 
 
 def resolve_run_request_flow(*, flow: Optional[str], pipeline: Optional[str]) -> str:
@@ -75,7 +89,7 @@ def resolve_run_request_flow(*, flow: Optional[str], pipeline: Optional[str]) ->
 
 def flow_to_pipelines(flow: str) -> list[str]:
     f = normalize_flow(flow)
-    if f in _NATIVE_CREWAI_FLOWS:
+    if f in native_team_flows():
         raise CrewToolsError(f"native_crewai_flow_has_no_pipeline_mapping: {f}")
     if f in _FLOW_PIPELINES:
         return list(_FLOW_PIPELINES[f])

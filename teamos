@@ -924,7 +924,7 @@ def cmd_project_agents_inject(args: argparse.Namespace) -> None:
 
 #
 # NOTE: Repo-improvement is runtime-managed via the control-plane.
-# The CLI must NOT auto-trigger repo-improvement on every command.
+# The CLI must NOT auto-trigger team workflows on every command.
 #
 
 
@@ -995,20 +995,43 @@ def _runtime_root_for_repo(repo_root: Path) -> Path:
     return (Path.home() / ".teamos" / "runtime" / "default").resolve()
 
 
-def _read_last_repo_improvement_run(repo_root: Path, *, base_url: str = "") -> dict[str, Any]:
-    _ = repo_root
+def _team_status_doc(*, base_url: str = "") -> dict[str, Any]:
     url = str(base_url or "").strip().rstrip("/")
     if not url:
         return {}
     try:
-        status = _http_json("GET", url + "/v1/status")
+        return _http_json("GET", url + "/v1/status")
     except Exception:
         return {}
-    repo_improvement = status.get("repo_improvement") if isinstance(status, dict) else {}
-    if isinstance(repo_improvement, dict):
-        last = repo_improvement.get("last_run")
-        return last if isinstance(last, dict) else {}
-    return {}
+
+
+def _default_team_id_from_status(status: dict[str, Any]) -> str:
+    team_id = _norm(status.get("default_team_id"))
+    if team_id:
+        return team_id
+    teams = status.get("teams") if isinstance(status, dict) else {}
+    if isinstance(teams, dict) and teams:
+        return sorted(str(key) for key in teams.keys() if str(key).strip())[0]
+    return ""
+
+
+def _team_summary_from_status(status: dict[str, Any], *, team_id: str) -> dict[str, Any]:
+    teams = status.get("teams") if isinstance(status, dict) else {}
+    if not isinstance(teams, dict):
+        return {}
+    team = teams.get(team_id)
+    return dict(team) if isinstance(team, dict) else {}
+
+
+def _read_last_team_run(repo_root: Path, *, base_url: str = "", team_id: str = "") -> dict[str, Any]:
+    _ = repo_root
+    status = _team_status_doc(base_url=base_url)
+    wanted_team_id = str(team_id or "").strip() or _default_team_id_from_status(status)
+    if not wanted_team_id:
+        return {}
+    team = _team_summary_from_status(status, team_id=wanted_team_id)
+    last = team.get("last_run") if isinstance(team, dict) else {}
+    return last if isinstance(last, dict) else {}
 
 
 def _default_project_id(prof: dict[str, Any], args: argparse.Namespace) -> str:
@@ -1025,9 +1048,11 @@ def _default_scope(prof: dict[str, Any], args: argparse.Namespace) -> str:
 
 def cmd_status(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
-    st = _http_json("GET", base + "/v1/status")
+    st = _team_status_doc(base_url=base)
     instance_id = st.get("instance_id", "")
     focus = st.get("current_focus") or {}
+    default_team_id = _default_team_id_from_status(st)
+    default_team = _team_summary_from_status(st, team_id=default_team_id) if default_team_id else {}
 
     project_id = _default_project_id(prof, args)
     workstream_id = args.workstream
@@ -1074,24 +1099,25 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"focus.updated_at={focus.get('updated_at','')}")
     repo_root = _find_team_os_repo_root()
     if repo_root:
-        last = _read_last_repo_improvement_run(repo_root, base_url=base) or {}
+        last = _read_last_team_run(repo_root, base_url=base, team_id=default_team_id) or {}
         if last.get("ts"):
-            print(f"repo_improvement.last_run_at={last.get('ts')}")
-            print(f"repo_improvement.status={last.get('status','')}")
+            print(f"team.last_run_at={last.get('ts')}")
+            print(f"team.status={last.get('status','')}")
             if last.get("records") is not None:
-                print(f"repo_improvement.records={last.get('records')}")
-    repo_improvement = (st.get("repo_improvement") or {}) if isinstance(st, dict) else {}
-    proposal_counts = repo_improvement.get("proposal_counts") or {}
+                print(f"team.records={last.get('records')}")
+    if default_team_id:
+        print(f"default_team_id={default_team_id}")
+    proposal_counts = default_team.get("proposal_counts") or {}
     if proposal_counts:
-        print(f"repo_improvement.pending_proposals={proposal_counts.get('pending', 0)}")
-        print(f"repo_improvement.proposals_total={proposal_counts.get('total', 0)}")
-    delivery = repo_improvement.get("delivery") or {}
-    delivery_summary = delivery.get("summary") or {}
+        print(f"team.pending_proposals={proposal_counts.get('pending', 0)}")
+        print(f"team.proposals_total={proposal_counts.get('total', 0)}")
+    coding = default_team.get("coding") or {}
+    delivery_summary = coding.get("summary") or {}
     if delivery_summary:
-        print(f"repo_improvement.delivery_total={delivery_summary.get('total', 0)}")
-        print(f"repo_improvement.delivery_queued={delivery_summary.get('queued', 0)}")
-        print(f"repo_improvement.delivery_coding={delivery_summary.get('coding', 0)}")
-        print(f"repo_improvement.delivery_blocked={delivery_summary.get('blocked', 0)}")
+        print(f"team.coding_total={delivery_summary.get('total', 0)}")
+        print(f"team.coding_queued={delivery_summary.get('queued', 0)}")
+        print(f"team.coding_active={delivery_summary.get('coding', 0)}")
+        print(f"team.coding_blocked={delivery_summary.get('blocked', 0)}")
     print()
 
     agents = st.get("agents") or []
@@ -1785,13 +1811,35 @@ def cmd_panel_open(args: argparse.Namespace) -> None:
         print(url)
 
 
-def cmd_repo_improvement(args: argparse.Namespace) -> None:
-    """
-    Run one CrewAI repo-improvement iteration through the control-plane.
-    """
-    if bool(getattr(args, "local", False)):
-        raise RuntimeError("Local repo-improvement pipeline has been removed. Use the runtime-managed repo-improvement flow instead.")
+def cmd_team_list(args: argparse.Namespace) -> None:
+    base, _prof = _base_url(args)
+    out = _http_json("GET", base + "/v1/teams")
+    teams = list(out.get("teams") or [])
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    print(f"teams_total={len(teams)}")
+    if not teams:
+        print("(none)")
+        return
+    rows: list[list[str]] = []
+    for team in teams:
+        rows.append(
+            [
+                str(team.get("team_id") or ""),
+                str(team.get("display_name_zh") or "")[:20],
+                ",".join([str(x) for x in (team.get("workflow_ids") or [])]),
+                str(team.get("mission") or "")[:80],
+            ]
+        )
+    print(_fmt_table(["team_id", "display_name_zh", "workflow_ids", "mission"], rows))
+
+
+def cmd_team_run(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
+    team_id = str(getattr(args, "team_id", "") or "").strip()
+    if not team_id:
+        raise RuntimeError("team_id is required")
     repo_root = _find_team_os_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
@@ -1803,40 +1851,94 @@ def cmd_repo_improvement(args: argparse.Namespace) -> None:
     payload = {
         "project_id": _default_project_id(prof, args),
         "workstream_id": str(getattr(args, "workstream", "") or "general").strip() or "general",
-        "objective": "CLI-triggered CrewAI repo-improvement",
+        "objective": str(getattr(args, "objective", "") or f"CLI-triggered team:{team_id}").strip(),
         "target_id": target_id or None,
         "repo_path": str(target_repo) if include_repo_path else "",
         "repo_url": repo_url or None,
         "repo_locator": str(getattr(args, "repo_locator", "") or "").strip(),
         "dry_run": bool(args.dry_run),
         "force": bool(args.force),
-        "trigger": "cli_auto" if bool(getattr(args, "auto", False)) else "cli",
+        "trigger": "cli",
     }
-    out = _http_json("POST", base + "/v1/repo_improvement/run", payload)
+    out = _http_json("POST", base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/run", payload)
     if not bool(out.get("ok")):
-        raise RuntimeError(str(out.get("error") or "repo_improvement_failed"))
+        raise RuntimeError(str(out.get("error") or "team_run_failed"))
     if bool(getattr(args, "quiet", False)):
         return
-    print(
-        json.dumps(
-            {
-                "ok": bool(out.get("ok")),
-                "skipped": bool(out.get("skipped")),
-                "run_id": str(out.get("run_id") or ""),
-                "repo_root": str(out.get("repo_root") or ""),
-                "repo_locator": str(out.get("repo_locator") or ""),
-                "summary": str(out.get("summary") or ""),
-                "records": list(out.get("records") or []),
-                "panel_sync": out.get("panel_sync") or {},
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+def _resolve_team_watch_run_id(base: str, *, team_id: str, project_id: str, explicit_run_id: str) -> str:
+    rid = str(explicit_run_id or "").strip()
+    if rid:
+        return rid
+    query = ""
+    if str(project_id or "").strip():
+        query = "?project_id=" + urllib.parse.quote(str(project_id or "").strip(), safe="")
+    out = _http_json("GET", base + "/v1/runs" + query)
+    runs = list(out.get("runs") or [])
+    marker = f"team:{str(team_id or '').strip().lower()}"
+    for item in runs:
+        state = str(item.get("state") or "").strip().upper()
+        objective = str(item.get("objective") or "").strip().lower()
+        if state == "RUNNING" and marker in objective:
+            rid = str(item.get("run_id") or "").strip()
+            if rid:
+                return rid
+    return ""
+
+
+def cmd_team_watch(args: argparse.Namespace) -> None:
+    base, prof = _base_url(args)
+    team_id = str(getattr(args, "team_id", "") or "").strip()
+    if not team_id:
+        raise RuntimeError("team_id is required")
+    project_id = str(getattr(args, "project_id", "") or _default_project_id(prof, args)).strip()
+    run_id = _resolve_team_watch_run_id(
+        base,
+        team_id=team_id,
+        project_id=project_id,
+        explicit_run_id=str(getattr(args, "run_id", "") or "").strip(),
     )
+    if not run_id:
+        raise RuntimeError("No active team run found. Pass --run-id or start one first.")
+    url = base + f"/v1/runs/{urllib.parse.quote(run_id, safe='')}/stream"
+    req = urllib.request.Request(url, headers={"Accept": "text/event-stream"})
+    with urllib.request.urlopen(req, timeout=int(getattr(args, "timeout", 3600) or 3600)) as resp:
+        for item in _iter_sse_events(resp):
+            event = str(item.get("event") or "")
+            data = item.get("data") if isinstance(item.get("data"), dict) else {}
+            if bool(getattr(args, "json", False)):
+                print(json.dumps({"event": event, "data": data}, ensure_ascii=False))
+                continue
+            if event == "run":
+                run = data.get("run") if isinstance(data.get("run"), dict) else {}
+                print(
+                    f"[run] run_id={run.get('run_id','')} state={run.get('state','')} "
+                    f"project_id={run.get('project_id','')} objective={run.get('objective','')}"
+                )
+                continue
+            if event == "agent":
+                print(
+                    f"[agent] {data.get('role_id','')} state={data.get('state','')} "
+                    f"task={data.get('task_id','')} action={data.get('current_action','')}"
+                )
+                continue
+            if event == "runtime_event":
+                print(_format_team_watch_event(data))
+                continue
+            if event == "end":
+                run = data.get("run") if isinstance(data.get("run"), dict) else {}
+                state = str(run.get("state") or data.get("state") or "").strip()
+                print(f"[end] run_id={run.get('run_id', run_id)} state={state or 'DONE'}")
+                return
 
 
-def cmd_repo_improvement_proposals(args: argparse.Namespace) -> None:
+def cmd_team_proposals(args: argparse.Namespace) -> None:
     base, _prof = _base_url(args)
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
     query: dict[str, str] = {}
     target_id = _norm(getattr(args, "target_id", "") or "")
     project_id = _norm(getattr(args, "project_id", "") or "")
@@ -1850,7 +1952,7 @@ def cmd_repo_improvement_proposals(args: argparse.Namespace) -> None:
         query["lane"] = lane
     if status:
         query["status"] = status
-    url = base + "/v1/repo_improvement/proposals"
+    url = base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/proposals"
     if query:
         url += "?" + urllib.parse.urlencode(query)
     out = _http_json("GET", url)
@@ -1879,8 +1981,11 @@ def cmd_repo_improvement_proposals(args: argparse.Namespace) -> None:
     print(_fmt_table(["proposal_id", "lane", "status", "bump", "target", "cooldown_until", "discussion_issue", "title"], rows))
 
 
-def cmd_repo_improvement_decide(args: argparse.Namespace) -> None:
+def cmd_team_decide(args: argparse.Namespace) -> None:
     base, _prof = _base_url(args)
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
     payload = {
         "proposal_id": str(args.proposal_id),
         "action": str(args.action),
@@ -1888,7 +1993,7 @@ def cmd_repo_improvement_decide(args: argparse.Namespace) -> None:
         "summary": str(getattr(args, "summary", "") or "").strip() or None,
         "version_bump": str(getattr(args, "version_bump", "") or "").strip() or None,
     }
-    out = _http_json("POST", base + "/v1/repo_improvement/proposals/decide", payload)
+    out = _http_json("POST", base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/proposals/decide", payload)
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1902,9 +2007,12 @@ def cmd_repo_improvement_decide(args: argparse.Namespace) -> None:
     print(f"discussion_issue_url={proposal.get('discussion_issue_url','')}")
 
 
-def cmd_repo_improvement_discussions_sync(args: argparse.Namespace) -> None:
+def cmd_team_discussions_sync(args: argparse.Namespace) -> None:
     base, _prof = _base_url(args)
-    out = _http_json("POST", base + "/v1/repo_improvement/discussions/sync", {})
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
+    out = _http_json("POST", base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/discussions/sync", {})
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1915,8 +2023,11 @@ def cmd_repo_improvement_discussions_sync(args: argparse.Namespace) -> None:
     print(f"errors={out.get('errors', 0)}")
 
 
-def cmd_repo_improvement_delivery(args: argparse.Namespace) -> None:
+def cmd_team_coding_run(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
     payload = {
         "project_id": _default_project_id(prof, args),
         "target_id": str(getattr(args, "target_id", "") or "").strip() or None,
@@ -1925,7 +2036,7 @@ def cmd_repo_improvement_delivery(args: argparse.Namespace) -> None:
         "force": bool(getattr(args, "force", False)),
         "concurrency": int(getattr(args, "concurrency", 10) or 10),
     }
-    out = _http_json("POST", base + "/v1/repo_improvement/delivery/run", payload)
+    out = _http_json("POST", base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/coding/run", payload)
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1934,14 +2045,17 @@ def cmd_repo_improvement_delivery(args: argparse.Namespace) -> None:
     print(f"processed={out.get('processed', 0)}")
     summary = out.get("summary") or {}
     if summary:
-        print(f"delivery.total={summary.get('total', 0)}")
-        print(f"delivery.queued={summary.get('queued', 0)}")
-        print(f"delivery.coding={summary.get('coding', 0)}")
-        print(f"delivery.blocked={summary.get('blocked', 0)}")
+        print(f"coding.total={summary.get('total', 0)}")
+        print(f"coding.queued={summary.get('queued', 0)}")
+        print(f"coding.active={summary.get('coding', 0)}")
+        print(f"coding.blocked={summary.get('blocked', 0)}")
 
 
-def cmd_repo_improvement_delivery_tasks(args: argparse.Namespace) -> None:
+def cmd_team_coding_tasks(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
     query: dict[str, str] = {}
     project_id = _default_project_id(prof, args)
     target_id = _norm(getattr(args, "target_id", "") or "")
@@ -1952,7 +2066,7 @@ def cmd_repo_improvement_delivery_tasks(args: argparse.Namespace) -> None:
         query["target_id"] = target_id
     if status:
         query["status"] = status
-    url = base + "/v1/repo_improvement/delivery/tasks"
+    url = base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/coding/tasks"
     if query:
         url += "?" + urllib.parse.urlencode(query)
     out = _http_json("GET", url)
@@ -1961,9 +2075,9 @@ def cmd_repo_improvement_delivery_tasks(args: argparse.Namespace) -> None:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
     summary = out.get("summary") or {}
-    print(f"delivery_tasks_total={len(tasks)}")
+    print(f"coding_tasks_total={len(tasks)}")
     if summary:
-        print(f"delivery.queued={summary.get('queued', 0)} delivery.coding={summary.get('coding', 0)} delivery.blocked={summary.get('blocked', 0)}")
+        print(f"coding.queued={summary.get('queued', 0)} coding.active={summary.get('coding', 0)} coding.blocked={summary.get('blocked', 0)}")
     if not tasks:
         print("(none)")
         return
@@ -1983,27 +2097,31 @@ def cmd_repo_improvement_delivery_tasks(args: argparse.Namespace) -> None:
     print(_fmt_table(["task_id", "status", "stage", "owner_role", "attempts", "pull_request", "title"], rows))
 
 
-def cmd_repo_improvement_logs(args: argparse.Namespace) -> None:
+def cmd_team_logs(args: argparse.Namespace) -> None:
     base, _prof = _base_url(args)
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
     run_id = str(getattr(args, "run_id", "") or "").strip()
     if not run_id:
-        status = _http_json("GET", base + "/v1/status")
-        repo_improvement = (status.get("repo_improvement") or {}) if isinstance(status, dict) else {}
-        last_run = repo_improvement.get("last_run") if isinstance(repo_improvement, dict) else {}
+        status = _team_status_doc(base_url=base)
+        team = _team_summary_from_status(status, team_id=team_id)
+        last_run = team.get("last_run") if isinstance(team, dict) else {}
         if isinstance(last_run, dict):
             run_id = str(last_run.get("run_id") or "").strip()
     if not run_id:
-        raise RuntimeError("No repo-improvement run found. Run `teamos repo-improvement --force` first or pass --run-id.")
+        raise RuntimeError("No team run found. Start one first or pass --run-id.")
     limit = max(1, int(getattr(args, "limit", 200) or 200))
-    url = base + f"/v1/repo_improvement/runs/{urllib.parse.quote(run_id, safe='')}/logs?limit={limit}"
+    url = base + f"/v1/teams/{urllib.parse.quote(team_id, safe='')}/runs/{urllib.parse.quote(run_id, safe='')}/logs?limit={limit}"
     out = _http_json("GET", url)
     if bool(getattr(args, "json", False)):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
     run = out.get("run") or {}
     saved_logs = out.get("saved_logs") if isinstance(out.get("saved_logs"), dict) else {}
-    print("Repo Improvement Run")
-    print("====================")
+    print("Team Run")
+    print("========")
+    print(f"team_id: {team_id}")
     print(f"run_id: {run.get('run_id','')}")
     print(f"state: {run.get('state','')}")
     print(f"project_id: {run.get('project_id','')}")
@@ -2043,29 +2161,36 @@ def cmd_repo_improvement_logs(args: argparse.Namespace) -> None:
     if not events:
         print("(none)")
     for item in events:
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        detail_parts = []
-        for key in ("stage", "reason", "lane", "workflow_id", "title", "status", "records", "bug_findings", "proposal_id", "target_id"):
-            value = payload.get(key)
-            if value in ("", None, [], {}):
-                continue
-            detail_parts.append(f"{key}={value}")
-        detail = "; ".join(detail_parts)
-        if not detail and payload:
-            raw_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-            detail = raw_payload if len(raw_payload) <= 220 else raw_payload[:217] + "..."
-        ts = str(item.get("ts") or "")
-        event_type = str(item.get("event_type") or "")
-        actor = str(item.get("actor") or "")
-        line = f"- {ts} {event_type}"
-        if actor:
-            line += f" actor={actor}"
-        if detail:
-            line += f" :: {detail}"
-        print(line)
+        print(_format_team_watch_event(item))
 
 
-def _resolve_repo_improvement_watch_run_id(base: str, *, project_id: str, explicit_run_id: str) -> str:
+def cmd_team_bug_scan_live(args: argparse.Namespace) -> None:
+    team_id = _norm(getattr(args, "team_id", "") or "")
+    if not team_id:
+        raise RuntimeError("team_id is required")
+    container = str(getattr(args, "container", "") or "").strip() or _default_runtime_control_plane_container()
+    cmd = [
+        "docker",
+        "exec",
+        "-i",
+        container,
+        "python",
+        "/team-os/scripts/runtime/team_bug_scan_live.py",
+        "--team-id",
+        team_id,
+        "--target-id",
+        str(getattr(args, "target_id", "") or "").strip(),
+    ]
+    project_id = str(getattr(args, "project_id", "") or "").strip()
+    if project_id:
+        cmd.extend(["--project-id", project_id])
+    if bool(getattr(args, "json", False)):
+        cmd.append("--json")
+    proc = subprocess.run(cmd, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"team bug-scan-live failed rc={proc.returncode}")
+
+def _resolve_team_run_id(base: str, *, team_id: str, project_id: str, explicit_run_id: str) -> str:
     rid = str(explicit_run_id or "").strip()
     if rid:
         return rid
@@ -2074,26 +2199,27 @@ def _resolve_repo_improvement_watch_run_id(base: str, *, project_id: str, explic
         query = "?project_id=" + urllib.parse.quote(str(project_id or "").strip(), safe="")
     out = _http_json("GET", base + "/v1/runs" + query)
     runs = list(out.get("runs") or [])
+    marker = f"team:{str(team_id or '').strip().lower()}"
     for item in runs:
         state = str(item.get("state") or "").strip().upper()
         objective = str(item.get("objective") or "").strip().lower()
-        if state == "RUNNING" and "repo-improvement" in objective:
+        if state == "RUNNING" and marker in objective:
             rid = str(item.get("run_id") or "").strip()
             if rid:
                 return rid
-    status = _http_json("GET", base + "/v1/status")
-    repo_improvement = (status.get("repo_improvement") or {}) if isinstance(status, dict) else {}
-    last_run = repo_improvement.get("last_run") if isinstance(repo_improvement, dict) else {}
+    status = _team_status_doc(base_url=base)
+    team = _team_summary_from_status(status, team_id=team_id)
+    last_run = team.get("last_run") if isinstance(team, dict) else {}
     if isinstance(last_run, dict):
         rid = str(last_run.get("run_id") or "").strip()
     return rid
 
 
-def _format_repo_improvement_watch_event(item: dict[str, Any]) -> str:
+def _format_team_watch_event(item: dict[str, Any]) -> str:
     event_type = str(item.get("event_type") or "")
     actor = str(item.get("actor") or "")
     payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-    if event_type == "REPO_IMPROVEMENT_PLANNING_TASK_OUTPUT":
+    if event_type.endswith("_PLANNING_TASK_OUTPUT"):
         agent = str(payload.get("agent") or "agent")
         task_name = str(payload.get("task_name") or "task")
         raw = str(payload.get("raw") or "(empty)").rstrip()
@@ -2114,48 +2240,6 @@ def _format_repo_improvement_watch_event(item: dict[str, Any]) -> str:
     if detail:
         line += f" :: {detail}"
     return line
-
-
-def cmd_repo_improvement_watch(args: argparse.Namespace) -> None:
-    base, prof = _base_url(args)
-    project_id = str(getattr(args, "project_id", "") or _default_project_id(prof, args)).strip()
-    run_id = _resolve_repo_improvement_watch_run_id(
-        base,
-        project_id=project_id,
-        explicit_run_id=str(getattr(args, "run_id", "") or "").strip(),
-    )
-    if not run_id:
-        raise RuntimeError("No active repo-improvement run found. Pass --run-id or start one first.")
-    url = base + f"/v1/repo_improvement/runs/{urllib.parse.quote(run_id, safe='')}/stream"
-    req = urllib.request.Request(url, headers={"Accept": "text/event-stream"})
-    with urllib.request.urlopen(req, timeout=int(getattr(args, "timeout", 3600) or 3600)) as resp:
-        for item in _iter_sse_events(resp):
-            event = str(item.get("event") or "")
-            data = item.get("data") if isinstance(item.get("data"), dict) else {}
-            if bool(getattr(args, "json", False)):
-                print(json.dumps({"event": event, "data": data}, ensure_ascii=False))
-                continue
-            if event == "run":
-                run = data.get("run") if isinstance(data.get("run"), dict) else {}
-                print(
-                    f"[run] run_id={run.get('run_id','')} state={run.get('state','')} "
-                    f"project_id={run.get('project_id','')} objective={run.get('objective','')}"
-                )
-                continue
-            if event == "agent":
-                print(
-                    f"[agent] {data.get('role_id','')} state={data.get('state','')} "
-                    f"task={data.get('task_id','')} action={data.get('current_action','')}"
-                )
-                continue
-            if event == "runtime_event":
-                print(_format_repo_improvement_watch_event(data))
-                continue
-            if event == "end":
-                run = data.get("run") if isinstance(data.get("run"), dict) else {}
-                state = str(run.get("state") or data.get("state") or "").strip()
-                print(f"[end] run_id={run.get('run_id', run_id)} state={state or 'DONE'}")
-                return
 
 
 def _default_runtime_control_plane_container() -> str:
@@ -2181,27 +2265,6 @@ def _default_runtime_control_plane_container() -> str:
         if "control-plane" in name:
             return name
     return names[0]
-
-
-def cmd_repo_improvement_bug_scan_live(args: argparse.Namespace) -> None:
-    container = str(getattr(args, "container", "") or "").strip() or _default_runtime_control_plane_container()
-    cmd = [
-        "docker",
-        "exec",
-        "-i",
-        container,
-        "python",
-        "/team-os/scripts/runtime/repo_improvement_bug_scan_live.py",
-        "--target-id",
-        str(args.target_id),
-    ]
-    if str(getattr(args, "project_id", "") or "").strip():
-        cmd += ["--project-id", str(args.project_id).strip()]
-    if bool(getattr(args, "json", False)):
-        cmd.append("--json")
-    proc = subprocess.run(cmd)
-    if proc.returncode != 0:
-        raise SystemExit(proc.returncode)
 
 
 def cmd_improvement_targets(args: argparse.Namespace) -> None:
@@ -2377,11 +2440,11 @@ def cmd_daemon_start(args: argparse.Namespace) -> None:
     """
     Legacy daemon mode has been removed.
     """
-    raise RuntimeError("Legacy repo-improvement daemon has been removed. Start the TeamOS runtime or run `teamos repo-improvement --force`.")
+    raise RuntimeError("Legacy team daemon has been removed. Start the TeamOS runtime or run `teamos team run --team-id <team_id> --force`.")
 
 
 def cmd_daemon_stop(args: argparse.Namespace) -> None:
-    print("legacy_repo_improvement_daemon.removed=true")
+    print("legacy_team_daemon.removed=true")
 
 
 def cmd_daemon_status(args: argparse.Namespace) -> None:
@@ -2389,11 +2452,14 @@ def cmd_daemon_status(args: argparse.Namespace) -> None:
     if not repo_root:
         raise RuntimeError("Cannot find Team OS repo root. Set env TEAM_OS_REPO_PATH or run from within the repo.")
     base, _ = _base_url(args)
-    last = _read_last_repo_improvement_run(repo_root, base_url=base)
+    status = _team_status_doc(base_url=base)
+    team_id = _default_team_id_from_status(status)
+    last = _read_last_team_run(repo_root, base_url=base, team_id=team_id)
     payload = {
-        "legacy_repo_improvement_daemon": "removed",
+        "legacy_team_daemon": "removed",
+        "default_team_id": team_id,
         "runtime_state_root": str(_runtime_root_for_repo(repo_root) / "state"),
-        "last_repo_improvement": last,
+        "last_team_run": last,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -2447,8 +2513,8 @@ def cmd_audit_reqv3_locks(args: argparse.Namespace) -> None:
         argv += ["--out", str(args.out).strip()]
     if getattr(args, "project_id", ""):
         argv += ["--project-id", str(args.project_id).strip()]
-    if bool(getattr(args, "skip_repo_improvement", False)):
-        argv.append("--skip-repo-improvement")
+    if bool(getattr(args, "skip_team", False)):
+        argv.append("--skip-team")
     if bool(getattr(args, "skip_db", False)):
         argv.append("--skip-db")
     _run_pipeline(repo_root, "scripts/pipelines/audit_reqv3_locks.py", argv)
@@ -3307,93 +3373,111 @@ def main(argv: Optional[list[str]] = None) -> int:
     rl = au_sp.add_parser("reqv3-locks", help="Generate REQv3+Locks end-to-end audit report (writes docs/audits/REQV3_LOCKS_AUDIT_<ts>.md)")
     rl.add_argument("--out", help="override output path")
     rl.add_argument("--project-id", dest="project_id", default="audit-e2e")
-    rl.add_argument("--skip-repo-improvement", action="store_true")
+    rl.add_argument("--skip-team", action="store_true")
     rl.add_argument("--skip-db", action="store_true")
     rl.set_defaults(fn=cmd_audit_reqv3_locks)
 
     doc = sp.add_parser("doctor")
     doc.set_defaults(fn=cmd_doctor)
 
-    dm = sp.add_parser("daemon", help="Legacy daemon commands (repo-improvement daemon removed)")
+    dm = sp.add_parser("daemon", help="Legacy daemon commands (team daemon removed)")
     dm_sp = dm.add_subparsers(dest="subcmd", required=True)
     ds = dm_sp.add_parser("start", help="Daemon mode removed; kept only as compatibility stub")
     ds.add_argument("--foreground", action="store_true", help="run in foreground (do not detach)")
     ds.set_defaults(fn=cmd_daemon_start)
     dx = dm_sp.add_parser("stop", help="Daemon mode removed; kept only as compatibility stub")
     dx.set_defaults(fn=cmd_daemon_stop)
-    dy = dm_sp.add_parser("status", help="Show legacy daemon removal notice and current repo-improvement state")
+    dy = dm_sp.add_parser("status", help="Show legacy daemon removal notice and current team runtime state")
     dy.set_defaults(fn=cmd_daemon_status)
 
-    def _configure_repo_improvement_parser(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--dry-run", action="store_true", help="opt-in plan only mode; default runs normal issue/task materialization")
-        parser.add_argument("--force", action="store_true", help="ignore debounce and run now")
-        parser.add_argument("--local", action="store_true", help="deprecated compatibility flag; local pipeline mode has been removed")
-        parser.add_argument("--auto", action="store_true", help="internal compatibility flag for auto triggers")
-        parser.add_argument("--quiet", action="store_true", help="suppress normal output")
-        parser.add_argument("--target-id", default="", help="registered improvement target id")
-        parser.add_argument("--repo-path", default="", help="target repository path (defaults to current Team OS repo)")
-        parser.add_argument("--repo-url", default="", help="target repository URL (used when the target must be cloned into workspace)")
-        parser.add_argument("--repo-locator", default="", help="override GitHub repo locator owner/name")
-        parser.set_defaults(fn=cmd_repo_improvement)
+    tm = sp.add_parser("team", help="Generic team operations")
+    tm_sp = tm.add_subparsers(dest="team_cmd", required=True)
+    tl = tm_sp.add_parser("list", help="List configured teams")
+    tl.add_argument("--json", action="store_true")
+    tl.set_defaults(fn=cmd_team_list)
 
-    ri = sp.add_parser("repo-improvement", help="Run CrewAI repo-improvement for the current or specified repository")
-    _configure_repo_improvement_parser(ri)
+    trn = tm_sp.add_parser("run", help="Run one team iteration through the control-plane")
+    trn.add_argument("--team-id", required=True)
+    trn.add_argument("--project")
+    trn.add_argument("--workstream", default="general")
+    trn.add_argument("--objective", default="")
+    trn.add_argument("--target-id", default="")
+    trn.add_argument("--repo-path", default="")
+    trn.add_argument("--repo-url", default="")
+    trn.add_argument("--repo-locator", default="")
+    trn.add_argument("--dry-run", action="store_true")
+    trn.add_argument("--force", action="store_true")
+    trn.add_argument("--quiet", action="store_true")
+    trn.set_defaults(fn=cmd_team_run)
 
-    rip = sp.add_parser("repo-improvement-proposals", help="List repo-improvement feature/process proposals managed by the runtime")
-    rip.add_argument("--target-id", default="", help="filter by improvement target id")
-    rip.add_argument("--project-id", default="", help="filter by project id")
-    rip.add_argument("--lane", default="", help="filter by lane: feature|bug|process")
-    rip.add_argument("--status", default="", help="filter by status: PENDING_CONFIRMATION|APPROVED|COLLECTING|HOLD|REJECTED|MATERIALIZED")
-    rip.add_argument("--json", action="store_true", help="print raw JSON")
-    rip.set_defaults(fn=cmd_repo_improvement_proposals)
+    tw = tm_sp.add_parser("watch", help="Stream a live team run")
+    tw.add_argument("--team-id", required=True)
+    tw.add_argument("--run-id", default="")
+    tw.add_argument("--project-id", default="")
+    tw.add_argument("--timeout", type=int, default=3600)
+    tw.add_argument("--json", action="store_true")
+    tw.set_defaults(fn=cmd_team_watch)
 
-    rid = sp.add_parser("repo-improvement-decide", help="Approve, reject, or hold a repo-improvement proposal")
-    rid.add_argument("proposal_id", help="proposal id from `teamos repo-improvement-proposals`")
-    rid.add_argument("action", choices=["approve", "reject", "hold"])
-    rid.add_argument("--title", default="", help="optional title override")
-    rid.add_argument("--summary", default="", help="optional summary override")
-    rid.add_argument("--version-bump", default="", help="optional version bump override: major|minor|patch|none")
-    rid.add_argument("--json", action="store_true", help="print raw JSON")
-    rid.set_defaults(fn=cmd_repo_improvement_decide)
+    tp = tm_sp.add_parser("proposals", help="List team proposals managed by the runtime")
+    tp.add_argument("--team-id", required=True)
+    tp.add_argument("--target-id", default="", help="filter by improvement target id")
+    tp.add_argument("--project-id", default="", help="filter by project id")
+    tp.add_argument("--lane", default="", help="filter by lane")
+    tp.add_argument("--status", default="", help="filter by proposal status")
+    tp.add_argument("--json", action="store_true", help="print raw JSON")
+    tp.set_defaults(fn=cmd_team_proposals)
 
-    ris = sp.add_parser("repo-improvement-discussions-sync", help="Poll GitHub issue comments for feature proposals and let the discussion agent reply")
-    ris.add_argument("--json", action="store_true", help="print raw JSON")
-    ris.set_defaults(fn=cmd_repo_improvement_discussions_sync)
+    td = tm_sp.add_parser("decide", help="Approve, reject, or hold a team proposal")
+    td.add_argument("--team-id", required=True)
+    td.add_argument("proposal_id")
+    td.add_argument("action", choices=["approve", "reject", "hold"])
+    td.add_argument("--title", default="")
+    td.add_argument("--summary", default="")
+    td.add_argument("--version-bump", default="")
+    td.add_argument("--json", action="store_true")
+    td.set_defaults(fn=cmd_team_decide)
 
-    ridr = sp.add_parser("repo-improvement-delivery", help="Run the repo-improvement delivery executor for queued tasks")
-    ridr.add_argument("--target-id", default="", help="limit to a specific improvement target")
-    ridr.add_argument("--task-id", default="", help="resume or force a specific task id")
-    ridr.add_argument("--dry-run", action="store_true", help="run the delivery state machine without shipping commits")
-    ridr.add_argument("--force", action="store_true", help="retry blocked/closed tasks when task-id is provided")
-    ridr.add_argument("--concurrency", type=int, default=10, help="single-node concurrent delivery workers")
-    ridr.add_argument("--json", action="store_true", help="print raw JSON")
-    ridr.set_defaults(fn=cmd_repo_improvement_delivery)
+    tsy = tm_sp.add_parser("discussions-sync", help="Poll and reconcile team proposal discussions")
+    tsy.add_argument("--team-id", required=True)
+    tsy.add_argument("--json", action="store_true")
+    tsy.set_defaults(fn=cmd_team_discussions_sync)
 
-    ridt = sp.add_parser("repo-improvement-delivery-tasks", help="List repo-improvement delivery tasks and their execution state")
-    ridt.add_argument("--target-id", default="", help="filter by improvement target id")
-    ridt.add_argument("--status", default="", help="filter by task status: todo|doing|test|release|blocked|closed")
-    ridt.add_argument("--json", action="store_true", help="print raw JSON")
-    ridt.set_defaults(fn=cmd_repo_improvement_delivery_tasks)
+    tc = tm_sp.add_parser("coding", help="Team coding/delivery operations")
+    tc_sp = tc.add_subparsers(dest="team_coding_cmd", required=True)
 
-    ril = sp.add_parser("repo-improvement-logs", help="Show CrewAI planning logs and runtime events for a repo-improvement run")
-    ril.add_argument("--run-id", default="", help="specific run id; defaults to the latest repo-improvement run")
-    ril.add_argument("--limit", type=int, default=200, help="max runtime events to include")
-    ril.add_argument("--json", action="store_true", help="print raw JSON")
-    ril.set_defaults(fn=cmd_repo_improvement_logs)
+    tcr = tc_sp.add_parser("run", help="Run team coding workers")
+    tcr.add_argument("--team-id", required=True)
+    tcr.add_argument("--project")
+    tcr.add_argument("--target-id", default="")
+    tcr.add_argument("--task-id", default="")
+    tcr.add_argument("--dry-run", action="store_true")
+    tcr.add_argument("--force", action="store_true")
+    tcr.add_argument("--concurrency", type=int, default=10)
+    tcr.add_argument("--json", action="store_true")
+    tcr.set_defaults(fn=cmd_team_coding_run)
 
-    riw = sp.add_parser("repo-improvement-watch", help="Stream live repo-improvement run progress, agent state changes, and runtime events")
-    riw.add_argument("--run-id", default="", help="specific run id; defaults to the latest active repo-improvement run")
-    riw.add_argument("--project-id", default="", help="project id used when resolving the latest active run")
-    riw.add_argument("--timeout", type=int, default=3600, help="stream timeout in seconds")
-    riw.add_argument("--json", action="store_true", help="print raw JSON event envelopes")
-    riw.set_defaults(fn=cmd_repo_improvement_watch)
+    tct = tc_sp.add_parser("tasks", help="List team coding tasks")
+    tct.add_argument("--team-id", required=True)
+    tct.add_argument("--project")
+    tct.add_argument("--target-id", default="")
+    tct.add_argument("--status", default="")
+    tct.add_argument("--json", action="store_true")
+    tct.set_defaults(fn=cmd_team_coding_tasks)
 
-    rib = sp.add_parser("repo-improvement-bug-scan-live", help="Run a whole-repository bug discovery scan live in the control-plane container")
-    rib.add_argument("--target-id", required=True, help="improvement target id")
-    rib.add_argument("--project-id", default="", help="project id override")
-    rib.add_argument("--container", default="", help="control-plane container name override")
-    rib.add_argument("--json", action="store_true", help="print raw JSON result")
-    rib.set_defaults(fn=cmd_repo_improvement_bug_scan_live)
+    tlg = tm_sp.add_parser("logs", help="Show team run logs")
+    tlg.add_argument("--team-id", required=True)
+    tlg.add_argument("--run-id", default="")
+    tlg.add_argument("--limit", type=int, default=200)
+    tlg.add_argument("--json", action="store_true")
+    tlg.set_defaults(fn=cmd_team_logs)
+
+    tbl = tm_sp.add_parser("bug-scan-live", help="Run a live whole-repository bug scan for a team")
+    tbl.add_argument("--team-id", required=True)
+    tbl.add_argument("--target-id", required=True)
+    tbl.add_argument("--project-id", default="")
+    tbl.add_argument("--container", default="")
+    tbl.add_argument("--json", action="store_true")
+    tbl.set_defaults(fn=cmd_team_bug_scan_live)
 
     tgt = sp.add_parser("improvement-targets", help="List registered improvement targets")
     tgt.add_argument("--project-id", default="", help="filter by project id")

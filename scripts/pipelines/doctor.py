@@ -111,9 +111,9 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
             pass
 
 
-def _repo_improvement_check(repo_root: Path) -> dict[str, Any]:
+def _default_team_check(repo_root: Path) -> dict[str, Any]:
     """
-    Best-effort runtime-state check for repo-improvement.
+    Best-effort runtime-state check for the default configured team.
     Persistent state now lives in the runtime DB / control-plane status, not local JSON files.
     """
     runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
@@ -208,8 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     if not bool(db.get("ok")):
         ok = False
 
-    # Runtime-managed repo-improvement status (informational).
-    report["repo_improvement"] = _repo_improvement_check(repo)
+    # Runtime-managed default team status (informational).
+    report["default_team"] = _default_team_check(repo)
 
     # Control plane health + API coverage (best-effort; should pass when runtime matches repo template).
     base = str(args.base_url or "").strip().rstrip("/") or _load_base_url(profile=str(args.profile or ""))
@@ -219,10 +219,15 @@ def main(argv: list[str] | None = None) -> int:
         hz = _http_json(base + "/healthz", timeout_sec=5)
         st = _http_json(base + "/v1/status", timeout_sec=5)
         control_plane.update({"ok": True, "healthz": hz.get("status", ""), "instance_id": st.get("instance_id", "")})
-        repo_improvement_value = st.get("repo_improvement") if isinstance(st.get("repo_improvement"), dict) else {}
-        if isinstance(repo_improvement_value, dict):
-            report["repo_improvement"]["last_run"] = dict((repo_improvement_value or {}).get("last_run") or {})
-            report["repo_improvement"]["control_plane_summary"] = repo_improvement_value or {}
+        teams_value = st.get("teams") if isinstance(st.get("teams"), dict) else {}
+        default_team_id = str(st.get("default_team_id") or "").strip()
+        if not default_team_id and isinstance(teams_value, dict) and teams_value:
+            default_team_id = sorted(str(key) for key in teams_value.keys() if str(key).strip())[0]
+        default_team_value = teams_value.get(default_team_id) if isinstance(teams_value, dict) else {}
+        if isinstance(default_team_value, dict):
+            report["default_team"]["team_id"] = default_team_id
+            report["default_team"]["last_run"] = dict((default_team_value or {}).get("last_run") or {})
+            report["default_team"]["control_plane_summary"] = default_team_value or {}
         trs_value = st.get("task_run_sync")
         if isinstance(trs_value, dict):
             trs = dict(trs_value)
@@ -259,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             "/v1/tasks/new",
             "/v1/recovery/scan",
             "/v1/recovery/resume",
-            "/v1/repo_improvement/run",
+            "/v1/teams",
         ]
         missing = [p for p in required if p not in paths]
         control_plane["api_coverage"] = {"ok": not missing, "missing_paths": missing[:50]}
@@ -307,14 +312,15 @@ def main(argv: list[str] | None = None) -> int:
         dbs_value = report.get("postgres_db")
         dbs: dict[str, Any] = dbs_value if isinstance(dbs_value, dict) else {}
         print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
-        repo_improvement_value = report.get("repo_improvement")
-        repo_improvement: dict[str, Any] = repo_improvement_value if isinstance(repo_improvement_value, dict) else {}
-        if repo_improvement:
-            last_value = repo_improvement.get("last_run")
+        default_team_value = report.get("default_team")
+        default_team: dict[str, Any] = default_team_value if isinstance(default_team_value, dict) else {}
+        if default_team:
+            last_value = default_team.get("last_run")
             last: dict[str, Any] = last_value if isinstance(last_value, dict) else {}
             print(
-                "repo_improvement: "
-                f"backend={str(repo_improvement.get('state_backend') or '').strip() or 'unknown'} "
+                "default_team: "
+                f"team_id={str(default_team.get('team_id') or '').strip() or 'unknown'} "
+                f"backend={str(default_team.get('state_backend') or '').strip() or 'unknown'} "
                 f"status={str(last.get('status') or '').strip() or 'UNKNOWN'} "
                 f"ts={str(last.get('ts') or '').strip()}"
             )

@@ -1,8 +1,8 @@
-task_name: audit_repo_improvement_issue
+task_name: audit_team_issue
 expected_output: A structured JSON audit decision.
 output_model: DeliveryAuditResult
 description_template: |
-  Audit this repo-improvement execution issue before scheduling.
+  Audit this team workflow issue before scheduling.
   Rules:
   - Confirm whether the issue is really a bug, feature, quality, or process item.
   - Confirm whether the issue description is closed-loop enough to execute now.

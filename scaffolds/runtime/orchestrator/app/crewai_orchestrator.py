@@ -6,7 +6,7 @@ from typing import Any
 from . import crewai_runtime
 from . import crew_tools
 from . import improvement_store
-from .domains.repo_improvement import proposal_runtime
+from . import team_runtime_registry
 from .state_store import team_os_root
 from . import redis_bus
 
@@ -44,12 +44,12 @@ def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payl
         pass
 
 
-def _persist_repo_improvement_logs_best_effort(*, db: Any, run_id: str) -> dict[str, str]:
+def _persist_team_run_logs_best_effort(*, db: Any, run_id: str) -> dict[str, str]:
     target_run_id = str(run_id or "").strip()
     if not target_run_id:
         return {}
     try:
-        payload = improvement_store.persist_repo_improvement_run_logs(db=db, run_id=target_run_id, limit=500)
+        payload = improvement_store.persist_team_run_logs(db=db, run_id=target_run_id, limit=500)
     except Exception:
         return {}
     saved_logs = payload.get("saved_logs") if isinstance(payload.get("saved_logs"), dict) else {}
@@ -88,7 +88,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             spec=spec,
             payload=err_payload,
         )
-        log_paths = _persist_repo_improvement_logs_best_effort(db=db, run_id=run_id) if crew_tools.is_native_crewai_flow(flow) else {}
+        log_paths = _persist_team_run_logs_best_effort(db=db, run_id=run_id) if crew_tools.is_native_crewai_flow(flow) else {}
         return {
             "ok": False,
             "run_id": run_id,
@@ -103,9 +103,10 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
     if crew_tools.is_native_crewai_flow(flow):
         run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
         write_delegate = {
-            "write_mode": "crewai_repo_improvement",
+            "write_mode": "crewai_team_runtime",
             "writer": "crewai_agents",
             "truth_sources": ["task_ledger", "github_issues", "github_projects"],
+            "team_id": crew_tools.native_team_id(flow),
         }
         db.add_event(
             event_type="RUN_STARTED",
@@ -127,7 +128,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             payload={"run_id": run_id, "flow": flow, "task_id": task_id, "crewai": crewai_info, "write_delegate": write_delegate},
         )
         try:
-            out = proposal_runtime.run_repo_improvement(
+            out = team_runtime_registry.team_runtime_adapter(crew_tools.native_team_id(flow)).run_once_fn(
                 db=db,
                 spec=spec,
                 actor=actor,
@@ -157,7 +158,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
                 spec=spec,
                 payload=err_payload,
             )
-            log_paths = _persist_repo_improvement_logs_best_effort(db=db, run_id=run_id)
+            log_paths = _persist_team_run_logs_best_effort(db=db, run_id=run_id)
             return {
                 "ok": False,
                 "run_id": run_id,
@@ -195,7 +196,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             spec=spec,
             payload=payload,
         )
-        log_paths = _persist_repo_improvement_logs_best_effort(db=db, run_id=run_id)
+        log_paths = _persist_team_run_logs_best_effort(db=db, run_id=run_id)
         report_path = str(out.get("report_path") or log_paths.get("markdown_path") or "")
         return {**out, "run_id": run_id, "flow": flow, "task_id": task_id, "log_paths": log_paths, "report_path": report_path}
 

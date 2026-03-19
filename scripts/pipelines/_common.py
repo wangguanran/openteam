@@ -297,7 +297,7 @@ def _type_ok(value: Any, want: Any) -> bool:
 def validate_schema(obj: Any, schema: dict[str, Any], *, at: str = "$") -> list[str]:
     """
     Minimal JSON Schema validator (subset).
-    Supports: type, required, properties, items, enum, minLength, minimum, additionalProperties(false).
+    Supports: type, required, properties, patternProperties, items, enum, minLength, minimum, additionalProperties(false).
     """
     errors: list[str] = []
 
@@ -332,6 +332,7 @@ def validate_schema(obj: Any, schema: dict[str, Any], *, at: str = "$") -> list[
                     errors.append(f"{at}: missing required property: {k}")
 
         props = schema.get("properties") or {}
+        patterns = schema.get("patternProperties") or {}
         addl = schema.get("additionalProperties", True)
         if isinstance(props, dict):
             for k, v in obj.items():
@@ -339,7 +340,18 @@ def validate_schema(obj: Any, schema: dict[str, Any], *, at: str = "$") -> list[
                 if k2 in props and isinstance(props[k2], dict):
                     errors.extend(validate_schema(v, props[k2], at=f"{at}.{k2}"))
                 else:
-                    if addl is False:
+                    matched_pattern = False
+                    if isinstance(patterns, dict):
+                        for pattern, subschema in patterns.items():
+                            try:
+                                if re.match(str(pattern), k2):
+                                    matched_pattern = True
+                                    if isinstance(subschema, dict):
+                                        errors.extend(validate_schema(v, subschema, at=f"{at}.{k2}"))
+                                    break
+                            except re.error:
+                                continue
+                    if not matched_pattern and addl is False:
                         errors.append(f"{at}: additionalProperties disallowed: {k2}")
 
     if isinstance(obj, list):

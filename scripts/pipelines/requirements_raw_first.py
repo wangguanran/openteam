@@ -76,6 +76,23 @@ def _load_last_raw_assessment(req_dir: Path, *, raw_id: str) -> dict[str, Any]:
     return found
 
 
+def _reserved_team_users(repo: Path) -> set[str]:
+    _add_runtime_template_to_syspath(repo)
+    reserved: set[str] = set()
+    try:
+        from app import crewai_team_registry  # type: ignore
+
+        for spec in crewai_team_registry.list_teams():
+            team_id = str(spec.team_id or "").strip().lower()
+            if not team_id:
+                continue
+            reserved.add(team_id)
+            reserved.add(f"{team_id}-daemon")
+    except Exception:
+        pass
+    return reserved
+
+
 def cmd_add(repo: Path, *, scope: str, workspace_root: str, text: str, workstream_id: str, priority: str, source: str, user: str) -> dict[str, Any]:
     resolved_scope, pid, req_dir = _requirements_dir_for_scope(repo, scope=scope, workspace_root=workspace_root)
     req_dir.mkdir(parents=True, exist_ok=True)
@@ -181,9 +198,13 @@ def cmd_migrate_v3(repo: Path, *, scope: str, workspace_root: str, dry_run: bool
 
         allowed_channels = {"cli", "api", "chat", "import"}
 
+        reserved_users = _reserved_team_users(repo)
+
         def is_system_user(u: str) -> bool:
             uu = (u or "").strip().lower()
-            return uu.startswith("system:") or uu in ("repo-improvement", "repo-improvement-daemon") or uu.startswith("repo-improvement")
+            if uu.startswith("system:") or uu in reserved_users:
+                return True
+            return any(uu.startswith(f"{team_id}:") for team_id in reserved_users)
 
         migrated_items: list[dict[str, Any]] = []
         skipped = 0
