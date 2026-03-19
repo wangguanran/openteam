@@ -59,7 +59,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             return_value={
                 "repo_improvement": {
                     "workflow_settings": {
-                        "feature-improvement": {
+                        "feature-finding": {
                             "enabled": False,
                             "disabled_reason": "disabled_for_repo",
                         }
@@ -79,7 +79,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             return_value={
                 "repo_improvement": {
                     "workflow_settings": {
-                        "feature-improvement": {
+                        "feature-finding": {
                             "runtime_policy": {"max_candidates": 2},
                         }
                     }
@@ -96,7 +96,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             return_value={
                 "repo_improvement": {
                     "workflow_settings": {
-                        "bug-fix": {
+                        "bug-finding": {
                             "runtime_policy": {"dormant_after_zero_scans": 1},
                         }
                     }
@@ -113,7 +113,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
             return_value={
                 "repo_improvement": {
                     "workflow_settings": {
-                        "bug-fix": {
+                        "bug-finding": {
                             "runtime_policy": {
                                 "active_window_start_hour": 9,
                                 "active_window_end_hour": 18,

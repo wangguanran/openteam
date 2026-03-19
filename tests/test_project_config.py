@@ -94,7 +94,7 @@ class TestProjectConfig(unittest.TestCase):
                     "demo",
                     "set",
                     "--key",
-                    "repo_improvement.workflow_settings.feature-improvement.enabled",
+                    "repo_improvement.workflow_settings.feature-finding.enabled",
                     "--value",
                     "false",
                 ]
@@ -115,7 +115,7 @@ class TestProjectConfig(unittest.TestCase):
                     "demo",
                     "set",
                     "--key",
-                    "repo_improvement.workflow_settings.feature-improvement.max_candidates",
+                    "repo_improvement.workflow_settings.feature-finding.max_candidates",
                     "--value",
                     "2",
                 ]
@@ -136,7 +136,7 @@ class TestProjectConfig(unittest.TestCase):
                     "demo",
                     "set",
                     "--key",
-                    "repo_improvement.workflow_settings.bug-fix.dormant_after_zero_scans",
+                    "repo_improvement.workflow_settings.bug-finding.dormant_after_zero_scans",
                     "--value",
                     "1",
                 ]
@@ -157,7 +157,7 @@ class TestProjectConfig(unittest.TestCase):
                     "demo",
                     "set",
                     "--key",
-                    "repo_improvement.workflow_settings.bug-fix.active_window_start_hour",
+                    "repo_improvement.workflow_settings.bug-finding.active_window_start_hour",
                     "--value",
                     "9",
                 ]
@@ -176,7 +176,7 @@ class TestProjectConfig(unittest.TestCase):
                     "demo",
                     "set",
                     "--key",
-                    "repo_improvement.workflow_settings.bug-fix.active_window_end_hour",
+                    "repo_improvement.workflow_settings.bug-finding.active_window_end_hour",
                     "--value",
                     "18",
                 ]
@@ -195,7 +195,7 @@ class TestProjectConfig(unittest.TestCase):
                     "demo",
                     "set",
                     "--key",
-                    "repo_improvement.workflow_settings.bug-fix.max_continuous_runtime_minutes",
+                    "repo_improvement.workflow_settings.bug-finding.max_continuous_runtime_minutes",
                     "--value",
                     "60",
                 ]
