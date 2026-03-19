@@ -5,15 +5,19 @@ from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
 
-from app import crewai_role_registry
 from app import crewai_spec_loader
 from app import improvement_store
 from app import project_config_store
+from app.engines.crewai import team_registry
 
 
 PHASE_FINDING = "finding"
 PHASE_DISCUSSION = "discussion"
 PHASE_CODING = "coding"
+
+
+def _default_team_id() -> str:
+    return team_registry.default_team_id()
 
 def _workflow_now_local() -> _dt.datetime:
     return _dt.datetime.now().astimezone()
@@ -436,51 +440,55 @@ def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: 
     return merged
 
 
-def list_workflows(*, team_id: str = crewai_role_registry.TEAM_REPO_IMPROVEMENT, project_id: str = "teamos") -> tuple[WorkflowSpec, ...]:
+def list_workflows(*, team_id: str = "", project_id: str = "teamos") -> tuple[WorkflowSpec, ...]:
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
     out: list[WorkflowSpec] = []
-    for doc in crewai_spec_loader.list_team_workflow_docs(team_id):
+    for doc in crewai_spec_loader.list_team_workflow_docs(resolved_team_id):
         workflow_id = str(doc.get("workflow_id") or "").strip()
         if not workflow_id:
             continue
-        merged = _workflow_doc_with_overrides(team_id, workflow_id, project_id=project_id)
+        merged = _workflow_doc_with_overrides(resolved_team_id, workflow_id, project_id=project_id)
         out.append(_workflow_spec_from_doc(merged))
     return tuple(out)
 
 
-def workflow_spec(workflow_id: str, *, project_id: str = "teamos") -> WorkflowSpec:
+def workflow_spec(workflow_id: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
     wanted = _canonical_workflow_id(workflow_id)
     if not wanted:
         raise KeyError("workflow_id is required")
-    merged = _workflow_doc_with_overrides(crewai_role_registry.TEAM_REPO_IMPROVEMENT, wanted, project_id=project_id)
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
+    merged = _workflow_doc_with_overrides(resolved_team_id, wanted, project_id=project_id)
     return _workflow_spec_from_doc(merged)
 
 
-def workflow_for_phase(phase: str, *, project_id: str = "teamos") -> WorkflowSpec:
+def workflow_for_phase(phase: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
     normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
-    for spec in list_workflows(project_id=project_id):
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
+    for spec in list_workflows(team_id=resolved_team_id, project_id=project_id):
         if spec.phase == normalized_phase:
             return spec
     raise KeyError(f"unknown workflow phase={normalized_phase!r}")
 
 
-def workflow_for_lane_phase(lane: str, phase: str, *, project_id: str = "teamos") -> WorkflowSpec:
+def workflow_for_lane_phase(lane: str, phase: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
     normalized_lane = str(lane or "").strip().lower() or "bug"
     normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
     if normalized_phase == PHASE_CODING:
-        return workflow_for_phase(PHASE_CODING, project_id=project_id)
-    for spec in list_workflows(project_id=project_id):
+        return workflow_for_phase(PHASE_CODING, team_id=resolved_team_id, project_id=project_id)
+    for spec in list_workflows(team_id=resolved_team_id, project_id=project_id):
         if spec.lane == normalized_lane and spec.phase == normalized_phase:
             return spec
     if normalized_phase == PHASE_DISCUSSION and normalized_lane in ("bug", "process"):
         raise KeyError(f"lane {normalized_lane!r} does not support phase {normalized_phase!r}")
-    for spec in list_workflows(project_id=project_id):
+    for spec in list_workflows(team_id=resolved_team_id, project_id=project_id):
         if spec.lane == normalized_lane and spec.phase == PHASE_FINDING:
             return spec
     raise KeyError(f"unknown workflow for lane={normalized_lane!r} phase={normalized_phase!r}")
 
 
-def workflow_for_lane(lane: str, *, project_id: str = "teamos") -> WorkflowSpec:
-    return workflow_for_lane_phase(lane, PHASE_FINDING, project_id=project_id)
+def workflow_for_lane(lane: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
+    return workflow_for_lane_phase(lane, PHASE_FINDING, team_id=team_id, project_id=project_id)
 
 
 def _workflow_states(target_id: str) -> dict[str, Any]:

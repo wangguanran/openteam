@@ -14,6 +14,7 @@ _add_template_app_to_syspath()
 
 from app import crewai_spec_loader  # noqa: E402
 from app import crewai_role_registry  # noqa: E402
+from app import crewai_team_registry  # noqa: E402
 
 
 class _FakeDB:
@@ -95,17 +96,19 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
         self.assertIn("failing automated test", testcase.goal)
 
     def test_repo_improvement_team_doc_loads_from_nested_path(self):
-        doc = crewai_spec_loader.team_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT)
+        team_id = crewai_team_registry.default_team_id()
+        doc = crewai_spec_loader.team_doc(team_id)
 
-        self.assertEqual(doc.get("team_id"), crewai_role_registry.TEAM_REPO_IMPROVEMENT)
+        self.assertEqual(doc.get("team_id"), team_id)
         self.assertIn(crewai_role_registry.WORKFLOW_FEATURE_FINDING, doc.get("workflow_ids") or [])
         self.assertIn(crewai_role_registry.WORKFLOW_CODING, doc.get("workflow_ids") or [])
         self.assertIn(crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT, doc.get("role_pool") or [])
         self.assertIn(crewai_role_registry.ROLE_CODING_AGENT, doc.get("role_pool") or [])
 
     def test_team_stage_and_workflow_docs_load_from_nested_path(self):
-        stage = crewai_spec_loader.team_stage_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.STAGE_PLANNING)
-        workflow = crewai_spec_loader.team_workflow_doc(crewai_role_registry.TEAM_REPO_IMPROVEMENT, crewai_role_registry.WORKFLOW_CODING)
+        team_id = crewai_team_registry.default_team_id()
+        stage = crewai_spec_loader.team_stage_doc(team_id, crewai_role_registry.STAGE_PLANNING)
+        workflow = crewai_spec_loader.team_workflow_doc(team_id, crewai_role_registry.WORKFLOW_CODING)
 
         self.assertEqual(stage.get("stage_id"), crewai_role_registry.STAGE_PLANNING)
         self.assertTrue(stage.get("members"))

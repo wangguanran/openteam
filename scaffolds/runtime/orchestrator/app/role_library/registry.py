@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from app import crewai_spec_loader
+from app.engines.crewai import team_registry
 
 
 ROLE_PRODUCT_MANAGER = "Product-Manager"
@@ -31,7 +32,6 @@ ROLE_SCHEDULER_AGENT = "Scheduler-Agent"
 ROLE_RELEASE_AGENT = "Release-Agent"
 ROLE_PROCESS_METRICS_AGENT = "Process-Metrics-Agent"
 
-TEAM_REPO_IMPROVEMENT = "repo-improvement"
 STAGE_PLANNING = "planning"
 STAGE_PROPOSAL_CONFIRMATION = "proposal-confirmation"
 STAGE_DELIVERY = "delivery"
@@ -267,6 +267,10 @@ def _team_blueprint_from_doc(doc: dict[str, Any], *, context: Optional[dict[str,
     return TeamBlueprint(team_id=blueprint_id, members=tuple(members))
 
 
+def _default_team_id() -> str:
+    return team_registry.default_team_id()
+
+
 def role_display_zh(role_id: str) -> str:
     rid = str(role_id or "").strip()
     loaded = crewai_spec_loader.role_doc(rid)
@@ -294,8 +298,9 @@ def get_role_spec(role_id: str, *, fallback_role_id: str = "") -> CrewRoleSpec:
     return CrewRoleSpec(role_id=rid)
 
 
-def planning_team_blueprint() -> TeamBlueprint:
-    loaded = crewai_spec_loader.team_stage_doc(TEAM_REPO_IMPROVEMENT, STAGE_PLANNING)
+def planning_team_blueprint(*, team_id: str = "") -> TeamBlueprint:
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
+    loaded = crewai_spec_loader.team_stage_doc(resolved_team_id, STAGE_PLANNING)
     if loaded:
         return _team_blueprint_from_doc(loaded)
     return TeamBlueprint(
@@ -314,8 +319,9 @@ def planning_team_blueprint() -> TeamBlueprint:
     )
 
 
-def discussion_team_blueprint() -> TeamBlueprint:
-    loaded = crewai_spec_loader.team_stage_doc(TEAM_REPO_IMPROVEMENT, STAGE_PROPOSAL_CONFIRMATION)
+def discussion_team_blueprint(*, team_id: str = "") -> TeamBlueprint:
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
+    loaded = crewai_spec_loader.team_stage_doc(resolved_team_id, STAGE_PROPOSAL_CONFIRMATION)
     if loaded:
         return _team_blueprint_from_doc(loaded)
     return TeamBlueprint(
@@ -324,8 +330,9 @@ def discussion_team_blueprint() -> TeamBlueprint:
     )
 
 
-def delivery_team_blueprint(*, owner_role: str, review_role: str, qa_role: str, documentation_role: str) -> TeamBlueprint:
-    loaded = crewai_spec_loader.team_stage_doc(TEAM_REPO_IMPROVEMENT, STAGE_DELIVERY)
+def delivery_team_blueprint(*, owner_role: str, review_role: str, qa_role: str, documentation_role: str, team_id: str = "") -> TeamBlueprint:
+    resolved_team_id = str(team_id or "").strip() or _default_team_id()
+    loaded = crewai_spec_loader.team_stage_doc(resolved_team_id, STAGE_DELIVERY)
     if loaded:
         return _team_blueprint_from_doc(
             loaded,
