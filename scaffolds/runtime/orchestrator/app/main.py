@@ -14,7 +14,10 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.responses import JSONResponse
 from team_os_common import utc_now_iso as _utc_now_iso
+from team_os_logging import get_logger
 from .pydantic_compat import BaseModel, Field
+
+_log = get_logger("team_os.control_plane")
 
 from . import codex_llm
 from .demo_seed import seed_mock_data
@@ -463,7 +466,8 @@ def _db_rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
                             d[k] = str(v)
                 out.append(d)
             return out
-    except Exception:
+    except Exception as exc:
+        _log.warning("db_rows query failed", sql=sql[:200], error=str(exc))
         return []
 
 
@@ -1275,10 +1279,11 @@ def _panel_auto_sync_loop() -> None:
 def _startup_background_threads() -> None:
     from .engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
 
+    _log.info("startup", component="control-plane")
     try:
         _cleanup_stale_team_activity()
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("startup stale cleanup failed", error=str(exc))
 
     def _team_workflow_cleanup_loop() -> None:
         interval_sec = max(30, int(os.getenv("TEAMOS_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC", "60") or "60"))
