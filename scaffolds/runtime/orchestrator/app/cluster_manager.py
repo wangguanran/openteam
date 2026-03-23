@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from team_os_common import utc_now_iso as _utc_now_iso
 
 from .github_issues_bus import GitHubIssuesBusError, IssueRef, ensure_issue, get_issue, update_issue_body, upsert_comment_with_marker
 from .github_projects_client import GitHubAuthError
@@ -12,12 +13,6 @@ from .state_store import team_os_root
 
 class ClusterError(Exception):
     pass
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _parse_iso(ts: str):

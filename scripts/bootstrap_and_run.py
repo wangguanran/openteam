@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import json
 import os
 import signal
@@ -16,6 +15,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from team_os_common import utc_now_iso as _utc_now_iso
+
 _DEFAULT_CREWAI_GIT_URL = "https://github.com/wangguanran/crewAI.git"
 _DEFAULT_CREWAI_GIT_REF = "main"
 _DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/wangguanran/crewAI/tar.gz/refs/heads/main"
@@ -23,10 +25,6 @@ _DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/wangguanran/crewAI/ta
 
 class BootstrapError(Exception):
     pass
-
-
-def _utc_now_iso() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _repo_root() -> Path:
@@ -815,13 +813,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(err, ensure_ascii=False, indent=2))
         else:
-            print(json.dumps(err, ensure_ascii=False, indent=2))
+            for k, v in err.items():
+                print(f"  {k}: {v}")
         return 2
 
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        for k, v in out.items():
+            print(f"  {k}: {v}")
     return 0
 
 

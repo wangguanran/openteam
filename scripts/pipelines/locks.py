@@ -17,11 +17,15 @@ import hashlib
 import json
 import os
 import socket
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from team_os_common import utc_now_iso as _utc_now_iso
 
 from _common import runtime_hub_root, runtime_state_root, runtime_workspace_root
 
@@ -41,12 +45,6 @@ class DbUnavailable(RuntimeError):
     (missing driver / connection failure). This allows falling back to file
     locks without conflating "lock contention" with "DB unavailable".
     """
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _iso_from_epoch(ts: float) -> str:

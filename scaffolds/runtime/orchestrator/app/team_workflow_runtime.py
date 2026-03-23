@@ -181,7 +181,8 @@ def proposal_action_from_comment_text(text: str) -> str:
 
 
 def utc_now_iso() -> str:
-    return _proposal_runtime()._utc_now_iso()
+    from team_os_common import utc_now_iso as _utc_now_iso
+    return _utc_now_iso()
 
 
 def load_yaml(path: Path) -> dict[str, Any]:

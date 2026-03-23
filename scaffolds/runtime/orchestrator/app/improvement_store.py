@@ -12,6 +12,7 @@ from typing import Any, Optional
 from . import workspace_store
 from .runtime_state_store import delete_doc, get_doc, get_state, list_docs, put_doc, put_state
 from .state_store import team_os_root
+from team_os_common import utc_now_iso as _utc_now_iso
 
 
 TARGET_NAMESPACE = "improvement_target"
@@ -20,12 +21,6 @@ DELIVERY_TASK_NAMESPACE = "improvement_delivery_task"
 MILESTONE_NAMESPACE = "improvement_milestone"
 STATE_NAMESPACE = "improvement_state"
 REPORT_NAMESPACE = "improvement_report"
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _slug(text: str, *, default: str = "item") -> str:

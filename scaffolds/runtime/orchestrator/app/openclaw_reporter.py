@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from team_os_common import utc_now_iso as _utc_now_iso
 
 from . import runtime_state_store
 from .state_store import runtime_state_root, team_os_root
@@ -27,12 +28,6 @@ _IGNORED_EVENT_TYPES = ("OPENCLAW_",)
 
 class OpenClawReporterError(Exception):
     pass
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _config_path() -> Path:

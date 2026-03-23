@@ -1,16 +1,14 @@
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 
-def utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+from team_os_common import utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -118,6 +116,7 @@ def _task_lease_row(row: Any) -> TaskLeaseRow:
 class SQLiteRuntimeDB:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._write_lock = threading.Lock()
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
@@ -283,19 +282,20 @@ class SQLiteRuntimeDB:
     ) -> str:
         agent_id = str(uuid.uuid4())
         now = utc_now_iso()
-        conn = self._connect()
-        try:
-            conn.execute(
-                """
-                INSERT INTO agents (agent_id, role_id, project_id, workstream_id, task_id, state, started_at, last_heartbeat, current_action)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (agent_id, role_id, project_id, workstream_id, task_id, state, now, now, current_action),
-            )
-            conn.commit()
-            return agent_id
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO agents (agent_id, role_id, project_id, workstream_id, task_id, state, started_at, last_heartbeat, current_action)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (agent_id, role_id, project_id, workstream_id, task_id, state, now, now, current_action),
+                )
+                conn.commit()
+                return agent_id
+            finally:
+                conn.close()
 
     def heartbeat(self, *, agent_id: str, state: Optional[str] = None, current_action: Optional[str] = None) -> None:
         now = utc_now_iso()
@@ -308,12 +308,13 @@ class SQLiteRuntimeDB:
             sets.append("current_action = ?")
             params.append(current_action)
         params.append(agent_id)
-        conn = self._connect()
-        try:
-            conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE agent_id = ?", params)
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE agent_id = ?", params)
+                conn.commit()
+            finally:
+                conn.close()
 
     def update_assignment(
         self,
@@ -347,12 +348,13 @@ class SQLiteRuntimeDB:
         params.append(agent_id)
         if not sets:
             return
-        conn = self._connect()
-        try:
-            conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE agent_id = ?", params)
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE agent_id = ?", params)
+                conn.commit()
+            finally:
+                conn.close()
 
     def list_agents(
         self,
@@ -409,25 +411,26 @@ class SQLiteRuntimeDB:
     ) -> str:
         rid = run_id or str(uuid.uuid4())
         now = utc_now_iso()
-        conn = self._connect()
-        try:
-            conn.execute(
-                """
-                INSERT INTO runs (run_id, project_id, workstream_id, objective, state, started_at, last_update)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET
-                  project_id=excluded.project_id,
-                  workstream_id=excluded.workstream_id,
-                  objective=excluded.objective,
-                  state=excluded.state,
-                  last_update=excluded.last_update
-                """,
-                (rid, project_id, workstream_id, objective, state, now, now),
-            )
-            conn.commit()
-            return rid
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO runs (run_id, project_id, workstream_id, objective, state, started_at, last_update)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id) DO UPDATE SET
+                      project_id=excluded.project_id,
+                      workstream_id=excluded.workstream_id,
+                      objective=excluded.objective,
+                      state=excluded.state,
+                      last_update=excluded.last_update
+                    """,
+                    (rid, project_id, workstream_id, objective, state, now, now),
+                )
+                conn.commit()
+                return rid
+            finally:
+                conn.close()
 
     def list_runs(self, *, project_id: Optional[str] = None, workstream_id: Optional[str] = None) -> list[RunRow]:
         clauses: list[str] = []
@@ -476,12 +479,13 @@ class SQLiteRuntimeDB:
             conn.close()
 
     def update_run_state(self, *, run_id: str, state: str) -> None:
-        conn = self._connect()
-        try:
-            conn.execute("UPDATE runs SET state = ?, last_update = ? WHERE run_id = ?", (state, utc_now_iso(), run_id))
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("UPDATE runs SET state = ?, last_update = ? WHERE run_id = ?", (state, utc_now_iso(), run_id))
+                conn.commit()
+            finally:
+                conn.close()
 
     # --- Events ---
     def add_event(
@@ -493,16 +497,17 @@ class SQLiteRuntimeDB:
         workstream_id: str,
         payload: dict[str, Any],
     ) -> int:
-        conn = self._connect()
-        try:
-            cur = conn.execute(
-                "INSERT INTO events (ts, event_type, actor, project_id, workstream_id, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
-                (utc_now_iso(), event_type, actor, project_id, workstream_id, json.dumps(payload, ensure_ascii=False)),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO events (ts, event_type, actor, project_id, workstream_id, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
+                    (utc_now_iso(), event_type, actor, project_id, workstream_id, json.dumps(payload, ensure_ascii=False)),
+                )
+                conn.commit()
+                return int(cur.lastrowid)
+            finally:
+                conn.close()
 
     def list_events(self, *, after_id: int = 0, limit: int = 200) -> list[EventRow]:
         lim = max(1, min(int(limit), 1000))
@@ -546,44 +551,46 @@ class SQLiteRuntimeDB:
         tags: list[str],
     ) -> None:
         now = utc_now_iso()
-        conn = self._connect()
-        try:
-            conn.execute(
-                """
-                INSERT INTO nodes (instance_id, role_preference, base_url, heartbeat_at, capabilities_json, resources_json, agent_policy_json, tags_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                  role_preference=excluded.role_preference,
-                  base_url=excluded.base_url,
-                  heartbeat_at=excluded.heartbeat_at,
-                  capabilities_json=excluded.capabilities_json,
-                  resources_json=excluded.resources_json,
-                  agent_policy_json=excluded.agent_policy_json,
-                  tags_json=excluded.tags_json
-                """,
-                (
-                    instance_id,
-                    role_preference,
-                    base_url,
-                    now,
-                    json.dumps(capabilities, ensure_ascii=False),
-                    json.dumps(resources, ensure_ascii=False),
-                    json.dumps(agent_policy, ensure_ascii=False),
-                    json.dumps(tags, ensure_ascii=False),
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO nodes (instance_id, role_preference, base_url, heartbeat_at, capabilities_json, resources_json, agent_policy_json, tags_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(instance_id) DO UPDATE SET
+                      role_preference=excluded.role_preference,
+                      base_url=excluded.base_url,
+                      heartbeat_at=excluded.heartbeat_at,
+                      capabilities_json=excluded.capabilities_json,
+                      resources_json=excluded.resources_json,
+                      agent_policy_json=excluded.agent_policy_json,
+                      tags_json=excluded.tags_json
+                    """,
+                    (
+                        instance_id,
+                        role_preference,
+                        base_url,
+                        now,
+                        json.dumps(capabilities, ensure_ascii=False),
+                        json.dumps(resources, ensure_ascii=False),
+                        json.dumps(agent_policy, ensure_ascii=False),
+                        json.dumps(tags, ensure_ascii=False),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def heartbeat_node(self, *, instance_id: str) -> None:
         now = utc_now_iso()
-        conn = self._connect()
-        try:
-            conn.execute("UPDATE nodes SET heartbeat_at=? WHERE instance_id=?", (now, instance_id))
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("UPDATE nodes SET heartbeat_at=? WHERE instance_id=?", (now, instance_id))
+                conn.commit()
+            finally:
+                conn.close()
 
     def list_nodes(self) -> list[NodeRow]:
         conn = self._connect()
@@ -624,114 +631,116 @@ class SQLiteRuntimeDB:
         exp = _lease_expires_at_iso(lease_ttl_sec)
         meta_json = json.dumps(holder_meta or {}, ensure_ascii=False)
         ttl = max(1, int(lease_ttl_sec or 1))
-        conn = self._connect()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            inserted = conn.execute(
-                """
-                INSERT OR IGNORE INTO task_leases (
-                  lease_scope, lease_key, project_id, task_id, holder_instance_id, holder_actor, holder_meta_json,
-                  lease_ttl_sec, lease_acquired_at, lease_heartbeat_at, lease_expires_at, lease_version, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(lease_scope),
-                    str(lease_key),
-                    str(project_id),
-                    str(task_id),
-                    str(holder_instance_id),
-                    str(holder_actor),
-                    meta_json,
-                    ttl,
-                    now,
-                    now,
-                    exp,
-                    1,
-                    now,
-                    now,
-                ),
-            )
-            if int(inserted.rowcount or 0) > 0:
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                inserted = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO task_leases (
+                      lease_scope, lease_key, project_id, task_id, holder_instance_id, holder_actor, holder_meta_json,
+                      lease_ttl_sec, lease_acquired_at, lease_heartbeat_at, lease_expires_at, lease_version, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(lease_scope),
+                        str(lease_key),
+                        str(project_id),
+                        str(task_id),
+                        str(holder_instance_id),
+                        str(holder_actor),
+                        meta_json,
+                        ttl,
+                        now,
+                        now,
+                        exp,
+                        1,
+                        now,
+                        now,
+                    ),
+                )
+                if int(inserted.rowcount or 0) > 0:
+                    conn.commit()
+                    return self.get_task_lease(lease_key=lease_key)
+
+                row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
+                if not row:
+                    conn.rollback()
+                    return None
+                current = _task_lease_row(row)
+                active = _task_lease_is_active(current.lease_expires_at, now_iso=now)
+                if active and current.holder_instance_id and current.holder_instance_id != str(holder_instance_id):
+                    conn.rollback()
+                    return None
+                acquired_at = current.lease_acquired_at if (active and current.holder_instance_id == str(holder_instance_id)) else now
+                conn.execute(
+                    """
+                    UPDATE task_leases
+                    SET lease_scope = ?, project_id = ?, task_id = ?, holder_instance_id = ?, holder_actor = ?, holder_meta_json = ?,
+                        lease_ttl_sec = ?, lease_acquired_at = ?, lease_heartbeat_at = ?, lease_expires_at = ?, lease_version = ?, updated_at = ?
+                    WHERE lease_key = ?
+                    """,
+                    (
+                        str(lease_scope),
+                        str(project_id),
+                        str(task_id),
+                        str(holder_instance_id),
+                        str(holder_actor),
+                        meta_json,
+                        ttl,
+                        acquired_at,
+                        now,
+                        exp,
+                        int(current.lease_version) + 1,
+                        now,
+                        str(lease_key),
+                    ),
+                )
                 conn.commit()
                 return self.get_task_lease(lease_key=lease_key)
-
-            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
-            if not row:
-                conn.rollback()
-                return None
-            current = _task_lease_row(row)
-            active = _task_lease_is_active(current.lease_expires_at, now_iso=now)
-            if active and current.holder_instance_id and current.holder_instance_id != str(holder_instance_id):
-                conn.rollback()
-                return None
-            acquired_at = current.lease_acquired_at if (active and current.holder_instance_id == str(holder_instance_id)) else now
-            conn.execute(
-                """
-                UPDATE task_leases
-                SET lease_scope = ?, project_id = ?, task_id = ?, holder_instance_id = ?, holder_actor = ?, holder_meta_json = ?,
-                    lease_ttl_sec = ?, lease_acquired_at = ?, lease_heartbeat_at = ?, lease_expires_at = ?, lease_version = ?, updated_at = ?
-                WHERE lease_key = ?
-                """,
-                (
-                    str(lease_scope),
-                    str(project_id),
-                    str(task_id),
-                    str(holder_instance_id),
-                    str(holder_actor),
-                    meta_json,
-                    ttl,
-                    acquired_at,
-                    now,
-                    exp,
-                    int(current.lease_version) + 1,
-                    now,
-                    str(lease_key),
-                ),
-            )
-            conn.commit()
-            return self.get_task_lease(lease_key=lease_key)
-        except Exception:
-            try:
-                conn.rollback()
             except Exception:
-                pass
-            raise
-        finally:
-            conn.close()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
 
     def renew_task_lease(self, *, lease_key: str, holder_instance_id: str, lease_ttl_sec: int) -> Optional[TaskLeaseRow]:
         now = utc_now_iso()
         exp = _lease_expires_at_iso(lease_ttl_sec)
         ttl = max(1, int(lease_ttl_sec or 1))
-        conn = self._connect()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
-            if not row:
-                conn.rollback()
-                return None
-            current = _task_lease_row(row)
-            if current.holder_instance_id != str(holder_instance_id):
-                conn.rollback()
-                return None
-            conn.execute(
-                """
-                UPDATE task_leases
-                SET lease_ttl_sec = ?, lease_heartbeat_at = ?, lease_expires_at = ?, lease_version = ?, updated_at = ?
-                WHERE lease_key = ?
-                """,
-                (ttl, now, exp, int(current.lease_version) + 1, now, str(lease_key)),
-            )
-            conn.commit()
-            return self.get_task_lease(lease_key=lease_key)
-        except Exception:
+        with self._write_lock:
+            conn = self._connect()
             try:
-                conn.rollback()
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute("SELECT * FROM task_leases WHERE lease_key = ?", (str(lease_key),)).fetchone()
+                if not row:
+                    conn.rollback()
+                    return None
+                current = _task_lease_row(row)
+                if current.holder_instance_id != str(holder_instance_id):
+                    conn.rollback()
+                    return None
+                conn.execute(
+                    """
+                    UPDATE task_leases
+                    SET lease_ttl_sec = ?, lease_heartbeat_at = ?, lease_expires_at = ?, lease_version = ?, updated_at = ?
+                    WHERE lease_key = ?
+                    """,
+                    (ttl, now, exp, int(current.lease_version) + 1, now, str(lease_key)),
+                )
+                conn.commit()
+                return self.get_task_lease(lease_key=lease_key)
             except Exception:
-                pass
-            raise
-        finally:
-            conn.close()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
 
     def get_task_lease(self, *, lease_key: str) -> Optional[TaskLeaseRow]:
         conn = self._connect()
@@ -742,19 +751,20 @@ class SQLiteRuntimeDB:
             conn.close()
 
     def release_task_lease(self, *, lease_key: str, holder_instance_id: str = "") -> bool:
-        conn = self._connect()
-        try:
-            if str(holder_instance_id or "").strip():
-                cur = conn.execute(
-                    "DELETE FROM task_leases WHERE lease_key = ? AND holder_instance_id = ?",
-                    (str(lease_key), str(holder_instance_id)),
-                )
-            else:
-                cur = conn.execute("DELETE FROM task_leases WHERE lease_key = ?", (str(lease_key),))
-            conn.commit()
-            return int(cur.rowcount or 0) > 0
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                if str(holder_instance_id or "").strip():
+                    cur = conn.execute(
+                        "DELETE FROM task_leases WHERE lease_key = ? AND holder_instance_id = ?",
+                        (str(lease_key), str(holder_instance_id)),
+                    )
+                else:
+                    cur = conn.execute("DELETE FROM task_leases WHERE lease_key = ?", (str(lease_key),))
+                conn.commit()
+                return int(cur.rowcount or 0) > 0
+            finally:
+                conn.close()
 
     def list_task_leases(
         self,
@@ -801,29 +811,30 @@ class SQLiteRuntimeDB:
         ts_start: Optional[str] = None,
         ts_end: Optional[str] = None,
     ) -> int:
-        conn = self._connect()
-        try:
-            cur = conn.execute(
-                """
-                INSERT INTO panel_sync_runs (ts_start, ts_end, project_id, panel_type, mode, dry_run, ok, stats_json, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    ts_start or utc_now_iso(),
-                    ts_end or utc_now_iso(),
-                    str(project_id),
-                    str(panel_type),
-                    str(mode),
-                    1 if dry_run else 0,
-                    1 if ok else 0,
-                    json.dumps(stats, ensure_ascii=False),
-                    (error or "")[:2000],
-                ),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    """
+                    INSERT INTO panel_sync_runs (ts_start, ts_end, project_id, panel_type, mode, dry_run, ok, stats_json, error)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ts_start or utc_now_iso(),
+                        ts_end or utc_now_iso(),
+                        str(project_id),
+                        str(panel_type),
+                        str(mode),
+                        1 if dry_run else 0,
+                        1 if ok else 0,
+                        json.dumps(stats, ensure_ascii=False),
+                        (error or "")[:2000],
+                    ),
+                )
+                conn.commit()
+                return int(cur.lastrowid)
+            finally:
+                conn.close()
 
     def get_last_panel_sync(self, *, project_id: Optional[str] = None, panel_type: str = "github_projects") -> Optional[dict[str, Any]]:
         conn = self._connect()
@@ -902,18 +913,19 @@ class SQLiteRuntimeDB:
             conn.close()
 
     def set_panel_kv(self, *, key: str, value: dict[str, Any]) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(
-                """
-                INSERT INTO panel_kv (key, value_json, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
-                """,
-                (key, json.dumps(value, ensure_ascii=False), utc_now_iso()),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO panel_kv (key, value_json, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+                    """,
+                    (key, json.dumps(value, ensure_ascii=False), utc_now_iso()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_panel_kv(self, *, key: str) -> Optional[dict[str, Any]]:
         conn = self._connect()
@@ -931,21 +943,22 @@ class SQLiteRuntimeDB:
 
     # --- Generic runtime state/docs ---
     def put_runtime_state(self, *, namespace: str, state_key: str, value: dict[str, Any]) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(
-                """
-                INSERT INTO runtime_state (namespace, state_key, value_json, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(namespace, state_key) DO UPDATE SET
-                  value_json=excluded.value_json,
-                  updated_at=excluded.updated_at
-                """,
-                (str(namespace), str(state_key), json.dumps(value, ensure_ascii=False), utc_now_iso()),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO runtime_state (namespace, state_key, value_json, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(namespace, state_key) DO UPDATE SET
+                      value_json=excluded.value_json,
+                      updated_at=excluded.updated_at
+                    """,
+                    (str(namespace), str(state_key), json.dumps(value, ensure_ascii=False), utc_now_iso()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_runtime_state(self, *, namespace: str, state_key: str) -> Optional[dict[str, Any]]:
         conn = self._connect()
@@ -965,12 +978,13 @@ class SQLiteRuntimeDB:
             conn.close()
 
     def delete_runtime_state(self, *, namespace: str, state_key: str) -> None:
-        conn = self._connect()
-        try:
-            conn.execute("DELETE FROM runtime_state WHERE namespace = ? AND state_key = ?", (str(namespace), str(state_key)))
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM runtime_state WHERE namespace = ? AND state_key = ?", (str(namespace), str(state_key)))
+                conn.commit()
+            finally:
+                conn.close()
 
     def list_runtime_state(self, *, namespace: str, prefix: str = "") -> list[dict[str, Any]]:
         conn = self._connect()
@@ -1008,35 +1022,36 @@ class SQLiteRuntimeDB:
         value: dict[str, Any],
     ) -> None:
         now = utc_now_iso()
-        conn = self._connect()
-        try:
-            conn.execute(
-                """
-                INSERT INTO runtime_docs (namespace, doc_id, project_id, scope_id, state, category, created_at, updated_at, value_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(namespace, doc_id) DO UPDATE SET
-                  project_id=excluded.project_id,
-                  scope_id=excluded.scope_id,
-                  state=excluded.state,
-                  category=excluded.category,
-                  updated_at=excluded.updated_at,
-                  value_json=excluded.value_json
-                """,
-                (
-                    str(namespace),
-                    str(doc_id),
-                    str(project_id),
-                    str(scope_id),
-                    str(state),
-                    str(category),
-                    now,
-                    now,
-                    json.dumps(value, ensure_ascii=False),
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO runtime_docs (namespace, doc_id, project_id, scope_id, state, category, created_at, updated_at, value_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(namespace, doc_id) DO UPDATE SET
+                      project_id=excluded.project_id,
+                      scope_id=excluded.scope_id,
+                      state=excluded.state,
+                      category=excluded.category,
+                      updated_at=excluded.updated_at,
+                      value_json=excluded.value_json
+                    """,
+                    (
+                        str(namespace),
+                        str(doc_id),
+                        str(project_id),
+                        str(scope_id),
+                        str(state),
+                        str(category),
+                        now,
+                        now,
+                        json.dumps(value, ensure_ascii=False),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_runtime_doc(self, *, namespace: str, doc_id: str) -> Optional[dict[str, Any]]:
         conn = self._connect()
@@ -1069,12 +1084,13 @@ class SQLiteRuntimeDB:
             conn.close()
 
     def delete_runtime_doc(self, *, namespace: str, doc_id: str) -> None:
-        conn = self._connect()
-        try:
-            conn.execute("DELETE FROM runtime_docs WHERE namespace = ? AND doc_id = ?", (str(namespace), str(doc_id)))
-            conn.commit()
-        finally:
-            conn.close()
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM runtime_docs WHERE namespace = ? AND doc_id = ?", (str(namespace), str(doc_id)))
+                conn.commit()
+            finally:
+                conn.close()
 
     def list_runtime_docs(
         self,

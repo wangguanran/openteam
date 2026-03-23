@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from team_os_common import utc_now_iso as _utc_now_iso
 
 from app import cluster_manager
 from app import crewai_agent_factory
@@ -64,10 +65,6 @@ _SAFE_TEST_PREFIXES = (
 )
 
 _DELIVERY_LEASE_SCOPE = "team_workflow_coding"
-
-
-def _utc_now_iso() -> str:
-    return planning._utc_now_iso()
 
 
 def _slug(text: str, *, default: str = "item") -> str:

@@ -3,13 +3,10 @@ import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from team_os_common import utc_now_iso as _utc_now_iso
+
 from _common import requirements_dir, parse_scope
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def main(argv: list[str]) -> int:

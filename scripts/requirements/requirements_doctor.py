@@ -4,6 +4,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from team_os_common import utc_now_iso as _utc_now_iso
+
 import yaml
 
 from _common import add_template_app_to_syspath, parse_scope, repo_root, requirements_dir, workspace_root
@@ -20,12 +23,6 @@ def _is_within(child: Path, parent: Path) -> bool:
 def _fail(msg: str) -> int:
     print(f"FAIL: {msg}")
     return 2
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _validate_raw_item(item: dict) -> list[str]:

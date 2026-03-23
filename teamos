@@ -78,6 +78,13 @@ def _http_json(
         raise RuntimeError(f"HTTP request failed: {e}") from e
 
 
+def _safe_json_loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+
+
 def _iter_sse_events(resp: Any):
     event_type = "message"
     data_lines: list[str] = []
@@ -90,7 +97,7 @@ def _iter_sse_events(resp: Any):
                 yield {
                     "event": event_type,
                     "id": event_id,
-                    "data": json.loads(payload_text) if payload_text else {},
+                    "data": _safe_json_loads(payload_text) if payload_text else {},
                 }
             break
         line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -100,7 +107,7 @@ def _iter_sse_events(resp: Any):
                 yield {
                     "event": event_type,
                     "id": event_id,
-                    "data": json.loads(payload_text) if payload_text else {},
+                    "data": _safe_json_loads(payload_text) if payload_text else {},
                 }
             event_type = "message"
             data_lines = []

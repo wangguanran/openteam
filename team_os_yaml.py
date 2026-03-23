@@ -27,9 +27,13 @@ def _strip_comment(text: str) -> str:
     bracket_depth = 0
     for idx, ch in enumerate(text):
         if ch == "'" and not in_double:
+            if idx > 0 and text[idx - 1] == "\\":
+                continue
             in_single = not in_single
             continue
         if ch == '"' and not in_single:
+            if idx > 0 and text[idx - 1] == "\\":
+                continue
             in_double = not in_double
             continue
         if in_single or in_double:

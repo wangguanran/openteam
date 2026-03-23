@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import yaml
+from team_os_common import utc_now_iso as _utc_now_iso
 
 from app import codex_llm
 from app import crew_tools
@@ -145,12 +146,6 @@ class LocalizedTaskText(BaseModel):
 def _env_truthy(name: str, default: str = "0") -> bool:
     raw = os.getenv(name)
     return str(raw if raw is not None else default).strip().lower() not in ("", "0", "false", "no", "off")
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _ts_compact_utc() -> str:

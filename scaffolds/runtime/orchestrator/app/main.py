@@ -13,6 +13,7 @@ from agents import Agent  # OpenAI Agents SDK (placeholder; must not call models
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.responses import JSONResponse
+from team_os_common import utc_now_iso as _utc_now_iso
 from .pydantic_compat import BaseModel, Field
 
 from . import codex_llm
@@ -98,12 +99,6 @@ CONTROL_PLANE_AGENT = Agent(
         "prompt-injection defenses; requirements conflict detection."
     ),
 )
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 _TASK_STATE_IN_PROGRESS = frozenset({"doing", "running", "work", "in_progress", "inprogress"})
@@ -454,30 +449,22 @@ def _db_rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         import psycopg  # type: ignore
         from psycopg.rows import dict_row  # type: ignore
 
-        conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3)
+        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3) as conn:
+            with conn.cursor() as cur:
+                rows = cur.execute(sql, params).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows or []:
+                d = dict(r)
+                for k, v in list(d.items()):
+                    if hasattr(v, "isoformat"):
+                        try:
+                            d[k] = v.isoformat()
+                        except Exception:
+                            d[k] = str(v)
+                out.append(d)
+            return out
     except Exception:
         return []
-    try:
-        with conn.cursor() as cur:
-            rows = cur.execute(sql, params).fetchall()
-        out: list[dict[str, Any]] = []
-        for r in rows or []:
-            d = dict(r)
-            for k, v in list(d.items()):
-                if hasattr(v, "isoformat"):
-                    try:
-                        d[k] = v.isoformat()
-                    except Exception:
-                        d[k] = str(v)
-            out.append(d)
-        return out
-    except Exception:
-        return []
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 
 def _tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:

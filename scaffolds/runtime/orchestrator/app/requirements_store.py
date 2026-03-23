@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from team_os_common import utc_now_iso as _utc_now_iso
 
 from . import codex_llm
 from .req_conflict import ConflictFinding, detect_conflicts, detect_duplicate, infer_workstreams
@@ -36,13 +37,6 @@ class AddReqOutcome:
     feasibility_report_path: Optional[str] = None
     baseline_version: Optional[int] = None
     baseline_path: Optional[str] = None
-
-
-def _utc_now_iso() -> str:
-    # ISO 8601, seconds precision, UTC "Z"
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

@@ -6,16 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from team_os_common import utc_now_iso as _utc_now_iso
+
 
 def _repo_root() -> Path:
     # <repo>/scripts/metrics/collect_from_logs.py
     return Path(__file__).resolve().parents[2]
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 @dataclass

@@ -11,7 +11,6 @@ Design goals:
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import hashlib
 import json
 import os
@@ -21,6 +20,9 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from team_os_common import utc_now_iso, eprint  # noqa: E402
+
 import yaml
 
 
@@ -29,14 +31,6 @@ class PipelineError(Exception):
 
 
 _PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-
-
-def eprint(*a: Any) -> None:
-    print(*a, file=sys.stderr)
-
-
-def utc_now_iso() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def ts_compact_utc() -> str:

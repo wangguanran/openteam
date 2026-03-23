@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from team_os_common import utc_now_iso as _utc_now_iso
 
 
 class StateError(Exception):
@@ -80,12 +81,6 @@ def teamos_requirements_dir() -> Path:
 def teamos_plan_dir() -> Path:
     # Team OS self planning overlay (scope=teamos).
     return team_os_root() / "docs" / "plans" / "teamos"
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

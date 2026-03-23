@@ -2,20 +2,18 @@
 import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from team_os_common import utc_now_iso as _utc_now_iso
 
 import yaml
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
-
-
-def _utc_now_iso() -> str:
-    import datetime as _dt
-
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _ts_compact() -> str:
