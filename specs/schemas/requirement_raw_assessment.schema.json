@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "TeamOS Raw Feasibility Assessment Index (v3)",
+  "title": "OpenTeam Raw Feasibility Assessment Index (v3)",
   "type": "object",
   "additionalProperties": false,
   "required": ["raw_id", "assessed_at", "outcome", "report_path"],

@@ -8,7 +8,7 @@ from _common import add_template_app_to_syspath, requirements_dir, parse_scope
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Requirements Protocol v2 (Raw-First): capture -> drift/conflict -> expand")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--channel", default="cli", help="cli|api|chat|import")
     ap.add_argument("--user", default="user")
     ap.add_argument("--priority", default="P2")

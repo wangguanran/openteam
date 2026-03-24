@@ -8,7 +8,7 @@ from _common import add_template_app_to_syspath, requirements_dir, parse_scope
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Baseline Drift Check (structural/determinism)")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--fix", action="store_true", help="apply safe fixes (rewrite REQUIREMENTS.md, update baseline metadata)")
     args = ap.parse_args(argv)
 

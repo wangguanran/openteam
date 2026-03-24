@@ -26,7 +26,7 @@ from .github_projects_client import (
 from .panel_mapping import MappingDoc, PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import list_milestones
 from .runtime_db import RuntimeDB
-from .state_store import ledger_tasks_dir, load_focus, runtime_state_root, team_os_root, teamos_requirements_dir
+from .state_store import ledger_tasks_dir, load_focus, runtime_state_root, openteam_root, openteam_requirements_dir
 from .workspace_store import ensure_project_scaffold, ledger_tasks_dir as ws_ledger_tasks_dir, requirements_dir as ws_requirements_dir
 
 
@@ -41,7 +41,7 @@ class DesiredItem:
     title: str
     body: str
     workstreams: list[str]
-    status_key: str  # TeamOS Status option key (e.g. TODO)
+    status_key: str  # OpenTeam Status option key (e.g. TODO)
     risk_key: str  # Risk option key (e.g. LOW)
     need_pm: bool
     focus: str
@@ -109,7 +109,7 @@ def _panel_item_title(raw_title: str, *, kind: str = "", lane: str = "", module:
 
 
 def _load_tasks(project_id: str) -> list[dict[str, Any]]:
-    if str(project_id) == "teamos":
+    if str(project_id) == "openteam":
         d = ledger_tasks_dir()
     else:
         ensure_project_scaffold(project_id)
@@ -131,8 +131,8 @@ def _load_tasks(project_id: str) -> list[dict[str, Any]]:
 
 
 def _load_requirements_need_pm(project_id: str) -> list[dict[str, Any]]:
-    if str(project_id) == "teamos":
-        req_dir = teamos_requirements_dir()
+    if str(project_id) == "openteam":
+        req_dir = openteam_requirements_dir()
     else:
         ensure_project_scaffold(project_id)
         req_dir = ws_requirements_dir(project_id)
@@ -148,8 +148,8 @@ def _load_requirements_need_pm(project_id: str) -> list[dict[str, Any]]:
 
 
 def _load_requirements(project_id: str) -> list[dict[str, Any]]:
-    if str(project_id) == "teamos":
-        req_dir = teamos_requirements_dir()
+    if str(project_id) == "openteam":
+        req_dir = openteam_requirements_dir()
     else:
         ensure_project_scaffold(project_id)
         req_dir = ws_requirements_dir(project_id)
@@ -436,8 +436,8 @@ def _desired_items(
                         m.objective or "",
                         "",
                         (
-                            f"Plan: docs/plans/teamos/plan.yaml"
-                            if str(project_id) == "teamos"
+                            f"Plan: docs/plans/openteam/plan.yaml"
+                            if str(project_id) == "openteam"
                             else f"Plan: <WORKSPACE>/projects/{project_id}/state/plan/plan.yaml"
                         ),
                         "",
@@ -538,7 +538,7 @@ def _make_single_select_options(spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 class GitHubProjectsPanelSync:
     """
-    Sync TeamOS truth -> GitHub Projects v2 (view layer).
+    Sync OpenTeam truth -> GitHub Projects v2 (view layer).
 
     Safety:
     - dry_run: does not call GitHub, only computes planned actions.
@@ -558,7 +558,7 @@ class GitHubProjectsPanelSync:
         except PanelMappingError as e:
             # Still allow dry-run without mapping file by returning a minimal plan.
             if dry_run:
-                mapping = MappingDoc(path=team_os_root() / "integrations" / "github_projects" / "mapping.yaml", sha256="missing", data={"projects": {}})
+                mapping = MappingDoc(path=openteam_root() / "integrations" / "github_projects" / "mapping.yaml", sha256="missing", data={"projects": {}})
             else:
                 raise
 
@@ -747,8 +747,8 @@ class GitHubProjectsPanelSync:
                 set_field(item_id, "task_id", _field_value_input("TEXT", text=it.key))
 
                 # Status
-                status_field = resolved_fields["teamos_status"]
-                opt = status_field["options_by_name"].get(str((cfg.get("fields") or {}).get("teamos_status", {}).get("options", {}).get(it.status_key, {}).get("name") or it.status_key))
+                status_field = resolved_fields["openteam_status"]
+                opt = status_field["options_by_name"].get(str((cfg.get("fields") or {}).get("openteam_status", {}).get("options", {}).get(it.status_key, {}).get("name") or it.status_key))
                 # Fallback by option key -> name
                 if not opt:
                     # try direct match on option name
@@ -757,7 +757,7 @@ class GitHubProjectsPanelSync:
                             opt = o
                             break
                 if opt and opt.get("id"):
-                    set_field(item_id, "teamos_status", _field_value_input("SINGLE_SELECT", single_select_option_id=str(opt["id"])))
+                    set_field(item_id, "openteam_status", _field_value_input("SINGLE_SELECT", single_select_option_id=str(opt["id"])))
 
                 # Workstreams (text for MVP; comma-separated)
                 set_field(item_id, "workstreams", _field_value_input("TEXT", text=",".join(sorted(set(it.workstreams)))))

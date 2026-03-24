@@ -32,5 +32,5 @@
 
 ## 参考来源 (Sources)
 
-- `.team-os/kb/sources/<YYYYMMDD>_<slug>.md`
+- `.openteam/kb/sources/<YYYYMMDD>_<slug>.md`
 

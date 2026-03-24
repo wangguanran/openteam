@@ -57,15 +57,15 @@ def _locate_task(repo: Path, ws_root: Path, *, scope: str, task_id: str) -> tupl
         raise PipelineError("task_id is required")
 
     scope = str(scope or "").strip()
-    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
+    runtime_override = "" if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
     state_root = runtime_state_root(override=runtime_override)
 
-    # 1) teamos
-    if scope in ("", "teamos"):
+    # 1) openteam
+    if scope in ("", "openteam"):
         led = _find_task_in_dir(state_root / "ledger" / "tasks", task_id)
         if led:
             logs = state_root / "logs" / "tasks" / task_id
-            return ("teamos", "teamos", led, logs)
+            return ("openteam", "openteam", led, logs)
 
     # 2) explicit project:<id> (best-effort)
     if scope.startswith("project:"):
@@ -97,7 +97,7 @@ def _git_clean(repo: Path) -> bool:
 
 
 _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("TEAMOS_LLM_API_KEY", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")),
+    ("OPENTEAM_LLM_API_KEY", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")),
     ("GITHUB_TOKEN", re.compile(r"\bghp_[A-Za-z0-9]{20,}\b")),
     ("GITHUB_PAT", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("SLACK_TOKEN", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Ship a task (close -> gates -> commit -> push)")
     add_default_args(ap)
     ap.add_argument("task_id")
-    ap.add_argument("--scope", default="teamos", help="teamos | project:<id> (default: teamos)")
+    ap.add_argument("--scope", default="openteam", help="openteam | project:<id> (default: openteam)")
     ap.add_argument("--summary", default="", help="commit summary (default: ledger title)")
     ap.add_argument("--base", default="main", help="PR base branch (gh only; default: main)")
     ap.add_argument("--no-pr", action="store_true", help="do not create PR")
@@ -354,10 +354,10 @@ def main(argv: list[str] | None = None) -> int:
                         f"Task: {task_id}",
                         "",
                         "Acceptance:",
-                        f"- ./teamos task close {task_id} --scope {scope}",
-                        "- ./teamos policy check",
+                        f"- ./openteam task close {task_id} --scope {scope}",
+                        "- ./openteam policy check",
                         "- python3 -m unittest -q",
-                        "- ./teamos doctor",
+                        "- ./openteam doctor",
                         "",
                         f"Ship: {branch}",
                     ]

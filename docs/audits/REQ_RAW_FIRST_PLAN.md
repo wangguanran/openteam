@@ -4,22 +4,22 @@
 
 ## 1. 目标与约束回顾
 
-目标：当用户通过 `teamos CLI / Control Plane API / chat` 输入任何“需求”时，系统必须 **先逐字落盘原始输入（Raw‑First）**，再生成/更新 **Expanded Requirements**。若已有 Expanded，则必须先校验：
+目标：当用户通过 `openteam CLI / Control Plane API / chat` 输入任何“需求”时，系统必须 **先逐字落盘原始输入（Raw‑First）**，再生成/更新 **Expanded Requirements**。若已有 Expanded，则必须先校验：
 
 1. Baseline Drift Check：Expanded 是否与 Baseline（原始需求基线）发生漂移/背离
 2. New‑Input Conflict Check：本次新增需求是否与现有 Expanded 冲突/覆盖/互斥
 
-约束：必须兼容现有 Team OS 机制（Workspace 隔离、Repo Purity、Projects 面板、集群 leader-only 写入、断点恢复、OAuth/Codex）。
+约束：必须兼容现有 OpenTeam 机制（Workspace 隔离、Repo Purity、Projects 面板、集群 leader-only 写入、断点恢复、OAuth/Codex）。
 
 ## 2. 现状扫描（v1）
 
 ### 2.1 当前需求存储
 
-- Team‑OS 自身需求（scope=teamos）：
-  - `docs/product/teamos/requirements/requirements.yaml`
-  - `docs/product/teamos/requirements/REQUIREMENTS.md`
-  - `docs/product/teamos/requirements/CHANGELOG.md`
-  - `docs/product/teamos/requirements/conflicts/`
+- Team‑OS 自身需求（scope=openteam）：
+  - `docs/product/openteam/requirements/requirements.yaml`
+  - `docs/product/openteam/requirements/REQUIREMENTS.md`
+  - `docs/product/openteam/requirements/CHANGELOG.md`
+  - `docs/product/openteam/requirements/conflicts/`
 - 项目需求（scope=project:<id>，Workspace）：
   - `<WORKSPACE>/projects/<id>/state/requirements/requirements.yaml`
   - `<WORKSPACE>/projects/<id>/state/requirements/REQUIREMENTS.md`
@@ -49,7 +49,7 @@
 - 缺少严格的 v2 流程顺序保证：
   - 现有逻辑是“直接写 Expanded”并记录 changelog，并不保证 Raw‑First
 - CLI/API 缺少 `scope` 统一：
-  - 当前 CLI 用 `--project` + `project_id`；v2 要求显式 `--scope teamos|project:<id>`
+  - 当前 CLI 用 `--project` + `project_id`；v2 要求显式 `--scope openteam|project:<id>`
 - leader-only 写入门禁未覆盖需求写入：
   - 当前需求写入未强制要求 Brain/leader（需要补齐 409 + leader redirect）
 
@@ -57,10 +57,10 @@
 
 ### 3.1 统一 Scope
 
-- `scope=teamos`：允许写入 repo 内 `docs/product/teamos/requirements/`
+- `scope=openteam`：允许写入 repo 内 `docs/product/openteam/requirements/`
 - `scope=project:<id>`：必须写入 Workspace `.../projects/<id>/state/requirements/`
 - 兼容旧接口：
-  - `/v1/requirements`（旧）映射为 `/v1/requirements/add`（scope=project:<project_id>，或 project_id==teamos -> scope=teamos）
+  - `/v1/requirements`（旧）映射为 `/v1/requirements/add`（scope=project:<project_id>，或 project_id==openteam -> scope=openteam）
 
 ### 3.2 目标目录结构（新增）
 
@@ -134,13 +134,13 @@
 
 ### 4.3 修改（CLI）
 
-- `teamos req add`：
-  - 新增 `--scope`（默认从 `default_project_id` 推导；`teamos` 自动映射为 scope=teamos）
+- `openteam req add`：
+  - 新增 `--scope`（默认从 `default_project_id` 推导；`openteam` 自动映射为 scope=openteam）
 - 新增命令：
-  - `teamos req import --file ... --scope ...`
-  - `teamos req verify --scope ...`
-  - `teamos req rebuild --scope ...`
-  - `teamos req baseline show|set-v2 --scope ...`
+  - `openteam req import --file ... --scope ...`
+  - `openteam req verify --scope ...`
+  - `openteam req rebuild --scope ...`
+  - `openteam req baseline show|set-v2 --scope ...`
 - 增强 HTTP 409 leader redirect：
   - CLI 遇到 409 且返回 JSON 包含 `leader_base_url` 时，自动重试到 leader
 
@@ -151,7 +151,7 @@
 
 ### 4.5 文档与治理
 
-- `docs/runbooks/EXECUTION_RUNBOOK.md`：新增 Raw‑First v2 章节（scope=teamos vs project）
+- `docs/runbooks/EXECUTION_RUNBOOK.md`：新增 Raw‑First v2 章节（scope=openteam vs project）
 - `docs/product/GOVERNANCE.md`：Baseline 不可覆盖、冲突处理/NEED_PM_DECISION
 - `AGENTS.md`：禁止手改 Expanded（会被 rebuild 覆盖并记录）、需求输入必须 Raw‑First
 
@@ -170,5 +170,5 @@
 
 - 风险：现存 `requirements.yaml` 没有 baseline/raw_inputs，首次启用 v2 可能需要自动补齐“legacy baseline”以避免阻断。
 - 回滚：
-  - teamos scope 可依赖 git 历史回滚
+  - openteam scope 可依赖 git 历史回滚
   - project scope 在 workspace 侧写入 `history/` 以便人工回退（不影响 repo purity）

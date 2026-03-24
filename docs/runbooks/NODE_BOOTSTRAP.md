@@ -1,6 +1,6 @@
 # 加新节点（SSH 推送部署 + 一键加入脚本）
 
-本手册描述如何把一台新机器加入 Team OS 集群。
+本手册描述如何把一台新机器加入 OpenTeam 集群。
 
 原则：
 
@@ -9,12 +9,12 @@
 - 默认 dry-run：只打印计划，不做远程安装/写 systemd/启动服务
 - 远程安装依赖/写 systemd/启动服务属于高风险动作，必须审批后执行
 
-## 方式 A：Brain 通过 SSH 推送部署（`teamos node add`）
+## 方式 A：Brain 通过 SSH 推送部署（`openteam node add`）
 
 预期命令（待实现）：
 
 ```bash
-teamos node add --host 10.0.0.8 --user ubuntu --ssh-key ~/.ssh/id_ed25519 \\
+openteam node add --host 10.0.0.8 --user ubuntu --ssh-key ~/.ssh/id_ed25519 \\
   --role assistant \\
   --capabilities "repo_rw,docker" \\
   --tags "site:bj,device:no"
@@ -23,15 +23,15 @@ teamos node add --host 10.0.0.8 --user ubuntu --ssh-key ~/.ssh/id_ed25519 \\
 如果只能密码登录（不推荐），必须使用 stdin 或交互式输入，不得出现在参数里：
 
 ```bash
-printf '%s' "$SSH_PASSWORD" | teamos node add --host 10.0.0.8 --user ubuntu --password-stdin
+printf '%s' "$SSH_PASSWORD" | openteam node add --host 10.0.0.8 --user ubuntu --password-stdin
 ```
 
 ### 远程部署内容（最小闭环）
 
-1. 创建目录（可配置）：`/opt/team-os-node`
+1. 创建目录（可配置）：`/opt/openteam-node`
 2. 拉取 runtime 代码（从本仓库或 release tarball）
-3. 写入配置：`/opt/team-os-node/config.yaml`
-4. 注册 systemd：服务名 `teamos-node`（推荐）
+3. 写入配置：`/opt/openteam-node/config.yaml`
+4. 注册 systemd：服务名 `openteam-node`（推荐）
 5. 启动并验证：能在 `CLUSTER-NODES` 更新心跳（远程写需 env gate + 认证）
 
 ### 认证要求
@@ -45,11 +45,11 @@ printf '%s' "$SSH_PASSWORD" | teamos node add --host 10.0.0.8 --user ubuntu --pa
 
 预期：在新服务器上执行一条命令加入集群（幂等、可重复执行）。
 
-示例（命令由 `teamos node join-script` 输出，不包含任何 secrets）：
+示例（命令由 `openteam node join-script` 输出，不包含任何 secrets）：
 
 ```bash
-curl -fsSL https://example.invalid/teamos/join_node.sh | bash -s -- \\
-  --cluster-repo wangguanran/team-os \\
+curl -fsSL https://example.invalid/openteam/join_node.sh | bash -s -- \\
+  --cluster-repo openteam-dev/openteam \\
   --brain-base-url http://10.0.0.1:8787 \\
   --role assistant \\
   --capabilities "repo_rw,docker" \\
@@ -78,11 +78,11 @@ curl -fsSL https://example.invalid/teamos/join_node.sh | bash -s -- \\
 After node bootstrap, Brain can push hub DB/Redis config directly:
 
 ```bash
-teamos node add --host <ip> --user <user> --cluster-repo <owner/repo> --execute --push-hub-config --ssh-key ~/.ssh/id_ed25519
+openteam node add --host <ip> --user <user> --cluster-repo <owner/repo> --execute --push-hub-config --ssh-key ~/.ssh/id_ed25519
 ```
 
 Password mode:
 
 ```bash
-printf '%s' "$SSH_PASSWORD" | teamos node add --host <ip> --user <user> --cluster-repo <owner/repo> --execute --password-stdin --push-hub-config
+printf '%s' "$SSH_PASSWORD" | openteam node add --host <ip> --user <user> --cluster-repo <owner/repo> --execute --password-stdin --push-hub-config
 ```

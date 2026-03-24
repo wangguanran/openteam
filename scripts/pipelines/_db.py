@@ -4,7 +4,7 @@ Postgres helpers for deterministic pipelines.
 
 Notes:
 - We intentionally avoid any ORM and keep dependencies minimal.
-- psycopg (v3) is optional but required when TEAMOS_DB_URL is set and DB-backed features are used.
+- psycopg (v3) is optional but required when OPENTEAM_DB_URL is set and DB-backed features are used.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from _common import PipelineError
 def get_db_url(*, override: str = "") -> str:
     """
     Resolve the DB DSN.
-    Priority: explicit override -> env TEAMOS_DB_URL.
+    Priority: explicit override -> env OPENTEAM_DB_URL.
     """
     dsn = str(override or "").strip()
     if not dsn:
-        dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+        dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
     return dsn
 
 
@@ -33,7 +33,7 @@ def connect(dsn: str):
     """
     dsn = str(dsn or "").strip()
     if not dsn:
-        raise PipelineError("missing db dsn (set TEAMOS_DB_URL or pass --db-url)")
+        raise PipelineError("missing db dsn (set OPENTEAM_DB_URL or pass --db-url)")
     try:
         import psycopg  # type: ignore
         from psycopg.rows import dict_row  # type: ignore

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Print a one-liner to join a node to the Team OS cluster.
+Print a one-liner to join a node to the OpenTeam cluster.
 
 This does NOT include passwords/keys/tokens.
 

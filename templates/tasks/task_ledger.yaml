@@ -1,7 +1,7 @@
 id: "<TASK_ID>"
 title: "<TITLE>"
-project_id: "teamos" # scope=teamos (Team OS self). Project scopes must live in Workspace (outside this repo).
-workstream_id: "general" # workstream registry: .team-os/state/workstreams.yaml
+project_id: "openteam" # scope=openteam (OpenTeam self). Project scopes must live in Workspace (outside this repo).
+workstream_id: "general" # workstream registry: .openteam/state/workstreams.yaml
 status: "intake" # intake|plan|todo|doing|test|release|observe|retro|closed (aliases: work|running -> doing)
 risk_level: "R1" # R0|R1|R2|R3
 need_pm_decision: false
@@ -31,8 +31,8 @@ links:
   pr: ""
   issue: ""
 artifacts:
-  ledger: ".team-os/ledger/tasks/<TASK_ID>.yaml"
-  logs_dir: ".team-os/logs/tasks/<TASK_ID>/"
+  ledger: ".openteam/ledger/tasks/<TASK_ID>.yaml"
+  logs_dir: ".openteam/logs/tasks/<TASK_ID>/"
 evidence:
   - type: "log"
-    path: ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+    path: ".openteam/logs/tasks/<TASK_ID>/00_intake.md"

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_IMAGE = "ghcr.io/wangguanran/teamos-control-plane:main"
+DEFAULT_IMAGE = "ghcr.io/openteam-dev/openteam-control-plane:main"
 DEFAULT_INTERVAL_SEC = 300
 DEFAULT_PORT = 8787
 
@@ -50,10 +50,10 @@ def load_runtime_settings(runtime_dir: Path) -> dict[str, Any]:
     env = _parse_env_file(runtime_dir / ".env")
     port = _env_int(env.get("CONTROL_PLANE_PORT"), DEFAULT_PORT)
     return {
-        "enabled": _env_bool(env.get("TEAMOS_CONTROL_PLANE_AUTO_UPDATE"), default=False),
-        "interval_sec": max(30, _env_int(env.get("TEAMOS_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC"), DEFAULT_INTERVAL_SEC)),
-        "only_if_idle": _env_bool(env.get("TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE"), default=False),
-        "image": str(env.get("TEAMOS_CONTROL_PLANE_IMAGE") or DEFAULT_IMAGE).strip(),
+        "enabled": _env_bool(env.get("OPENTEAM_CONTROL_PLANE_AUTO_UPDATE"), default=False),
+        "interval_sec": max(30, _env_int(env.get("OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC"), DEFAULT_INTERVAL_SEC)),
+        "only_if_idle": _env_bool(env.get("OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE"), default=False),
+        "image": str(env.get("OPENTEAM_CONTROL_PLANE_IMAGE") or DEFAULT_IMAGE).strip(),
         "port": port,
         "base_url": f"http://127.0.0.1:{port}",
     }
@@ -292,9 +292,9 @@ def watch(runtime_dir: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Watch and update the local TeamOS control-plane image.")
+    ap = argparse.ArgumentParser(description="Watch and update the local OpenTeam control-plane image.")
     ap.add_argument("command", choices=["check", "watch", "start", "stop", "status"])
-    ap.add_argument("--runtime-dir", default=".", help="Path to the TeamOS runtime config directory")
+    ap.add_argument("--runtime-dir", default=".", help="Path to the OpenTeam runtime config directory")
     ns = ap.parse_args(argv)
 
     runtime_dir = Path(ns.runtime_dir).expanduser().resolve()

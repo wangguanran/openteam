@@ -15,7 +15,7 @@ def _add_template_app_to_syspath() -> None:
 
 
 _add_template_app_to_syspath()
-os.environ.setdefault("TEAMOS_RUNTIME_LOCALIZE_ZH", "0")
+os.environ.setdefault("OPENTEAM_RUNTIME_LOCALIZE_ZH", "0")
 
 from app.domains.team_workflow import proposal_runtime  # noqa: E402
 
@@ -31,7 +31,7 @@ class _FakeDB:
 class CrewAIRepoImprovementTests(unittest.TestCase):
     def _spec(self, repo: Path) -> SimpleNamespace:
         return SimpleNamespace(
-            project_id="teamos",
+            project_id="openteam",
             workstream_id="general",
             repo_path=str(repo),
             repo_url="",
@@ -66,7 +66,7 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
-            target = {"target_id": "demo-target", "project_id": "teamos", "repo_root": str(repo), "repo_locator": "foo/bar"}
+            target = {"target_id": "demo-target", "project_id": "openteam", "repo_root": str(repo), "repo_locator": "foo/bar"}
             with mock.patch("app.domains.team_workflow.proposal_runtime._resolve_target", return_value=target), mock.patch(
                 "app.domains.team_workflow.proposal_runtime.crewai_workflow_registry.list_workflows",
                 return_value=(),
@@ -89,7 +89,7 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
-            target = {"target_id": "demo-target", "project_id": "teamos", "repo_root": str(repo), "repo_locator": "foo/bar"}
+            target = {"target_id": "demo-target", "project_id": "openteam", "repo_root": str(repo), "repo_locator": "foo/bar"}
             bug_workflow = SimpleNamespace(workflow_id="bug-finding", lane="bug", phase="finding", enabled=True)
             feature_workflow = SimpleNamespace(workflow_id="feature-finding", lane="feature", phase="finding", enabled=True)
             allowed_policy = SimpleNamespace(allowed=True, reason="", active_window_start_hour=0, active_window_end_hour=24, max_continuous_runtime_minutes=0, current_local_hour=0, active_since="", now_iso="")
@@ -198,7 +198,7 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
             "app.engines.crewai.workflow_runner.run_workflow",
             side_effect=[feature_result, quality_result],
         ):
-            out = proposal_runtime.reconcile_feature_discussions(db=_FakeDB(), actor="test", project_id="teamos", target_id="demo-target")
+            out = proposal_runtime.reconcile_feature_discussions(db=_FakeDB(), actor="test", project_id="openteam", target_id="demo-target")
 
         self.assertEqual(out["scanned"], 1)
         self.assertEqual(out["updated"], 1)
@@ -216,10 +216,10 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         with mock.patch.dict(
             os.environ,
             {
-                "TEAMOS_LLM_MODEL": "openrouter/openai/gpt-5.4",
-                "TEAMOS_LLM_BASE_URL": "https://openrouter.ai/api/v1",
-                "TEAMOS_LLM_API_KEY": "sk-test",
-                "TEAMOS_CREWAI_AUTH_MODE": "",
+                "OPENTEAM_LLM_MODEL": "openrouter/openai/gpt-5.4",
+                "OPENTEAM_LLM_BASE_URL": "https://openrouter.ai/api/v1",
+                "OPENTEAM_LLM_API_KEY": "sk-test",
+                "OPENTEAM_CREWAI_AUTH_MODE": "",
             },
             clear=False,
         ), mock.patch("app.domains.team_workflow.proposal_runtime.crewai_runtime.require_crewai_importable", return_value={"importable": True}), mock.patch(

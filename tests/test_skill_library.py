@@ -35,16 +35,16 @@ class SkillLibraryTests(unittest.TestCase):
             repo = Path(td) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
             context = SimpleNamespace(
-                project_id="teamos",
+                project_id="openteam",
                 target_id="demo-target",
                 force=False,
                 workflow=SimpleNamespace(lane="feature", max_candidates=lambda: 5),
                 extra={},
             )
-            target = {"target_id": "demo-target", "project_id": "teamos", "repo_root": str(repo), "repo_locator": "foo/bar"}
+            target = {"target_id": "demo-target", "project_id": "openteam", "repo_root": str(repo), "repo_locator": "foo/bar"}
             repo_context = {"repo_locator": "foo/bar", "current_version": "0.1.0"}
             outputs = {
-                "project_id": "teamos",
+                "project_id": "openteam",
                 "target": target,
                 "target_id": "demo-target",
                 "repo_root": str(repo),

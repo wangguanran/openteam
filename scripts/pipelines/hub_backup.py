@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_hub_compose_required(hub)
         enforce_hub_env_config_security(hub)
     except PipelineError as e:
-        write_json_stdout({"ok": False, "error": str(e), "hint": "run teamos hub init"})
+        write_json_stdout({"ok": False, "error": str(e), "hint": "run openteam hub init"})
         return 2
 
     if str(args.output or "").strip():
@@ -40,8 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     validate_hub_runtime_path(out_path, hub=hub, label="backup output")
     ensure_dir_secure(out_path.parent)
 
-    user = str(env.get("POSTGRES_USER") or "teamos")
-    db = str(env.get("POSTGRES_DB") or "teamos")
+    user = str(env.get("POSTGRES_USER") or "openteam")
+    db = str(env.get("POSTGRES_DB") or "openteam")
     dump = run_compose(hub=hub, args=["exec", "-T", "postgres", "pg_dump", "-U", user, "-d", db], capture=True)
     if not dump.get("ok"):
         write_json_stdout({"ok": False, "stderr": dump.get("stderr", "")[-1000:]})

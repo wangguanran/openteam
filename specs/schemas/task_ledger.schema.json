@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Team OS Task Ledger (YAML data model)",
+  "title": "OpenTeam Task Ledger (YAML data model)",
   "type": "object",
   "additionalProperties": true,
   "required": ["id", "title", "project_id", "workstream_id", "status", "risk_level", "created_at", "updated_at", "artifacts"],

@@ -10,7 +10,7 @@ from _common import add_template_app_to_syspath, requirements_dir, parse_scope
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="New-Input Conflict Check (offline heuristics)")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--text", help="new raw requirement text (if omitted, read stdin)")
     args = ap.parse_args(argv)
 

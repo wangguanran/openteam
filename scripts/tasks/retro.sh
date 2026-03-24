@@ -4,14 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../_common.sh"
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 TASK_ID="${1:-}"
 if [[ -z "$TASK_ID" ]]; then
-  echo "Usage: ./scripts/teamos.sh retro <TASK_ID>" >&2
+  echo "Usage: ./scripts/openteam.sh retro <TASK_ID>" >&2
   exit 2
 fi
 
-logs_dir="$ROOT/.team-os/logs/tasks/$TASK_ID"
+logs_dir="$ROOT/.openteam/logs/tasks/$TASK_ID"
 if [[ ! -d "$logs_dir" ]]; then
   echo "Task logs dir not found: $logs_dir" >&2
   exit 1

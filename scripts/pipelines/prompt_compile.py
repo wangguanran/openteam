@@ -29,8 +29,8 @@ from _common import (
 
 
 def _prompt_base_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> Path:
-    if scope == "teamos":
-        return repo / "specs" / "prompts" / "teamos"
+    if scope == "openteam":
+        return repo / "specs" / "prompts" / "openteam"
     # project scope prompts must live in Workspace
     from _common import is_within
 
@@ -40,8 +40,8 @@ def _prompt_base_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str) 
 
 
 def _requirements_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> Path:
-    if scope == "teamos":
-        return repo / "docs" / "product" / "teamos" / "requirements"
+    if scope == "openteam":
+        return repo / "docs" / "product" / "openteam" / "requirements"
     from _common import is_within
 
     if is_within(ws_root, repo):
@@ -52,9 +52,9 @@ def _requirements_dir(*, repo: Path, ws_root: Path, scope: str, project_id: str)
 def _parse_scope(scope: str) -> tuple[str, str]:
     s = str(scope or "").strip()
     if not s:
-        raise PipelineError("missing --scope teamos|project:<id>")
-    if s == "teamos":
-        return ("teamos", "teamos")
+        raise PipelineError("missing --scope openteam|project:<id>")
+    if s == "openteam":
+        return ("openteam", "openteam")
     if s.startswith("project:"):
         pid = s.split(":", 1)[1].strip()
         if not pid:
@@ -97,7 +97,7 @@ def _operating_rules() -> str:
     # Keep short, deterministic, and aligned with AGENTS.md hard rules.
     lines = [
         "- No secrets in git. Use env vars only; only commit `.env.example`.",
-        "- Repo vs Workspace: project truth sources MUST be outside the team-os repo.",
+        "- Repo vs Workspace: project truth sources MUST be outside the openteam repo.",
         "- Deterministic pipelines only for truth-source generation (requirements/prompt/task ledger).",
         "- High risk actions require explicit approval (data deletion/overwrite, public ports, prod deploy, force push).",
         "- Leader-only writes: only the elected Brain writes truth sources; assistants are read-only unless leased.",
@@ -120,7 +120,7 @@ def _relpath(p: Path, *, repo: Path, ws_root: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Compile MASTER_PROMPT.md deterministically from baseline+requirements+policies")
     add_default_args(ap)
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -131,17 +131,17 @@ def main(argv: list[str] | None = None) -> int:
     req_dir = _requirements_dir(repo=repo, ws_root=ws, scope=scope, project_id=pid)
     prompt_dir = _prompt_base_dir(repo=repo, ws_root=ws, scope=scope, project_id=pid)
 
-    # Concurrency: repo lock (teamos only) + scope lock.
+    # Concurrency: repo lock (openteam only) + scope lock.
     repo_lock = None
     scope_lock = None
-    if scope == "teamos":
-        repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+    if scope == "openteam":
+        repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""))
     scope_lock = locks.acquire_scope_lock(
         scope,
         repo_root=repo,
         workspace_root=ws,
         req_dir=req_dir,
-        task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+        task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""),
     )
 
     def _cleanup_locks() -> None:
@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     # Keep prompt content deterministic across runs and machines:
     # - no timestamps
     # - no absolute paths
-    manifest_ref = "prompt_manifest.json" if scope != "teamos" else "specs/prompts/teamos/prompt_manifest.json"
+    manifest_ref = "prompt_manifest.json" if scope != "openteam" else "specs/prompts/openteam/prompt_manifest.json"
 
     body = render_template(
         tpl,

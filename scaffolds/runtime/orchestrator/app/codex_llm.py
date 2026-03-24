@@ -104,7 +104,7 @@ def codex_exec_json(
     """
     require_codex_oauth()
 
-    with tempfile.NamedTemporaryFile(prefix="teamos_codex_", suffix=".txt", delete=False) as out_f:
+    with tempfile.NamedTemporaryFile(prefix="openteam_codex_", suffix=".txt", delete=False) as out_f:
         out_path = out_f.name
 
     cmd = [
@@ -150,7 +150,7 @@ def codex_exec_structured(
     timeout_sec: int = 90,
     model: Optional[str] = None,
 ) -> CodexResult:
-    with tempfile.NamedTemporaryFile(prefix="teamos_codex_schema_", suffix=".json", delete=False, mode="w", encoding="utf-8") as schema_f:
+    with tempfile.NamedTemporaryFile(prefix="openteam_codex_schema_", suffix=".json", delete=False, mode="w", encoding="utf-8") as schema_f:
         json.dump(schema, schema_f, ensure_ascii=False, indent=2)
         schema_path = schema_f.name
     try:

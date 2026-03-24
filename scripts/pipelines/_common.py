@@ -5,7 +5,7 @@ Deterministic pipeline utilities (no network, no LLM).
 Design goals:
 - Minimal dependencies (stdlib + pyyaml already used in this repo).
 - Deterministic output: stable ordering + explicit timestamps.
-- Defensive governance: prevent writing project truth sources into the team-os repo.
+- Defensive governance: prevent writing project truth sources into the openteam repo.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from team_os_common import utc_now_iso, eprint  # noqa: E402
+from openteam_common import utc_now_iso, eprint  # noqa: E402
 
 import yaml
 
@@ -37,9 +37,9 @@ def ts_compact_utc() -> str:
     return utc_now_iso().replace(":", "").replace("-", "")
 
 
-def _looks_like_teamos_repo(root: Path) -> bool:
+def _looks_like_openteam_repo(root: Path) -> bool:
     markers = (
-        (root / "TEAMOS.md").exists(),
+        (root / "OPENTEAM.md").exists(),
         (root / "templates" / "runtime" / "orchestrator").exists(),
         (root / "schemas").exists(),
     )
@@ -48,22 +48,22 @@ def _looks_like_teamos_repo(root: Path) -> bool:
 
 def repo_root() -> Path:
     """
-    Resolve the team-os repo root.
+    Resolve the openteam repo root.
     Priority:
-    1) env TEAM_OS_REPO_PATH
+    1) env OPENTEAM_REPO_PATH
     2) relative to this file location
     3) git rev-parse
     """
-    env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
+    env = str(os.getenv("OPENTEAM_REPO_PATH") or "").strip()
     if env:
         p = Path(env).expanduser().resolve()
-        if _looks_like_teamos_repo(p):
+        if _looks_like_openteam_repo(p):
             return p
 
     p = Path(__file__).resolve()
     try:
         cand = p.parents[2]
-        if _looks_like_teamos_repo(cand):
+        if _looks_like_openteam_repo(cand):
             return cand
     except Exception:
         pass
@@ -73,21 +73,21 @@ def repo_root() -> Path:
         top = (p2.stdout or b"").decode("utf-8", errors="replace").strip()
         if top:
             rr = Path(top).expanduser().resolve()
-            if _looks_like_teamos_repo(rr):
+            if _looks_like_openteam_repo(rr):
                 return rr
 
-    raise PipelineError("Cannot locate team-os repo root (set TEAM_OS_REPO_PATH or run from within the repo)")
+    raise PipelineError("Cannot locate openteam repo root (set OPENTEAM_REPO_PATH or run from within the repo)")
 
 
-def teamos_home() -> Path:
-    raw = str(os.getenv("TEAMOS_HOME") or "").strip()
+def openteam_home() -> Path:
+    raw = str(os.getenv("OPENTEAM_HOME") or "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
-    return (Path.home() / ".teamos").resolve()
+    return (Path.home() / ".openteam").resolve()
 
 
 def default_runtime_root() -> Path:
-    return (teamos_home() / "runtime" / "default").resolve()
+    return (openteam_home() / "runtime" / "default").resolve()
 
 
 def runtime_root(*, override: str = "") -> Path:
@@ -95,12 +95,12 @@ def runtime_root(*, override: str = "") -> Path:
     Resolve runtime root outside repo.
     Priority:
     1) explicit override
-    2) env TEAMOS_RUNTIME_ROOT
-    3) ~/.teamos/runtime/default
+    2) env OPENTEAM_RUNTIME_ROOT
+    3) ~/.openteam/runtime/default
     """
     v = str(override or "").strip()
     if not v:
-        v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+        v = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
     if not v:
         v = str(default_runtime_root())
     return Path(v).expanduser().resolve()
@@ -121,7 +121,7 @@ def runtime_hub_root(*, override: str = "") -> Path:
 def workspace_root(*, override: str = "") -> Path:
     v = str(override or "").strip()
     if not v:
-        v = str(os.getenv("TEAMOS_WORKSPACE_ROOT") or "").strip()
+        v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if not v:
         v = str(runtime_workspace_root())
     return Path(v).expanduser().resolve()
@@ -151,9 +151,9 @@ def safe_project_id(project_id: str) -> str:
 def parse_scope(scope: str) -> tuple[str, str]:
     s = str(scope or "").strip()
     if not s:
-        raise PipelineError("scope is required: teamos | project:<id>")
-    if s == "teamos":
-        return ("teamos", "teamos")
+        raise PipelineError("scope is required: openteam | project:<id>")
+    if s == "openteam":
+        return ("openteam", "openteam")
     if s.startswith("project:"):
         return (s, safe_project_id(s.split(":", 1)[1].strip()))
     # backward compat: treat bare id as project:<id>
@@ -369,14 +369,14 @@ def add_default_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument(
         "--workspace-root",
         default="",
-        help="override workspace root (default: TEAMOS_WORKSPACE_ROOT or <runtime_root>/workspace)",
+        help="override workspace root (default: OPENTEAM_WORKSPACE_ROOT or <runtime_root>/workspace)",
     )
 
 
 def resolve_repo_root(args: argparse.Namespace) -> Path:
     if str(getattr(args, "repo_root", "") or "").strip():
         p = Path(str(getattr(args, "repo_root"))).expanduser().resolve()
-        if not _looks_like_teamos_repo(p):
+        if not _looks_like_openteam_repo(p):
             raise PipelineError(f"invalid --repo-root (missing Team-OS repo markers): {p}")
         return p
     return repo_root()

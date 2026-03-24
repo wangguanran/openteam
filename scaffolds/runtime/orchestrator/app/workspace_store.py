@@ -19,45 +19,45 @@ def _expand(p: str) -> Path:
     return Path(p).expanduser().resolve()
 
 
-def _teamos_home() -> Path:
-    raw = str(os.getenv("TEAMOS_HOME") or "").strip()
+def _openteam_home() -> Path:
+    raw = str(os.getenv("OPENTEAM_HOME") or "").strip()
     if raw:
         return _expand(raw)
-    return (Path.home() / ".teamos").resolve()
+    return (Path.home() / ".openteam").resolve()
 
 
-def team_os_root() -> Path:
-    env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
+def openteam_root() -> Path:
+    env = str(os.getenv("OPENTEAM_REPO_PATH") or "").strip()
     if env:
         return _expand(env)
 
     p = Path(__file__).resolve()
     for parent in [p.parent] + list(p.parents):
         if (parent / "scripts" / "pipelines").exists() and (
-            (parent / "TEAMOS.md").exists()
+            (parent / "OPENTEAM.md").exists()
             or (parent / "templates" / "runtime" / "orchestrator").exists()
             or (parent / "schemas").exists()
         ):
             return parent.resolve()
-    return Path("/team-os").resolve()
+    return Path("/openteam").resolve()
 
 
 def runtime_root() -> Path:
-    v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    v = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
     if v:
         return _expand(v)
-    return (_teamos_home() / "runtime" / "default").resolve()
+    return (_openteam_home() / "runtime" / "default").resolve()
 
 
 def workspace_root() -> Path:
     """
-    Workspace root (outside the team-os git repo).
+    Workspace root (outside the openteam git repo).
 
     Default: <runtime_root>/workspace
     Override:
-    - env TEAMOS_WORKSPACE_ROOT (recommended for control-plane container)
+    - env OPENTEAM_WORKSPACE_ROOT (recommended for control-plane container)
     """
-    v = str(os.getenv("TEAMOS_WORKSPACE_ROOT", "")).strip()
+    v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT", "")).strip()
     if not v:
         v = str(runtime_root() / "workspace")
     return _expand(v)
@@ -77,7 +77,7 @@ def ensure_workspace_scaffold(root: Optional[Path] = None) -> Path:
         cfg.write_text(
             "\n".join(
                 [
-                    "# Team OS Workspace config (local; not committed)",
+                    "# OpenTeam Workspace config (local; not committed)",
                     "",
                     f'workspace_root = "{r}"',
                     "",
@@ -127,16 +127,16 @@ def legacy_target_dir(target_id: str, *, root: Optional[Path] = None) -> Path:
     return (legacy_targets_dir(root=root) / tid).resolve()
 
 
-def target_dir(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> Path:
+def target_dir(target_id: str, *, project_id: str = "openteam", root: Optional[Path] = None) -> Path:
     tid = _safe_project_id(target_id)
     return (project_targets_dir(project_id, root=root) / tid).resolve()
 
 
-def target_repo_dir(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> Path:
+def target_repo_dir(target_id: str, *, project_id: str = "openteam", root: Optional[Path] = None) -> Path:
     return target_dir(target_id, project_id=project_id, root=root) / "repo"
 
 
-def target_state_dir(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> Path:
+def target_state_dir(target_id: str, *, project_id: str = "openteam", root: Optional[Path] = None) -> Path:
     return target_dir(target_id, project_id=project_id, root=root) / "state"
 
 
@@ -264,7 +264,7 @@ def _migrate_legacy_target_layout(*, project_id: str, target_id: str, root: Opti
         pass
 
 
-def ensure_target_scaffold(target_id: str, *, project_id: str = "teamos", root: Optional[Path] = None) -> dict[str, Any]:
+def ensure_target_scaffold(target_id: str, *, project_id: str = "openteam", root: Optional[Path] = None) -> dict[str, Any]:
     r = ensure_workspace_scaffold(root)
     pid = _safe_project_id(project_id)
     tid = _safe_project_id(target_id)
@@ -303,11 +303,11 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
-def assert_project_paths_outside_repo(*, team_os_root: Path, workspace_root_path: Optional[Path] = None) -> None:
+def assert_project_paths_outside_repo(*, openteam_root: Path, workspace_root_path: Optional[Path] = None) -> None:
     """
-    Defensive check: workspace must NOT be within team-os repo, otherwise any project writes would pollute git repo.
+    Defensive check: workspace must NOT be within openteam repo, otherwise any project writes would pollute git repo.
     """
     ws = (workspace_root_path or workspace_root()).resolve()
-    tr = team_os_root.resolve()
+    tr = openteam_root.resolve()
     if _is_within(ws, tr):
-        raise WorkspaceError(f"invalid workspace_root={ws} (must be outside team-os repo={tr})")
+        raise WorkspaceError(f"invalid workspace_root={ws} (must be outside openteam repo={tr})")

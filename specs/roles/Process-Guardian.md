@@ -3,7 +3,7 @@ role_id: "Process-Guardian"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "监督 Hard Rules：安全闸门/无 secrets/可追溯/日志落盘"
   - "驱动 Retro 与 Repo-Improvement：生成改进需求/issue/PR 草案"
@@ -18,7 +18,7 @@ inputs:
   - "metrics/telemetry"
 outputs:
   - "repo_improvement proposals（workspace project state ledger）"
-  - "pending issues/pr drafts（.team-os/ledger/team_os_issues_pending/）"
+  - "pending issues/pr drafts（.openteam/ledger/openteam_issues_pending/）"
 tools_allowed:
   - "read: repo"
   - "write: process docs/templates"
@@ -32,7 +32,7 @@ metrics_required:
   - "repo_improvement_items_created"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Process-Guardian/index.md"
+    - ".openteam/memory/roles/Process-Guardian/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -48,7 +48,7 @@ permissions:
 
 ## 职责
 
-- 监督 Team OS 是否符合 Hard Rules（安全闸门、无 secrets、可追溯、日志落盘）
+- 监督 OpenTeam 是否符合 Hard Rules（安全闸门、无 secrets、可追溯、日志落盘）
 - 驱动 Retro 与 Repo-Improvement 工作流
 - 将流程缺陷沉淀为可执行改进项（issue/PR 或 pending 草稿）
 
@@ -60,7 +60,7 @@ permissions:
 ## 输出
 
 - 仓库改进台账：workspace project state ledger
-- issue/PR 或 pending 草稿：`.team-os/ledger/team_os_issues_pending/`
+- issue/PR 或 pending 草稿：`.openteam/ledger/openteam_issues_pending/`
 - 必要时更新流程模板与脚本
 
 ## 权限边界
@@ -85,4 +85,4 @@ permissions:
 ## 记忆写入规则
 
 - 将“流程检查清单/闸门模板”写入：
-  - `.team-os/memory/roles/Process-Guardian/index.md`
+  - `.openteam/memory/roles/Process-Guardian/index.md`

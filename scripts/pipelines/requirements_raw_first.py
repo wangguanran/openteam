@@ -25,9 +25,9 @@ def _requirements_dir_for_scope(repo: Path, *, scope: str, workspace_root: str) 
     """
     s = str(scope or "").strip()
     if not s:
-        raise PipelineError("missing --scope teamos|project:<id>")
-    if s == "teamos":
-        return ("teamos", "teamos", repo / "docs" / "teamos" / "requirements")
+        raise PipelineError("missing --scope openteam|project:<id>")
+    if s == "openteam":
+        return ("openteam", "openteam", repo / "docs" / "product" / "openteam" / "requirements")
     if s.startswith("project:"):
         pid = s.split(":", 1)[1].strip()
         if not pid:
@@ -99,21 +99,21 @@ def cmd_add(repo: Path, *, scope: str, workspace_root: str, text: str, workstrea
     _add_runtime_template_to_syspath(repo)
 
     # Unit tests must be offline/fast: disable Codex semantic check (LLM).
-    os.environ.setdefault("TEAMOS_REQUIREMENTS_SEMANTIC_CHECK", "0")
+    os.environ.setdefault("OPENTEAM_REQUIREMENTS_SEMANTIC_CHECK", "0")
 
     from app.requirements_store import add_requirement_raw_first  # type: ignore
 
     repo_lock = None
     scope_lock = None
     try:
-        if resolved_scope == "teamos":
-            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+        if resolved_scope == "openteam":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""))
         scope_lock = locks.acquire_scope_lock(
             resolved_scope,
             repo_root=repo,
             workspace_root=Path(workspace_root).expanduser().resolve(),
             req_dir=req_dir,
-            task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+            task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""),
         )
 
         out = add_requirement_raw_first(
@@ -166,14 +166,14 @@ def cmd_migrate_v3(repo: Path, *, scope: str, workspace_root: str, dry_run: bool
     repo_lock = None
     scope_lock = None
     try:
-        if resolved_scope == "teamos":
-            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+        if resolved_scope == "openteam":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""))
         scope_lock = locks.acquire_scope_lock(
             resolved_scope,
             repo_root=repo,
             workspace_root=Path(workspace_root).expanduser().resolve(),
             req_dir=req_dir,
-            task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+            task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""),
         )
 
         # Ensure v3 scaffold files exist (do not touch Expanded artifacts here).
@@ -324,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     repo = resolve_repo_root(args)
-    ws = str(getattr(args, "workspace_root", "") or os.getenv("TEAMOS_WORKSPACE_ROOT") or (Path.home() / ".teamos" / "workspace"))
+    ws = str(getattr(args, "workspace_root", "") or os.getenv("OPENTEAM_WORKSPACE_ROOT") or (Path.home() / ".openteam" / "workspace"))
 
     if args.cmd == "add":
         out = cmd_add(

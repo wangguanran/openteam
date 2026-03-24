@@ -5,7 +5,7 @@ from .runtime_db import RuntimeDB
 
 def seed_mock_data(db: RuntimeDB, *, project_id: str, workstream_id: str) -> None:
     """
-    Seed minimal demo data so `teamos status` can show agents/runs even without a real executor.
+    Seed minimal demo data so `openteam status` can show agents/runs even without a real executor.
     Safe to call repeatedly; it only seeds when no agents exist.
     """
     if db.list_agents(project_id=project_id):

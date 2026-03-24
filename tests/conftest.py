@@ -27,7 +27,7 @@ def tmp_runtime(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch, tmp_path):
-    """Prevent tests from touching real ~/.teamos."""
-    monkeypatch.setenv("TEAMOS_HOME", str(tmp_path / "teamos_home"))
-    monkeypatch.setenv("TEAMOS_RUNTIME_ROOT", str(tmp_path / "runtime"))
-    monkeypatch.setenv("TEAMOS_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    """Prevent tests from touching real ~/.openteam."""
+    monkeypatch.setenv("OPENTEAM_HOME", str(tmp_path / "openteam_home"))
+    monkeypatch.setenv("OPENTEAM_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("OPENTEAM_WORKSPACE_ROOT", str(tmp_path / "workspace"))

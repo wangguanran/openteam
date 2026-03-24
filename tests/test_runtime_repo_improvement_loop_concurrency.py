@@ -38,7 +38,7 @@ else:  # pragma: no cover
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not available in this test environment")
 class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
     def test_workflow_loop_concurrency_loads_from_spec(self) -> None:
-        workflow = workflow_registry.workflow_spec("bug-finding", project_id="teamos")
+        workflow = workflow_registry.workflow_spec("bug-finding", project_id="openteam")
         self.assertEqual(workflow.loop.concurrency, 1)
 
     def test_target_job_pool_runs_jobs_concurrently(self) -> None:
@@ -87,7 +87,7 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
 
         statuses = app_main._repo_improvement_workflow_status_snapshot(
             target_id="demo-target",
-            project_id="teamos",
+            project_id="openteam",
         )
 
         self.assertIn("bug-finding", statuses)

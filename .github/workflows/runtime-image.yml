@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/teamos-control-plane
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/openteam-control-plane
 
 jobs:
   build:
@@ -33,7 +33,7 @@ jobs:
         id: crewai
         run: |
           set -euo pipefail
-          SHA="$(git ls-remote https://github.com/wangguanran/crewAI.git refs/heads/main | awk '{print $1}')"
+          SHA="$(git ls-remote https://github.com/openteam-dev/crewAI.git refs/heads/main | awk '{print $1}')"
           test -n "${SHA}"
           echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
 
@@ -78,8 +78,8 @@ jobs:
             type=raw,value=main
             type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
           labels: |
-            org.opencontainers.image.teamos-crewai-sha=${{ steps.crewai.outputs.sha }}
-            org.opencontainers.image.teamos-openclaw-version=${{ steps.openclaw.outputs.version }}
+            org.opencontainers.image.openteam-crewai-sha=${{ steps.crewai.outputs.sha }}
+            org.opencontainers.image.openteam-openclaw-version=${{ steps.openclaw.outputs.version }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
 
       - name: Build and push runtime image
@@ -94,13 +94,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            TEAMOS_CREWAI_GIT_URL=https://github.com/crewAIInc/crewAI.git
-            TEAMOS_CREWAI_GIT_REF=main
-            TEAMOS_CREWAI_GIT_SHA=${{ steps.crewai.outputs.sha }}
-            TEAMOS_OPENCLAW_VERSION=${{ steps.openclaw.outputs.version }}
-            TEAMOS_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
-            TEAMOS_NPM_REGISTRY=https://registry.npmmirror.com
-            TEAMOS_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
-            TEAMOS_APT_SECURITY_MIRROR_URL=https://mirrors.ustc.edu.cn/debian-security
-            TEAMOS_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-            TEAMOS_PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+            OPENTEAM_CREWAI_GIT_URL=https://github.com/crewAIInc/crewAI.git
+            OPENTEAM_CREWAI_GIT_REF=main
+            OPENTEAM_CREWAI_GIT_SHA=${{ steps.crewai.outputs.sha }}
+            OPENTEAM_OPENCLAW_VERSION=${{ steps.openclaw.outputs.version }}
+            OPENTEAM_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
+            OPENTEAM_NPM_REGISTRY=https://registry.npmmirror.com
+            OPENTEAM_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
+            OPENTEAM_APT_SECURITY_MIRROR_URL=https://mirrors.ustc.edu.cn/debian-security
+            OPENTEAM_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+            OPENTEAM_PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn

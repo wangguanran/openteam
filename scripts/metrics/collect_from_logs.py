@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 
 def _repo_root() -> Path:
@@ -95,8 +95,8 @@ def collect(tasks_dir: Path, *, strict: bool = False) -> dict[str, Any]:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Collect Team OS telemetry from task metrics.jsonl")
-    ap.add_argument("--tasks-dir", default=str(_repo_root() / ".team-os" / "logs" / "tasks"))
+    ap = argparse.ArgumentParser(description="Collect OpenTeam telemetry from task metrics.jsonl")
+    ap.add_argument("--tasks-dir", default=str(_repo_root() / ".openteam" / "logs" / "tasks"))
     ap.add_argument("--out", default="", help="Write JSON output to a file (default: stdout)")
     ap.add_argument("--strict", action="store_true", help="Fail fast on first parse/validation error")
     args = ap.parse_args(argv)

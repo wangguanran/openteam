@@ -8,7 +8,7 @@ from _common import add_template_app_to_syspath, requirements_dir, parse_scope
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Raw-First: capture requirement raw input (append-only)")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--channel", default="cli", help="cli|api|chat|import|migration|baseline")
     ap.add_argument("--user", default="")
     ap.add_argument("--text", help="raw text (if omitted, read stdin)")

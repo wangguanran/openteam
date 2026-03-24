@@ -39,7 +39,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
             pkg = src / "crewai"
             pkg.mkdir(parents=True, exist_ok=True)
             (pkg / "__init__.py").write_text("__version__='0.test'\n", encoding="utf-8")
-            os.environ["TEAMOS_CREWAI_SRC_PATH"] = str(src)
+            os.environ["OPENTEAM_CREWAI_SRC_PATH"] = str(src)
 
             fake_mod = SimpleNamespace(__version__="0.test", __file__=str(pkg / "__init__.py"))
             with mock.patch("app.crewai_runtime.importlib.import_module", return_value=fake_mod) as mocked_import:
@@ -68,7 +68,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
             pkg.mkdir(parents=True, exist_ok=True)
             init_py = pkg / "__init__.py"
             init_py.write_text("__version__='0.test'\n", encoding="utf-8")
-            os.environ["TEAMOS_CREWAI_SRC_PATH"] = str(src)
+            os.environ["OPENTEAM_CREWAI_SRC_PATH"] = str(src)
 
             stale_mod = SimpleNamespace(__version__="0.old", __file__="/usr/local/lib/python3.11/site-packages/crewai/__init__.py")
             fresh_mod = SimpleNamespace(__version__="0.test", __file__=str(init_py))
@@ -89,7 +89,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
             self.assertEqual(sys.modules["crewai"], fresh_mod)
 
     def test_require_crewai_importable_raises_with_context_when_import_fails(self):
-        os.environ["TEAMOS_CREWAI_SRC_PATH"] = "/tmp/path-that-does-not-exist"
+        os.environ["OPENTEAM_CREWAI_SRC_PATH"] = "/tmp/path-that-does-not-exist"
         with mock.patch(
             "app.crewai_runtime.importlib.import_module",
             side_effect=ModuleNotFoundError("No module named 'crewai'"),
@@ -145,7 +145,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
             home = Path(td) / "home"
             home.mkdir(parents=True, exist_ok=True)
             os.environ["HOME"] = str(home)
-            os.environ["CREWAI_STORAGE_DIR"] = "teamos-test-crewai"
+            os.environ["CREWAI_STORAGE_DIR"] = "openteam-test-crewai"
 
             self.assertTrue(crewai_runtime._prime_crewai_tracing_user_data())
 
@@ -170,7 +170,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
         self.assertEqual(os.environ["ALL_PROXY"], "socks5://proxy.example")
 
     def test_suppress_proxy_for_codex_oauth_respects_disable_switch(self):
-        os.environ["TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX"] = "0"
+        os.environ["OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX"] = "0"
         os.environ["HTTP_PROXY"] = "http://proxy.example"
 
         with crewai_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):

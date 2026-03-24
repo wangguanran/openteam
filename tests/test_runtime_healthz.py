@@ -46,8 +46,8 @@ class RuntimeHealthzTests(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._orig_env)
 
-    def test_team_os_checks_follow_current_repo_layout(self) -> None:
-        checks = app_main._team_os_checks(str(self.repo_root))
+    def test_openteam_checks_follow_current_repo_layout(self) -> None:
+        checks = app_main._openteam_checks(str(self.repo_root))
 
         self.assertTrue(checks["exists"])
         self.assertTrue(checks["specs_workflows_dir_exists"])
@@ -59,7 +59,7 @@ class RuntimeHealthzTests(unittest.TestCase):
         self.assertIn("Architect.md", checks["role_files"])
 
     def test_healthz_is_ok_with_current_repo_layout(self) -> None:
-        os.environ["TEAM_OS_REPO_PATH"] = str(self.repo_root)
+        os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)
         response = app_main.Response()
         with (
             mock.patch.object(app_main.crewai_runtime, "probe_crewai", return_value={"importable": True, "version": "test"}),
@@ -70,10 +70,10 @@ class RuntimeHealthzTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(response.status_code, 200)
 
-    def test_teamos_requirements_dir_uses_product_docs_path(self) -> None:
-        os.environ["TEAM_OS_REPO_PATH"] = str(self.repo_root)
-        req_dir = state_store.teamos_requirements_dir()
-        self.assertEqual(req_dir, self.repo_root / "docs" / "product" / "teamos" / "requirements")
+    def test_openteam_requirements_dir_uses_product_docs_path(self) -> None:
+        os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)
+        req_dir = state_store.openteam_requirements_dir()
+        self.assertEqual(req_dir, self.repo_root / "docs" / "product" / "openteam" / "requirements")
 
 
 if __name__ == "__main__":

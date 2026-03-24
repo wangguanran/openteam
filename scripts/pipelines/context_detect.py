@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         "cwd": str(cwd),
         "in_project_repo": bool(pid),
         "project_id": pid,
-        "scope": (f"project:{pid}" if pid else "teamos"),
+        "scope": (f"project:{pid}" if pid else "openteam"),
     }
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Join this machine to a Team OS cluster (assistant node).
+Join this machine to a OpenTeam cluster (assistant node).
 
 This script is idempotent and does NOT store secrets.
 
@@ -30,8 +30,8 @@ BRAIN_BASE_URL=""
 ROLE="auto"
 CAPS=""
 TAGS=""
-NODE_DIR="${TEAMOS_NODE_DIR:-/opt/team-os-node}"
-HEARTBEAT_INTERVAL_SEC="${TEAMOS_NODE_HEARTBEAT_INTERVAL_SEC:-60}"
+NODE_DIR="${OPENTEAM_NODE_DIR:-/opt/openteam-node}"
+HEARTBEAT_INTERVAL_SEC="${OPENTEAM_NODE_HEARTBEAT_INTERVAL_SEC:-60}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -124,11 +124,11 @@ echo "registered: OK"
 HB_CMD="curl -fsS -X POST \"$BRAIN_BASE_URL/v1/nodes/heartbeat\" -H \"Content-Type: application/json\" -d '{\"instance_id\":\"$INSTANCE_ID\"}' >/dev/null"
 
 if command -v systemctl >/dev/null 2>&1; then
-  SERVICE_PATH="/etc/systemd/system/teamos-node-heartbeat.service"
+  SERVICE_PATH="/etc/systemd/system/openteam-node-heartbeat.service"
   if [[ ! -f "$SERVICE_PATH" ]]; then
     cat >"$SERVICE_PATH" <<EOF
 [Unit]
-Description=Team OS Node Heartbeat
+Description=OpenTeam Node Heartbeat
 After=network-online.target
 
 [Service]
@@ -141,10 +141,10 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable teamos-node-heartbeat.service >/dev/null || true
+    systemctl enable openteam-node-heartbeat.service >/dev/null || true
   fi
-  systemctl restart teamos-node-heartbeat.service
-  systemctl status teamos-node-heartbeat.service --no-pager -n 3 || true
+  systemctl restart openteam-node-heartbeat.service
+  systemctl status openteam-node-heartbeat.service --no-pager -n 3 || true
 else
   # fallback
   nohup bash -lc "while true; do $HB_CMD; sleep $HEARTBEAT_INTERVAL_SEC; done" >/dev/null 2>&1 &
@@ -152,4 +152,4 @@ fi
 
 echo "done."
 echo "next:"
-echo "  - verify on brain: teamos cluster status"
+echo "  - verify on brain: openteam cluster status"

@@ -77,9 +77,9 @@ def analyze(summary: dict[str, Any], *, tasks_dir: Path) -> dict[str, Any]:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Analyze Team OS metrics/logs to propose evolution improvements")
+    ap = argparse.ArgumentParser(description="Analyze OpenTeam metrics/logs to propose evolution improvements")
     ap.add_argument("--summary-json", default="", help="Input JSON produced by collect_from_logs.py (optional)")
-    ap.add_argument("--tasks-dir", default=str(_repo_root() / ".team-os" / "logs" / "tasks"))
+    ap.add_argument("--tasks-dir", default=str(_repo_root() / ".openteam" / "logs" / "tasks"))
     args = ap.parse_args(argv)
 
     if args.summary_json:

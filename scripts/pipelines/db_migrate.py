@@ -3,7 +3,7 @@
 Postgres migrations runner (deterministic).
 
 Usage:
-  TEAMOS_DB_URL=postgresql://... ./teamos db migrate
+  OPENTEAM_DB_URL=postgresql://... ./openteam db migrate
 
 Design:
 - Apply tooling/migrations/*.sql in lexicographic order.
@@ -217,9 +217,9 @@ def apply_migrations(conn, migrations: Iterable[tuple[str, Path]]) -> dict[str, 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Apply Team OS Postgres migrations (deterministic)")
+    ap = argparse.ArgumentParser(description="Apply OpenTeam Postgres migrations (deterministic)")
     add_default_args(ap)
-    ap.add_argument("--db-url", default="", help="override TEAMOS_DB_URL")
+    ap.add_argument("--db-url", default="", help="override OPENTEAM_DB_URL")
     ap.add_argument("--migrations-dir", default="", help="override migrations dir (default: <repo>/tooling/migrations)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="plan only; do not execute statements")
@@ -241,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dsn = get_db_url(override=str(args.db_url or ""))
     if not dsn:
-        raise PipelineError("missing TEAMOS_DB_URL (or pass --db-url)")
+        raise PipelineError("missing OPENTEAM_DB_URL (or pass --db-url)")
 
     conn = connect(dsn)
     try:

@@ -19,24 +19,24 @@ def main(argv: list[str] | None = None) -> int:
         env = load_hub_env_required(hub)
         enforce_hub_env_config_security(hub)
     except PipelineError as e:
-        print(json.dumps({"ok": False, "error": str(e), "hint": "run teamos hub init"}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": False, "error": str(e), "hint": "run openteam hub init"}, ensure_ascii=False, indent=2))
         return 2
 
     host = str(env.get("PG_BIND_IP") or "127.0.0.1")
     pg_port = str(env.get("PG_PORT") or "5432")
-    pg_user = str(env.get("POSTGRES_USER") or "teamos")
-    pg_db = str(env.get("POSTGRES_DB") or "teamos")
+    pg_user = str(env.get("POSTGRES_USER") or "openteam")
+    pg_db = str(env.get("POSTGRES_DB") or "openteam")
 
     redis_host = str(env.get("REDIS_BIND_IP") or "127.0.0.1")
     redis_port = str(env.get("REDIS_PORT") or "6379")
 
     model = {
-        "TEAMOS_DB_URL_TEMPLATE": f"postgresql://{pg_user}:<password>@{host}:{pg_port}/{pg_db}",
-        "TEAMOS_REDIS_URL_TEMPLATE": f"redis://:<password>@{redis_host}:{redis_port}/0",
-        "TEAMOS_HUB_HOST": host,
-        "TEAMOS_HUB_PG_PORT": pg_port,
-        "TEAMOS_HUB_REDIS_ENABLED": "1",
-        "TEAMOS_HUB_REDIS_PORT": redis_port,
+        "OPENTEAM_DB_URL_TEMPLATE": f"postgresql://{pg_user}:<password>@{host}:{pg_port}/{pg_db}",
+        "OPENTEAM_REDIS_URL_TEMPLATE": f"redis://:<password>@{redis_host}:{redis_port}/0",
+        "OPENTEAM_HUB_HOST": host,
+        "OPENTEAM_HUB_PG_PORT": pg_port,
+        "OPENTEAM_HUB_REDIS_ENABLED": "1",
+        "OPENTEAM_HUB_REDIS_PORT": redis_port,
     }
 
     if args.format == "env":

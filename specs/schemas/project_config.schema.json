@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Team OS Project Config",
+  "title": "OpenTeam Project Config",
   "type": "object",
   "additionalProperties": false,
   "required": [

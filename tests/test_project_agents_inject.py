@@ -7,7 +7,7 @@ from pathlib import Path
 
 class TestProjectAgentsInject(unittest.TestCase):
     def _repo_root(self) -> Path:
-        # tests/ is under the team-os repo root
+        # tests/ is under the openteam repo root
         return Path(__file__).resolve().parents[1]
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -46,8 +46,8 @@ class TestProjectAgentsInject(unittest.TestCase):
             self.assertTrue(out1.get("changed"))
             self.assertTrue(out1.get("wrote"))
             agents = (proj_repo / "AGENTS.md").read_text(encoding="utf-8")
-            self.assertIn("<!-- TEAMOS_MANUAL_START -->", agents)
-            self.assertIn("<!-- TEAMOS_MANUAL_END -->", agents)
+            self.assertIn("<!-- OPENTEAM_MANUAL_START -->", agents)
+            self.assertIn("<!-- OPENTEAM_MANUAL_END -->", agents)
 
             # 2) Idempotent re-run: no rewrite and no content change.
             before = agents
@@ -92,9 +92,9 @@ class TestProjectAgentsInject(unittest.TestCase):
                         "",
                         "Custom intro.",
                         "",
-                        "<!-- TEAMOS_MANUAL_START -->",
+                        "<!-- OPENTEAM_MANUAL_START -->",
                         "OLD CONTENT",
-                        "<!-- TEAMOS_MANUAL_END -->",
+                        "<!-- OPENTEAM_MANUAL_END -->",
                         "",
                         "Custom tail.",
                         "",

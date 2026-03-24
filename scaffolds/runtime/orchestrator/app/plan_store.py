@@ -5,7 +5,7 @@ from typing import Any, Optional
 import yaml
 
 from . import improvement_store
-from .state_store import runtime_state_root, teamos_plan_dir
+from .state_store import runtime_state_root, openteam_plan_dir
 from .workspace_store import ensure_project_scaffold, plan_dir, project_state_dir
 
 
@@ -40,8 +40,8 @@ class Milestone:
 
 
 def load_plan_yaml(project_id: str) -> Optional[dict[str, Any]]:
-    if str(project_id) == "teamos":
-        d = teamos_plan_dir()
+    if str(project_id) == "openteam":
+        d = openteam_plan_dir()
     else:
         # Ensure project scaffold exists so plan dir can be created lazily.
         ensure_project_scaffold(project_id)
@@ -57,7 +57,7 @@ def load_plan_yaml(project_id: str) -> Optional[dict[str, Any]]:
 
 
 def _runtime_milestones_path(project_id: str) -> Path:
-    if str(project_id) == "teamos":
+    if str(project_id) == "openteam":
         return runtime_state_root() / "team_workflow_milestones.yaml"
     ensure_project_scaffold(project_id)
     return project_state_dir(project_id) / "plan" / "team_workflow_milestones.yaml"

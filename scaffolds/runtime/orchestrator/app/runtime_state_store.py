@@ -15,7 +15,7 @@ _DEFAULT_LIMIT = 1000
 
 
 def _db() -> RuntimeDB:
-    db_path = str(os.getenv("TEAMOS_RUNTIME_DB_PATH") or "").strip()
+    db_path = str(os.getenv("OPENTEAM_RUNTIME_DB_PATH") or "").strip()
     if not db_path:
         db_path = str(runtime_state_root() / "runtime.db")
     return RuntimeDB(db_path)

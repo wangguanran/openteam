@@ -8,7 +8,7 @@ from _common import add_template_app_to_syspath, requirements_dir, parse_scope
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Deterministic render: requirements.yaml -> REQUIREMENTS.md")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     args = ap.parse_args(argv)
 
     scope, pid = parse_scope(args.scope)

@@ -3,7 +3,7 @@ role_id: "Reviewer"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "代码/配置/文档评审"
   - "安全评审（secrets、权限、网络暴露、供应链）"
@@ -32,7 +32,7 @@ metrics_required:
   - "security_checks_done"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Reviewer/index.md"
+    - ".openteam/memory/roles/Reviewer/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -83,4 +83,4 @@ permissions:
 ## 记忆写入规则
 
 - 将高频 review checklist 与反模式写入：
-  - `.team-os/memory/roles/Reviewer/index.md`
+  - `.openteam/memory/roles/Reviewer/index.md`

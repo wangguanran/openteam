@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 import yaml
 
@@ -38,7 +38,7 @@ def _validate_raw_item(item: dict) -> list[str]:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Requirements doctor (v2 Raw-First)")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -48,9 +48,9 @@ def main(argv: list[str]) -> int:
     req_dir = requirements_dir(scope, ensure=False).resolve()
 
     # Path governance.
-    if scope == "teamos":
+    if scope == "openteam":
         if not _is_within(req_dir, rr):
-            return _fail(f"teamos requirements_dir must be inside repo: dir={req_dir} repo={rr}")
+            return _fail(f"openteam requirements_dir must be inside repo: dir={req_dir} repo={rr}")
     else:
         if not _is_within(req_dir, ws):
             return _fail(f"project requirements_dir must be inside workspace: dir={req_dir} workspace={ws}")
@@ -113,7 +113,7 @@ def main(argv: list[str]) -> int:
         md = req_dir / "REQUIREMENTS.md"
         actual = md.read_text(encoding="utf-8") if md.exists() else ""
         if actual != expected:
-            return _fail(f"REQUIREMENTS.md drift (run: teamos req rebuild --scope {scope})")
+            return _fail(f"REQUIREMENTS.md drift (run: openteam req rebuild --scope {scope})")
 
     if not args.quiet:
         print(f"ok=true scope={scope} requirements_dir={req_dir} checked_at={_utc_now_iso()}")

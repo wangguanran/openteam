@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Migrate legacy project artifacts OUT of the team-os git repo into Workspace.
+Migrate legacy project artifacts OUT of the openteam git repo into Workspace.
 
 Default: dry-run (prints planned moves only).
 Apply:   --force (moves files; keeps best-effort backups on conflicts).
 
 This is intentionally conservative:
-- It never touches Team OS self scope (project_id=teamos).
+- It never touches OpenTeam self scope (project_id=openteam).
 - It never deletes data; it moves/copies with conflict backups.
 """
 
@@ -163,7 +163,7 @@ def _rewrite_task_ledger_yaml(path: Path, *, dest_project_id: str, task_id: str)
             if not isinstance(e, dict):
                 continue
             p = str(e.get("path") or "")
-            if p.startswith(".team-os/logs/tasks/") or p.startswith(".team-os\\logs\\tasks\\"):
+            if p.startswith(".openteam/logs/tasks/") or p.startswith(".openteam\\logs\\tasks\\"):
                 e["path"] = f"state/logs/tasks/{task_id}/" + Path(p).name
         data["evidence"] = ev
 
@@ -182,7 +182,7 @@ def _ensure_workspace_scaffold(root: Path) -> None:
         cfg.write_text(
             "\n".join(
                 [
-                    "# Team OS Workspace config (local; not committed)",
+                    "# OpenTeam Workspace config (local; not committed)",
                     "",
                     f'workspace_root = "{root}"',
                     "",
@@ -301,8 +301,8 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
         for d in sorted(req_root.iterdir()):
             if not d.is_dir():
                 continue
-            # Team OS self requirements are handled separately (in-repo relocation), never moved to workspace.
-            if d.name == "teamos":
+            # OpenTeam self requirements are handled separately (in-repo relocation), never moved to workspace.
+            if d.name == "openteam":
                 continue
             pid = _infer_project_id_from_requirements_dir(d)
             # Move the directory contents into workspace state/requirements/
@@ -318,7 +318,7 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
         for d in sorted(plan_root.iterdir()):
             if not d.is_dir():
                 continue
-            if d.name == "teamos":
+            if d.name == "openteam":
                 continue
             pid = d.name
             for p in sorted(d.rglob("*")):
@@ -327,14 +327,14 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
                 rel = p.relative_to(d)
                 items.append(MoveItem(kind="plan", project_id=pid, src=str(p), dest=str(rel)))
 
-    # C) conversations under .team-os/ledger/conversations/<project_id>
-    conv_root = repo_root / ".team-os" / "ledger" / "conversations"
+    # C) conversations under .openteam/ledger/conversations/<project_id>
+    conv_root = repo_root / ".openteam" / "ledger" / "conversations"
     if conv_root.exists():
         for d in sorted(conv_root.iterdir()):
             if not d.is_dir():
                 continue
             pid = d.name
-            if pid == "teamos":
+            if pid == "openteam":
                 continue
             for p in sorted(d.rglob("*")):
                 if p.is_dir():
@@ -342,16 +342,16 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
                 rel = p.relative_to(d)
                 items.append(MoveItem(kind="conversations", project_id=pid, src=str(p), dest=str(rel)))
 
-    # D) task ledgers + logs for non-teamos tasks
-    tasks_dir = repo_root / ".team-os" / "ledger" / "tasks"
-    logs_dir = repo_root / ".team-os" / "logs" / "tasks"
+    # D) task ledgers + logs for non-openteam tasks
+    tasks_dir = repo_root / ".openteam" / "ledger" / "tasks"
+    logs_dir = repo_root / ".openteam" / "logs" / "tasks"
     tasks_by_project: dict[str, list[str]] = {}
     if tasks_dir.exists():
         for y in sorted(tasks_dir.glob("*.yaml")):
             data = _read_yaml(y)
             tid = str(data.get("id") or y.stem)
             pid = str(data.get("project_id") or "").strip() or "(missing)"
-            if pid == "teamos":
+            if pid == "openteam":
                 continue
             tasks_by_project.setdefault(pid, []).append(tid)
             items.append(MoveItem(kind="task_ledger", project_id=pid, src=str(y), dest=str(Path(tid + ".yaml"))))
@@ -374,7 +374,7 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
             if (not pid) and workspace_root is not None:
                 pid = _infer_project_id_for_task_in_workspace(workspace_root, task_id=task_id)
             pid = pid or "(missing)"
-            if pid == "teamos":
+            if pid == "openteam":
                 continue
             # Keep filename as-is under an explicit backups folder.
             items.append(MoveItem(kind="task_ledger_backup", project_id=pid, src=str(y), dest=str(Path("_backups") / y.name)))
@@ -394,7 +394,7 @@ def plan_moves(repo_root: Path, *, workspace_root: Optional[Path] = None) -> tup
                 items.append(MoveItem(kind="prompts_legacy", project_id=pid, src=str(p), dest=str(rel)))
 
     # Compute project_id mapping (cross-platform safety).
-    pids = {it.project_id for it in items if it.project_id and it.project_id != "teamos"}
+    pids = {it.project_id for it in items if it.project_id and it.project_id != "openteam"}
     facts["project_id_map"] = _compute_project_id_map(pids)
 
     return items, facts
@@ -416,7 +416,7 @@ def apply_moves(*, repo_root: Path, workspace_root: Path, items: list[MoveItem],
     for it in items:
         src = Path(it.src)
         pid = it.project_id
-        if pid == "teamos":
+        if pid == "openteam":
             continue
         dest_pid = str((project_id_map or {}).get(pid) or pid).strip()
 
@@ -469,7 +469,7 @@ def apply_moves(*, repo_root: Path, workspace_root: Path, items: list[MoveItem],
     for p in [
         repo_root / "docs" / "requirements",
         repo_root / "docs" / "plans",
-        repo_root / ".team-os" / "ledger" / "conversations",
+        repo_root / ".openteam" / "ledger" / "conversations",
         repo_root / "prompt-library" / "projects",
     ]:
         try:
@@ -485,7 +485,7 @@ def apply_moves(*, repo_root: Path, workspace_root: Path, items: list[MoveItem],
 
     # Remove empty legacy task log directories for migrated tasks.
     try:
-        logs_root = repo_root / ".team-os" / "logs" / "tasks"
+        logs_root = repo_root / ".openteam" / "logs" / "tasks"
         for tid in sorted(moved_task_log_dirs):
             d = logs_root / tid
             if d.exists() and d.is_dir() and (not any(d.iterdir())):
@@ -503,7 +503,7 @@ def apply_moves(*, repo_root: Path, workspace_root: Path, items: list[MoveItem],
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description="Move project artifacts out of the team-os repo into Workspace")
+    ap = argparse.ArgumentParser(description="Move project artifacts out of the openteam repo into Workspace")
     ap.add_argument("--repo-root", default="", help="override repo root (default: git rev-parse)")
     ap.add_argument("--workspace-root", required=True, help="workspace root (outside repo)")
     ap.add_argument("--dry-run", action="store_true", help="plan only (default)")

@@ -34,8 +34,8 @@ class HubMigrateTests(unittest.TestCase):
             (repo / "tooling" / "migrations" / "0001_init.sql").write_text("-- test\n", encoding="utf-8")
 
             env = {
-                "POSTGRES_DB": "teamos",
-                "POSTGRES_USER": "teamos",
+                "POSTGRES_DB": "openteam",
+                "POSTGRES_USER": "openteam",
                 "POSTGRES_PASSWORD": "pw",
                 "PG_BIND_IP": "127.0.0.1",
                 "PG_PORT": "5432",
@@ -51,7 +51,7 @@ class HubMigrateTests(unittest.TestCase):
             ), mock.patch.object(hub_migrate, "load_hub_env_required", return_value=env), mock.patch.object(
                 hub_migrate, "validate_hub_compose_required", return_value=None
             ), mock.patch.object(hub_migrate, "enforce_hub_env_config_security", return_value=None), mock.patch.object(
-                hub_migrate, "connect", side_effect=[Exception('database "teamos" does not exist'), c2]
+                hub_migrate, "connect", side_effect=[Exception('database "openteam" does not exist'), c2]
             ) as m_connect, mock.patch.object(hub_migrate, "_ensure_target_db_exists", return_value=None) as m_ensure, mock.patch.object(
                 hub_migrate, "apply_migrations", return_value={"ok": True, "applied": ["0001"]}
             ) as m_apply:

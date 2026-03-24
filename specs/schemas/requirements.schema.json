@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "TeamOS Expanded Requirements (v2 Raw-First compatible)",
+  "title": "OpenTeam Expanded Requirements (v2 Raw-First compatible)",
   "type": "object",
   "additionalProperties": true,
   "required": ["schema_version", "project_id", "next_req_seq", "requirements"],

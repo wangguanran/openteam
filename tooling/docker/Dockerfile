@@ -1,5 +1,5 @@
-ARG TEAMOS_PYTHON_BASE_IMAGE=python:3.11-slim-bookworm
-FROM ${TEAMOS_PYTHON_BASE_IMAGE}
+ARG OPENTEAM_PYTHON_BASE_IMAGE=python:3.11-slim-bookworm
+FROM ${OPENTEAM_PYTHON_BASE_IMAGE}
 
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
@@ -9,23 +9,23 @@ ARG http_proxy
 ARG https_proxy
 ARG all_proxy
 ARG no_proxy
-ARG TEAMOS_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
-ARG TEAMOS_APT_SECURITY_MIRROR_URL=https://mirrors.ustc.edu.cn/debian-security
-ARG TEAMOS_CREWAI_GIT_URL=https://github.com/wangguanran/crewAI.git
-ARG TEAMOS_CREWAI_GIT_REF=main
-ARG TEAMOS_CREWAI_GIT_SHA=
-ARG TEAMOS_NODE_VERSION=24.12.0
-ARG TEAMOS_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
-ARG TEAMOS_OPENCLAW_VERSION=2026.3.2
-ARG TEAMOS_NPM_REGISTRY=https://registry.npmmirror.com
-ARG TEAMOS_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG TEAMOS_PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+ARG OPENTEAM_APT_MIRROR_URL=https://mirrors.ustc.edu.cn/debian
+ARG OPENTEAM_APT_SECURITY_MIRROR_URL=https://mirrors.ustc.edu.cn/debian-security
+ARG OPENTEAM_CREWAI_GIT_URL=https://github.com/openteam-dev/crewAI.git
+ARG OPENTEAM_CREWAI_GIT_REF=main
+ARG OPENTEAM_CREWAI_GIT_SHA=
+ARG OPENTEAM_NODE_VERSION=24.12.0
+ARG OPENTEAM_NODE_DIST_BASE_URL=https://npmmirror.com/mirrors/node
+ARG OPENTEAM_OPENCLAW_VERSION=2026.3.2
+ARG OPENTEAM_NPM_REGISTRY=https://registry.npmmirror.com
+ARG OPENTEAM_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG OPENTEAM_PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TEAM_OS_REPO_PATH=/team-os \
-    PIP_INDEX_URL=${TEAMOS_PIP_INDEX_URL} \
-    PIP_TRUSTED_HOST=${TEAMOS_PIP_TRUSTED_HOST} \
+    OPENTEAM_REPO_PATH=/openteam \
+    PIP_INDEX_URL=${OPENTEAM_PIP_INDEX_URL} \
+    PIP_TRUSTED_HOST=${OPENTEAM_PIP_TRUSTED_HOST} \
     HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
     ALL_PROXY=${ALL_PROXY} \
@@ -39,8 +39,8 @@ WORKDIR /app
 
 RUN set -eux; \
     if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-      sed -i "s|http://deb.debian.org/debian|${TEAMOS_APT_MIRROR_URL}|g" /etc/apt/sources.list.d/debian.sources; \
-      sed -i "s|http://deb.debian.org/debian-security|${TEAMOS_APT_SECURITY_MIRROR_URL}|g" /etc/apt/sources.list.d/debian.sources; \
+      sed -i "s|http://deb.debian.org/debian|${OPENTEAM_APT_MIRROR_URL}|g" /etc/apt/sources.list.d/debian.sources; \
+      sed -i "s|http://deb.debian.org/debian-security|${OPENTEAM_APT_SECURITY_MIRROR_URL}|g" /etc/apt/sources.list.d/debian.sources; \
     fi
 
 RUN apt-get update \
@@ -54,16 +54,16 @@ RUN set -eux; \
       arm64) node_arch='arm64' ;; \
       *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
     esac; \
-    curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors -fsSL "${TEAMOS_NODE_DIST_BASE_URL}/v${TEAMOS_NODE_VERSION}/node-v${TEAMOS_NODE_VERSION}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz; \
+    curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors -fsSL "${OPENTEAM_NODE_DIST_BASE_URL}/v${OPENTEAM_NODE_VERSION}/node-v${OPENTEAM_NODE_VERSION}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz; \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1; \
     rm -f /tmp/node.tar.xz; \
     node --version; \
     npm --version; \
-    npm config set registry "${TEAMOS_NPM_REGISTRY}"; \
+    npm config set registry "${OPENTEAM_NPM_REGISTRY}"; \
     npm config set fetch-retries 5; \
     npm config set fetch-retry-mintimeout 20000; \
     npm config set fetch-retry-maxtimeout 120000; \
-    npm install -g "openclaw@${TEAMOS_OPENCLAW_VERSION}"; \
+    npm install -g "openclaw@${OPENTEAM_OPENCLAW_VERSION}"; \
     openclaw --help >/dev/null
 
 COPY scaffolds/runtime/orchestrator/requirements.txt /app/requirements.txt
@@ -83,14 +83,14 @@ RUN pip install --no-cache-dir -r /tmp/requirements-base.txt \
          git -c http.version=HTTP/1.1 \
              -c http.lowSpeedLimit=1024 \
              -c http.lowSpeedTime=30 \
-             clone --filter=blob:none --sparse --no-checkout "${TEAMOS_CREWAI_GIT_URL}" /tmp/crewai-src \
+             clone --filter=blob:none --sparse --no-checkout "${OPENTEAM_CREWAI_GIT_URL}" /tmp/crewai-src \
          && git -C /tmp/crewai-src sparse-checkout init --cone \
          && git -C /tmp/crewai-src sparse-checkout set lib/crewai \
-         && if [ -n "${TEAMOS_CREWAI_GIT_SHA}" ]; then \
-              git -C /tmp/crewai-src fetch --depth 1 origin "${TEAMOS_CREWAI_GIT_SHA}" \
+         && if [ -n "${OPENTEAM_CREWAI_GIT_SHA}" ]; then \
+              git -C /tmp/crewai-src fetch --depth 1 origin "${OPENTEAM_CREWAI_GIT_SHA}" \
               && git -C /tmp/crewai-src checkout --detach FETCH_HEAD; \
             else \
-              git -C /tmp/crewai-src fetch --depth 1 origin "${TEAMOS_CREWAI_GIT_REF}" \
+              git -C /tmp/crewai-src fetch --depth 1 origin "${OPENTEAM_CREWAI_GIT_REF}" \
               && git -C /tmp/crewai-src checkout --detach FETCH_HEAD; \
             fi \
          && success=1 && break; \
@@ -98,12 +98,12 @@ RUN pip install --no-cache-dir -r /tmp/requirements-base.txt \
          sleep 3; \
        done \
     && [ "${success}" = "1" ] \
-    && echo "${TEAMOS_CREWAI_GIT_SHA:-${TEAMOS_CREWAI_GIT_REF}}" > /tmp/crewai-src/.teamos_crewai_revision \
+    && echo "${OPENTEAM_CREWAI_GIT_SHA:-${OPENTEAM_CREWAI_GIT_REF}}" > /tmp/crewai-src/.openteam_crewai_revision \
     && pip install --no-cache-dir /tmp/crewai-src/lib/crewai \
     && rm -rf /tmp/crewai-src
 
 COPY scaffolds/runtime/orchestrator/app /app/app
-COPY . /team-os
+COPY . /openteam
 
 EXPOSE 8787
 

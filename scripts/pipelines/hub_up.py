@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_hub_compose_required(hub)
         enforce_hub_env_config_security(hub)
     except PipelineError as e:
-        write_json_stdout({"ok": False, "error": str(e), "hint": "run: teamos hub init"})
+        write_json_stdout({"ok": False, "error": str(e), "hint": "run: openteam hub init"})
         return 2
 
     out = run_compose(hub=hub, args=["up", "-d"], capture=True)

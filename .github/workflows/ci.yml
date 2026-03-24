@@ -29,7 +29,7 @@ jobs:
 
       - name: Run tests
         env:
-          TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED: "0"
+          OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED: "0"
         run: |
           python -m pytest tests/ evals/ -v --tb=short \
             --ignore=tests/test_crewai_orchestrator.py \
@@ -58,9 +58,9 @@ jobs:
           python -c "
           import py_compile, sys
           files = [
-              'teamos',
-              'team_os_yaml.py',
-              'team_os_common.py',
+              'openteam',
+              'openteam_yaml.py',
+              'openteam_common.py',
               'scripts/bootstrap_and_run.py',
               'scaffolds/runtime/orchestrator/app/main.py',
               'scaffolds/runtime/orchestrator/app/runtime_db.py',

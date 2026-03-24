@@ -1,14 +1,14 @@
-# CREWAI Runtime Root Migration Plan (TEAMOS-AUDIT-0001)
+# CREWAI Runtime Root Migration Plan (OPENTEAM-AUDIT-0001)
 
 ## Scope
-- Remove repository dependency on `.team-os/` paths.
+- Remove repository dependency on `.openteam/` paths.
 - Consolidate static assets into domain directories: `specs/`, `templates/`, `scaffolds/`, `scripts/`, `migrations/`.
-- Enforce runtime-only dynamic outputs under `../team-os-runtime/`.
+- Enforce runtime-only dynamic outputs under `../openteam-runtime/`.
 - Keep orchestration on CrewAI + deterministic Python pipelines only.
 
 ## Hard Rules
 - Repo contains static assets only.
-- Runtime state/workspace/hub/logs/audit/ledger must be outside repo at `../team-os-runtime/`.
+- Runtime state/workspace/hub/logs/audit/ledger must be outside repo at `../openteam-runtime/`.
 - Hub must run PostgreSQL + Redis together via Docker on Brain host.
 - Leader-only writes for truth-source updates.
 - Distributed lock default: PostgreSQL advisory lock; Redis for queue/event/cache.
@@ -17,14 +17,14 @@
 
 ## Runtime Root Contract
 - `REPO_ROOT = git rev-parse --show-toplevel`
-- `RUNTIME_ROOT = Path(REPO_ROOT).parent / "team-os-runtime"` (default)
-- Optional override: `TEAMOS_RUNTIME_ROOT`
+- `RUNTIME_ROOT = Path(REPO_ROOT).parent / "openteam-runtime"` (default)
+- Optional override: `OPENTEAM_RUNTIME_ROOT`
 
 Required runtime layout:
-- `../team-os-runtime/state/{audit,logs,runs,teamos,kb/sources}`
-- `../team-os-runtime/workspace/projects/<id>/{repo,state/...}`
-- `../team-os-runtime/hub/{compose,env,data,backups,config,logs}`
-- `../team-os-runtime/{tmp,cache}`
+- `../openteam-runtime/state/{audit,logs,runs,openteam,kb/sources}`
+- `../openteam-runtime/workspace/projects/<id>/{repo,state/...}`
+- `../openteam-runtime/hub/{compose,env,data,backups,config,logs}`
+- `../openteam-runtime/{tmp,cache}`
 
 ## Module Execution Plan (Subagents)
 1. Subagent B: Hub pipelines for PostgreSQL+Redis Docker lifecycle.
@@ -36,10 +36,10 @@ Required runtime layout:
 7. Subagent H: e2e tests + final runtime audit artifacts.
 
 ## Acceptance Gates
-- `teamos doctor` fails if `.team-os/` exists in repo.
+- `openteam doctor` fails if `.openteam/` exists in repo.
 - `repo_purity_check` blocks runtime artifacts in repo.
 - `task close` and pre-push execute purity + policy + tests.
-- All dynamic reports written to `../team-os-runtime/state/audit/`.
+- All dynamic reports written to `../openteam-runtime/state/audit/`.
 
 ## Risk & Approval Baseline
 High-risk categories must go through approval engine (DB-backed):

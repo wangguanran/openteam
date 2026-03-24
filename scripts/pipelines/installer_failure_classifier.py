@@ -92,10 +92,10 @@ def classify_failure(*, component: str, stage: str, stdout: str, stderr: str, ok
         return {"category": "NETWORK_UNREACHABLE", "retryable": True, "remediation": "check network/DNS/firewall and retry"}
 
     if "permission denied" in blob and ("install -m" in blob or "mkdir -p" in blob or stg.startswith("ssh")):
-        return {"category": "REMOTE_PERMISSION", "retryable": False, "remediation": "verify write permission on remote ~/.teamos paths"}
+        return {"category": "REMOTE_PERMISSION", "retryable": False, "remediation": "verify write permission on remote ~/.openteam paths"}
 
     if "missing hub env" in blob or "missing required postgres config" in blob or "missing required redis config" in blob:
-        return {"category": "BRAIN_CONFIG_MISSING", "retryable": False, "remediation": "run `teamos hub init` / validate central hub env, then retry"}
+        return {"category": "BRAIN_CONFIG_MISSING", "retryable": False, "remediation": "run `openteam hub init` / validate central hub env, then retry"}
 
     if stg.startswith("scp"):
         return {"category": "SCP_FAILED", "retryable": True, "remediation": "check ssh/scp connectivity and remote reachability, then retry"}
@@ -325,7 +325,7 @@ def cmd_record(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Deterministic installer run classifier/recorder")
     add_default_args(ap)
-    ap.add_argument("--db-url", default="", help="override TEAMOS_DB_URL")
+    ap.add_argument("--db-url", default="", help="override OPENTEAM_DB_URL")
     ap.add_argument("--runtime-root", default="", help="override runtime root (fallback audit path)")
     ap.add_argument("--instance-id", default="", help="override installer instance id")
     ap.add_argument("--input-json", default="", help="JSON object for classifier input; '-' means stdin")

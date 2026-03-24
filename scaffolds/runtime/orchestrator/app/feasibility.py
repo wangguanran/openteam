@@ -36,7 +36,7 @@ _MISSING_INFO_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("secrets_in_git_en", re.compile(r"commit\s+.*\b(token|password|api\s*key|secret)\b", re.IGNORECASE), "Policy forbids committing secrets into git."),
     ("secrets_in_git_cn", re.compile(r"(提交|入库|写入).*(token|密钥|密码|api\s*key|secret)", re.IGNORECASE), "Policy forbids storing secrets into git."),
-    ("project_into_team_os_cn", re.compile(r"(把|将).*(项目|project).*(写入|放到).*(team-?os|Team\s*OS)", re.IGNORECASE), "Repo/workspace isolation forbids writing project truth sources into the team-os repo."),
+    ("project_into_openteam_cn", re.compile(r"(把|将).*(项目|project).*(写入|放到).*(team-?os|Team\s*OS)", re.IGNORECASE), "Repo/workspace isolation forbids writing project truth sources into the openteam repo."),
 ]
 
 _HIGH_RISK_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
@@ -49,7 +49,7 @@ _HIGH_RISK_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 ]
 
 _DEPENDENCY_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
-    ("postgres", re.compile(r"\b(postgres|postgresql)\b", re.IGNORECASE), "PostgreSQL (TEAMOS_DB_URL / psycopg)"),
+    ("postgres", re.compile(r"\b(postgres|postgresql)\b", re.IGNORECASE), "PostgreSQL (OPENTEAM_DB_URL / psycopg)"),
     ("redis", re.compile(r"\bredis\b", re.IGNORECASE), "Redis (optional)"),
     ("github", re.compile(r"\bgithub\b|gh\s+cli|projects\s+v2", re.IGNORECASE), "GitHub API/Projects (gh auth required)"),
     ("docker", re.compile(r"\bdocker\b", re.IGNORECASE), "Docker runtime"),

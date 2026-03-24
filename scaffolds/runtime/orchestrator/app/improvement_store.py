@@ -11,8 +11,8 @@ from typing import Any, Optional
 
 from . import workspace_store
 from .runtime_state_store import delete_doc, get_doc, get_state, list_docs, put_doc, put_state
-from .state_store import team_os_root
-from team_os_common import utc_now_iso as _utc_now_iso
+from .state_store import openteam_root
+from openteam_common import utc_now_iso as _utc_now_iso
 
 
 TARGET_NAMESPACE = "improvement_target"
@@ -107,7 +107,7 @@ def _normalize_target(raw: dict[str, Any]) -> dict[str, Any]:
     repo_root = str(raw.get("repo_root") or raw.get("repo_path") or "").strip()
     repo_url = str(raw.get("repo_url") or "").strip()
     repo_locator = str(raw.get("repo_locator") or "").strip()
-    project_id = str(raw.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(raw.get("project_id") or "openteam").strip() or "openteam"
     target_id = str(raw.get("target_id") or _target_id_for(repo_locator=repo_locator, repo_root=repo_root, repo_url=repo_url, project_id=project_id)).strip()
     display_name = str(raw.get("display_name") or repo_locator or Path(repo_root).name or target_id).strip()
     if not repo_locator and repo_root:
@@ -144,7 +144,7 @@ def upsert_target(raw: dict[str, Any]) -> dict[str, Any]:
     put_doc(
         TARGET_NAMESPACE,
         doc["target_id"],
-        project_id=str(doc.get("project_id") or "teamos"),
+        project_id=str(doc.get("project_id") or "openteam"),
         scope_id=str(doc.get("target_id") or ""),
         state="enabled" if bool(doc.get("enabled")) else "disabled",
         category=str(doc.get("team_template") or "improvement"),
@@ -153,7 +153,7 @@ def upsert_target(raw: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
-def ensure_target(*, project_id: str = "teamos", target_id: str = "", repo_path: str = "", repo_locator: str = "", repo_url: str = "") -> dict[str, Any]:
+def ensure_target(*, project_id: str = "openteam", target_id: str = "", repo_path: str = "", repo_locator: str = "", repo_url: str = "") -> dict[str, Any]:
     tid = str(target_id or "").strip()
     if tid:
         doc = get_doc(TARGET_NAMESPACE, tid)
@@ -162,8 +162,8 @@ def ensure_target(*, project_id: str = "teamos", target_id: str = "", repo_path:
     repo_root = ""
     if str(repo_path or "").strip():
         repo_root = str(Path(str(repo_path)).expanduser().resolve())
-    elif str(project_id or "").strip() == "teamos":
-        repo_root = str(team_os_root())
+    elif str(project_id or "").strip() == "openteam":
+        repo_root = str(openteam_root())
     else:
         candidate = workspace_store.project_repo_dir(project_id)
         if candidate.exists():
@@ -175,12 +175,12 @@ def ensure_target(*, project_id: str = "teamos", target_id: str = "", repo_path:
     return upsert_target(
         {
             "target_id": tid or _target_id_for(repo_locator=locator, repo_root=repo_root, repo_url=url, project_id=project_id),
-            "project_id": str(project_id or "teamos").strip() or "teamos",
+            "project_id": str(project_id or "openteam").strip() or "openteam",
             "repo_root": repo_root,
             "repo_url": url,
             "repo_locator": locator,
             "enabled": True,
-            "auto_discovery": bool(str(project_id or "teamos").strip() == "teamos"),
+            "auto_discovery": bool(str(project_id or "openteam").strip() == "openteam"),
             "display_name": locator or Path(repo_root).name or tid or "target",
         }
     )
@@ -189,7 +189,7 @@ def ensure_target(*, project_id: str = "teamos", target_id: str = "", repo_path:
 def materialize_target_repo(target: dict[str, Any], *, fetch: bool = True) -> dict[str, Any]:
     doc = _normalize_target(target)
     target_id = str(doc.get("target_id") or "").strip()
-    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(doc.get("project_id") or "openteam").strip() or "openteam"
     repo_root_raw = str(doc.get("repo_root") or "").strip()
     repo_url = str(doc.get("repo_url") or "").strip()
     checkout_policy = str(doc.get("checkout_policy") or "").strip() or ("clone" if repo_url else "existing")
@@ -313,7 +313,7 @@ def upsert_proposal(doc: dict[str, Any]) -> dict[str, Any]:
     proposal_id = str(doc.get("proposal_id") or "").strip()
     if not proposal_id:
         raise RuntimeError("proposal_id is required")
-    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(doc.get("project_id") or "openteam").strip() or "openteam"
     target_id = str(doc.get("target_id") or "").strip() or _target_id_for(
         repo_locator=str(doc.get("repo_locator") or "").strip(),
         repo_root=str(doc.get("repo_root") or "").strip(),
@@ -388,7 +388,7 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
             repo_locator=str(((doc.get("repo") or {}) if isinstance(doc.get("repo"), dict) else {}).get("locator") or "").strip(),
             repo_root=str(((doc.get("repo") or {}) if isinstance(doc.get("repo"), dict) else {}).get("source_workdir") or ((doc.get("repo") or {}) if isinstance(doc.get("repo"), dict) else {}).get("workdir") or "").strip(),
             repo_url="",
-            project_id=str(doc.get("project_id") or "teamos"),
+            project_id=str(doc.get("project_id") or "openteam"),
         )
     payload = dict(doc)
     payload["target_id"] = target_id
@@ -396,7 +396,7 @@ def upsert_delivery_task(doc: dict[str, Any]) -> dict[str, Any]:
     put_doc(
         DELIVERY_TASK_NAMESPACE,
         task_id,
-        project_id=str(doc.get("project_id") or "teamos"),
+        project_id=str(doc.get("project_id") or "openteam"),
         scope_id=target_id,
         state=str(doc.get("status") or doc.get("state") or "").strip(),
         category=str(team.get("lane") or orchestration.get("finding_lane") or "").strip(),
@@ -439,7 +439,7 @@ def upsert_milestone(doc: dict[str, Any]) -> dict[str, Any]:
     milestone_id = str(doc.get("milestone_id") or "").strip()
     if not milestone_id:
         raise RuntimeError("milestone_id is required")
-    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(doc.get("project_id") or "openteam").strip() or "openteam"
     target_id = str(doc.get("target_id") or "").strip() or _target_id_for(
         repo_locator=str(doc.get("repo_locator") or "").strip(),
         repo_root="",
@@ -473,7 +473,7 @@ def save_report(*, target_id: str, project_id: str, report: dict[str, Any]) -> d
     put_doc(
         REPORT_NAMESPACE,
         report_id,
-        project_id=str(project_id or "teamos"),
+        project_id=str(project_id or "openteam"),
         scope_id=str(target_id or "").strip(),
         state=report_state,
         category="report",
@@ -573,8 +573,8 @@ def _run_team_id(*, db: Any, run_id: str) -> str:
 
 
 def team_logs_dir(project_id: str, team_id: str) -> Path:
-    workspace_store.ensure_project_scaffold(str(project_id or "teamos"))
-    root = workspace_store.logs_team_dir(str(project_id or "teamos"), str(team_id or "team"))
+    workspace_store.ensure_project_scaffold(str(project_id or "openteam"))
+    root = workspace_store.logs_team_dir(str(project_id or "openteam"), str(team_id or "team"))
     runs = root / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     return runs
@@ -609,7 +609,7 @@ def build_team_run_logs_payload(*, db: Any, run_id: str, limit: int = 200) -> di
             }
         )
     plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
-    project_id = str(run.get("project_id") or report.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(run.get("project_id") or report.get("project_id") or "openteam").strip() or "openteam"
     team_id = str(report.get("team_id") or _run_team_id(db=db, run_id=run_id) or "team").strip() or "team"
     payload = {
         "run": run,

@@ -77,18 +77,18 @@ class CrewOrchestratorTests(unittest.TestCase):
 
     def test_run_once_emits_explicit_pipeline_write_delegation_evidence(self):
         db = _FakeDB()
-        spec = RunSpec(project_id="teamos", workstream_id="general", objective="run checks", flow="standard")
+        spec = RunSpec(project_id="openteam", workstream_id="general", objective="run checks", flow="standard")
 
         with mock.patch(
             "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
-        ), mock.patch("app.crewai_orchestrator.team_os_root", return_value=Path("/tmp/team-os")), mock.patch(
+        ), mock.patch("app.crewai_orchestrator.openteam_root", return_value=Path("/tmp/openteam")), mock.patch(
             "app.crewai_orchestrator.crew_tools.workspace_root", return_value=Path("/tmp/ws")
         ), mock.patch(
             "app.crewai_orchestrator.crew_tools.run_pipeline",
             return_value={
                 "pipeline": "doctor",
-                "script_path": "/tmp/team-os/scripts/pipelines/doctor.py",
+                "script_path": "/tmp/openteam/scripts/pipelines/doctor.py",
                 "returncode": 0,
                 "stdout": "{\"ok\": true}",
                 "stderr": "",
@@ -96,7 +96,7 @@ class CrewOrchestratorTests(unittest.TestCase):
                     "write_mode": "delegated_pipeline_script",
                     "writer": "deterministic_pipeline_script",
                     "pipeline": "doctor",
-                    "script_path": "/tmp/team-os/scripts/pipelines/doctor.py",
+                    "script_path": "/tmp/openteam/scripts/pipelines/doctor.py",
                     "agent_truth_source_write": "disabled",
                 },
             },
@@ -112,7 +112,7 @@ class CrewOrchestratorTests(unittest.TestCase):
 
     def test_run_once_rejects_unsupported_direct_pipeline_with_allowlist_context(self):
         db = _FakeDB()
-        spec = RunSpec(project_id="teamos", workstream_id="general", objective="bad request", flow="pipeline:task_create")
+        spec = RunSpec(project_id="openteam", workstream_id="general", objective="bad request", flow="pipeline:task_create")
         with mock.patch(
             "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
@@ -126,13 +126,13 @@ class CrewOrchestratorTests(unittest.TestCase):
 
     def test_run_once_team_workflow_uses_team_runtime_adapter(self):
         db = _FakeDB()
-        spec = RunSpec(project_id="teamos", workstream_id="general", objective="upgrade", flow="team:repo-improvement", repo_path="/tmp/team-os")
+        spec = RunSpec(project_id="openteam", workstream_id="general", objective="upgrade", flow="team:repo-improvement", repo_path="/tmp/openteam")
         adapter = SimpleNamespace(
             run_once_fn=mock.Mock(
                 return_value={
                     "ok": True,
                     "summary": "planned",
-                    "records": [{"title": "Add CI", "task_id": "TEAMOS-0001"}],
+                    "records": [{"title": "Add CI", "task_id": "OPENTEAM-0001"}],
                     "panel_sync": {"ok": True},
                     "report_path": "/tmp/report.json",
                     "write_delegate": {"writer": "crewai_agents", "write_mode": "workflow_runner"},

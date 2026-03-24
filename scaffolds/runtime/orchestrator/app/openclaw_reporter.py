@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 from . import runtime_state_store
-from .state_store import runtime_state_root, team_os_root
+from .state_store import runtime_state_root, openteam_root
 
 
 _DEFAULT_EVENT_TYPES = [
@@ -103,30 +103,30 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _default_config() -> dict[str, Any]:
     inferred = _infer_gateway_defaults()
-    target = str(os.getenv("TEAMOS_OPENCLAW_TARGET", "") or "").strip()
-    enabled = _env_truthy("TEAMOS_OPENCLAW_ENABLED", "1" if target else "0")
-    paths = _split_csv(os.getenv("TEAMOS_OPENCLAW_PATH_PATTERNS", "*")) or ["*"]
-    event_types = _split_csv(os.getenv("TEAMOS_OPENCLAW_EVENT_TYPES", "")) or list(_DEFAULT_EVENT_TYPES)
-    excluded = _split_csv(os.getenv("TEAMOS_OPENCLAW_EXCLUDE_EVENT_TYPES", ""))
+    target = str(os.getenv("OPENTEAM_OPENCLAW_TARGET", "") or "").strip()
+    enabled = _env_truthy("OPENTEAM_OPENCLAW_ENABLED", "1" if target else "0")
+    paths = _split_csv(os.getenv("OPENTEAM_OPENCLAW_PATH_PATTERNS", "*")) or ["*"]
+    event_types = _split_csv(os.getenv("OPENTEAM_OPENCLAW_EVENT_TYPES", "")) or list(_DEFAULT_EVENT_TYPES)
+    excluded = _split_csv(os.getenv("OPENTEAM_OPENCLAW_EXCLUDE_EVENT_TYPES", ""))
     return {
         "enabled": enabled,
-        "channel": _env_text("TEAMOS_OPENCLAW_CHANNEL", "telegram") or "telegram",
+        "channel": _env_text("OPENTEAM_OPENCLAW_CHANNEL", "telegram") or "telegram",
         "target": target,
         "path_patterns": paths,
         "event_types": event_types,
         "exclude_event_types": excluded,
-        "bin": _env_text("TEAMOS_OPENCLAW_BIN", "openclaw") or "openclaw",
-        "message_prefix": _env_text("TEAMOS_OPENCLAW_MESSAGE_PREFIX", "[TeamOS 上报]") or "[TeamOS 上报]",
-        "gateway_mode": _env_text("TEAMOS_OPENCLAW_GATEWAY_MODE", inferred.get("gateway_mode") or ""),
-        "gateway_url": _env_text("TEAMOS_OPENCLAW_GATEWAY_URL", inferred.get("gateway_url") or ""),
-        "gateway_token": _env_text("TEAMOS_OPENCLAW_GATEWAY_TOKEN", inferred.get("gateway_token") or ""),
-        "gateway_password": _env_text("TEAMOS_OPENCLAW_GATEWAY_PASSWORD", inferred.get("gateway_password") or ""),
-        "gateway_transport": _env_text("TEAMOS_OPENCLAW_GATEWAY_TRANSPORT", inferred.get("gateway_transport") or "direct") or "direct",
+        "bin": _env_text("OPENTEAM_OPENCLAW_BIN", "openclaw") or "openclaw",
+        "message_prefix": _env_text("OPENTEAM_OPENCLAW_MESSAGE_PREFIX", "[OpenTeam 上报]") or "[OpenTeam 上报]",
+        "gateway_mode": _env_text("OPENTEAM_OPENCLAW_GATEWAY_MODE", inferred.get("gateway_mode") or ""),
+        "gateway_url": _env_text("OPENTEAM_OPENCLAW_GATEWAY_URL", inferred.get("gateway_url") or ""),
+        "gateway_token": _env_text("OPENTEAM_OPENCLAW_GATEWAY_TOKEN", inferred.get("gateway_token") or ""),
+        "gateway_password": _env_text("OPENTEAM_OPENCLAW_GATEWAY_PASSWORD", inferred.get("gateway_password") or ""),
+        "gateway_transport": _env_text("OPENTEAM_OPENCLAW_GATEWAY_TRANSPORT", inferred.get("gateway_transport") or "direct") or "direct",
         "allow_insecure_private_ws": _env_optional_truthy(
-            "TEAMOS_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+            "OPENTEAM_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
             str(inferred.get("allow_insecure_private_ws") or "").strip() in ("1", "true", "yes", "on"),
         ),
-        "gateway_state_dir": _env_text("TEAMOS_OPENCLAW_STATE_DIR", _gateway_state_dir_default()),
+        "gateway_state_dir": _env_text("OPENTEAM_OPENCLAW_STATE_DIR", _gateway_state_dir_default()),
         "updated_at": "",
     }
 
@@ -202,7 +202,7 @@ def _running_in_container() -> bool:
 
 
 def _openclaw_config_dir() -> Path:
-    explicit = str(os.getenv("TEAMOS_OPENCLAW_CONFIG_DIR", "") or "").strip()
+    explicit = str(os.getenv("OPENTEAM_OPENCLAW_CONFIG_DIR", "") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
     home = Path.home().resolve()
@@ -276,12 +276,12 @@ def _gateway_command_env(config: dict[str, Any]) -> tuple[dict[str, str], Option
         remote_block["password"] = password
     state_dir = Path(str(config.get("gateway_state_dir") or _gateway_state_dir_default())).expanduser().resolve()
     state_dir.mkdir(parents=True, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix="teamos-openclaw-", suffix=".json", dir=str(state_dir))
+    fd, temp_path = tempfile.mkstemp(prefix="openteam-openclaw-", suffix=".json", dir=str(state_dir))
     os.close(fd)
     Path(temp_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     env["OPENCLAW_CONFIG_PATH"] = temp_path
     env["OPENCLAW_STATE_DIR"] = str(state_dir)
-    env.pop("TEAMOS_OPENCLAW_CONFIG_DIR", None)
+    env.pop("OPENTEAM_OPENCLAW_CONFIG_DIR", None)
     if bool(config.get("allow_insecure_private_ws")) and gateway_url.startswith("ws://"):
         env["OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"] = "1"
     return env, temp_path
@@ -425,9 +425,9 @@ def _derive_paths(payload: dict[str, Any]) -> list[str]:
             continue
         while text.startswith("./"):
             text = text[2:]
-        if text.startswith(str(team_os_root()).replace("\\", "/")):
+        if text.startswith(str(openteam_root()).replace("\\", "/")):
             try:
-                text = str(Path(text).resolve().relative_to(team_os_root().resolve())).replace("\\", "/")
+                text = str(Path(text).resolve().relative_to(openteam_root().resolve())).replace("\\", "/")
             except Exception:
                 pass
         if text not in cleaned:
@@ -439,14 +439,14 @@ def _format_message(event: dict[str, Any], *, config: dict[str, Any]) -> str:
     payload = event.get("payload") or {}
     if not isinstance(payload, dict):
         payload = {}
-    lines = [str(config.get("message_prefix") or "[TeamOS 上报]")]
+    lines = [str(config.get("message_prefix") or "[OpenTeam 上报]")]
     event_type = str(event.get("event_type") or "").strip()
     if event_type:
         lines.append(f"事件: {event_type}")
     title = str(payload.get("title") or payload.get("summary") or payload.get("objective") or "").strip()
     if title:
         lines.append(f"摘要: {title[:160]}")
-    project_id = str(event.get("project_id") or payload.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(event.get("project_id") or payload.get("project_id") or "openteam").strip() or "openteam"
     workstream_id = str(event.get("workstream_id") or payload.get("workstream_id") or "general").strip() or "general"
     lines.append(f"项目: {project_id}/{workstream_id}")
     for key, label in (("task_id", "任务"), ("proposal_id", "提案"), ("run_id", "运行"), ("issue_number", "Issue")):
@@ -576,10 +576,10 @@ def report_manual(*, message: str, channel: str = "", target: str = "", path: st
         "ts": _utc_now_iso(),
         "event_type": str(event_type or "OPENCLAW_TEST").strip() or "OPENCLAW_TEST",
         "actor": "control-plane.manual",
-        "project_id": "teamos",
+        "project_id": "openteam",
         "workstream_id": "general",
         "payload": {
-            "summary": str(message or "").strip() or "Team OS OpenClaw test message",
+            "summary": str(message or "").strip() or "OpenTeam OpenClaw test message",
             "path": str(path or "").strip(),
         },
     }

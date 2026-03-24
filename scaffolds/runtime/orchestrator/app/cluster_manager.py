@@ -4,11 +4,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 from .github_issues_bus import GitHubIssuesBusError, IssueRef, ensure_issue, get_issue, update_issue_body, upsert_comment_with_marker
 from .github_projects_client import GitHubAuthError
-from .state_store import team_os_root
+from .state_store import openteam_root
 
 
 class ClusterError(Exception):
@@ -27,7 +27,7 @@ def _env_truthy(name: str, default: str = "0") -> bool:
 
 
 def load_cluster_config() -> dict[str, Any]:
-    p = team_os_root() / "cluster" / "config.yaml"
+    p = openteam_root() / "tooling" / "cluster" / "config.yaml"
     if not p.exists():
         return {}
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -44,7 +44,7 @@ def cluster_enabled(cfg: dict[str, Any]) -> bool:
 
 
 def _central_allowlist_path() -> Path:
-    return team_os_root() / "specs" / "policies" / "central_model_allowlist.yaml"
+    return openteam_root() / "specs" / "policies" / "central_model_allowlist.yaml"
 
 
 def load_central_model_allowlist() -> list[str]:
@@ -77,11 +77,11 @@ def local_llm_profile() -> dict[str, str]:
     Resolve local llm_profile deterministically from env vars.
 
     Required for leader qualification in cluster mode:
-    - TEAMOS_LLM_MODEL_ID
+    - OPENTEAM_LLM_MODEL_ID
     """
-    provider = str(os.getenv("TEAMOS_LLM_PROVIDER") or "codex").strip() or "codex"
-    model_id = str(os.getenv("TEAMOS_LLM_MODEL_ID") or "").strip()
-    auth_mode = str(os.getenv("TEAMOS_LLM_AUTH_MODE") or "oauth").strip() or "oauth"
+    provider = str(os.getenv("OPENTEAM_LLM_PROVIDER") or "codex").strip() or "codex"
+    model_id = str(os.getenv("OPENTEAM_LLM_MODEL_ID") or "").strip()
+    auth_mode = str(os.getenv("OPENTEAM_LLM_AUTH_MODE") or "oauth").strip() or "oauth"
     return {"provider": provider, "model_id": model_id, "auth_mode": auth_mode}
 
 
@@ -210,12 +210,12 @@ def attempt_elect(cfg: dict[str, Any], *, instance_id: str, base_url: str) -> di
             "leader": (cur.__dict__ if cur else {"leader_instance_id": instance_id, "backend": "local"}),
         }
 
-    allow_write = _write_enabled(cfg, section_key="leader_lease", default_env="TEAMOS_GH_CLUSTER_WRITE_ENABLED")
+    allow_write = _write_enabled(cfg, section_key="leader_lease", default_env="OPENTEAM_GH_CLUSTER_WRITE_ENABLED")
     if not allow_write:
         cur = read_leader(cfg)
         return {
             "success": False,
-            "reason": "remote writes disabled (set TEAMOS_GH_CLUSTER_WRITE_ENABLED=1 to enable GitHub lease writes)",
+            "reason": "remote writes disabled (set OPENTEAM_GH_CLUSTER_WRITE_ENABLED=1 to enable GitHub lease writes)",
             "leader": (cur.__dict__ if cur else {"leader_instance_id": instance_id, "backend": "local"}),
         }
 
@@ -257,12 +257,12 @@ def upsert_node_registry_comment(
     repo = cluster_repo(cfg)
     if not repo:
         raise ClusterError("cluster_repo missing")
-    allow_write = _write_enabled(cfg, section_key="nodes_registry", default_env="TEAMOS_GH_CLUSTER_WRITE_ENABLED")
+    allow_write = _write_enabled(cfg, section_key="nodes_registry", default_env="OPENTEAM_GH_CLUSTER_WRITE_ENABLED")
     if not allow_write:
         raise ClusterError("remote writes disabled for nodes registry")
 
     issue = ensure_issue(repo, title=_nodes_issue_title(cfg), body="# CLUSTER-NODES\n", allow_create=True)
-    marker = f"<!-- TEAMOS_NODE:{instance_id} -->"
+    marker = f"<!-- OPENTEAM_NODE:{instance_id} -->"
     body = "\n".join([marker, "", body_yaml.strip(), ""]).strip() + "\n"
     c = upsert_comment_with_marker(repo, issue.number, marker=marker, body=body, allow_create=True)
     return {"issue_url": issue.url, "comment_url": c.url}

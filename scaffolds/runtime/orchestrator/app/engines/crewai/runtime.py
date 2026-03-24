@@ -35,10 +35,10 @@ def _normalize_path(raw: str) -> Path:
 
 
 def codex_oauth_should_bypass_proxy(*, model: str = "", auth_mode: str = "") -> bool:
-    if not _env_truthy("TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX", "1"):
+    if not _env_truthy("OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX", "1"):
         return False
-    resolved_model = str(model or os.getenv("TEAMOS_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "").strip().lower()
-    resolved_auth_mode = str(auth_mode or os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower()
+    resolved_model = str(model or os.getenv("OPENTEAM_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "").strip().lower()
+    resolved_auth_mode = str(auth_mode or os.getenv("OPENTEAM_CREWAI_AUTH_MODE") or "").strip().lower()
     return "codex" in resolved_model and resolved_auth_mode == "oauth_codex"
 
 
@@ -64,10 +64,10 @@ def _crewai_storage_dir_name() -> str:
     explicit = str(os.getenv("CREWAI_STORAGE_DIR") or "").strip()
     if explicit:
         return explicit
-    teamos_explicit = str(os.getenv("TEAMOS_CREWAI_STORAGE_DIR") or "").strip()
-    if teamos_explicit:
-        os.environ.setdefault("CREWAI_STORAGE_DIR", teamos_explicit)
-        return teamos_explicit
+    openteam_explicit = str(os.getenv("OPENTEAM_CREWAI_STORAGE_DIR") or "").strip()
+    if openteam_explicit:
+        os.environ.setdefault("CREWAI_STORAGE_DIR", openteam_explicit)
+        return openteam_explicit
     return Path.cwd().name
 
 
@@ -84,7 +84,7 @@ def _crewai_user_data_file() -> Path:
 
 
 def _prime_crewai_tracing_user_data() -> bool:
-    if not _env_truthy("TEAMOS_SUPPRESS_CREWAI_TRACING_PROMPTS", "1"):
+    if not _env_truthy("OPENTEAM_SUPPRESS_CREWAI_TRACING_PROMPTS", "1"):
         return False
     path = _crewai_user_data_file()
     try:
@@ -110,7 +110,7 @@ def _prime_crewai_tracing_user_data() -> bool:
 def _candidate_paths() -> list[Path]:
     out: list[Path] = []
     env_values = [
-        str(os.getenv("TEAMOS_CREWAI_SRC_PATH") or "").strip(),
+        str(os.getenv("OPENTEAM_CREWAI_SRC_PATH") or "").strip(),
         str(os.getenv("CREWAI_SRC_PATH") or "").strip(),
     ]
     for raw in env_values:
@@ -229,7 +229,7 @@ def _probe_crewai_uncached() -> dict[str, Any]:
 
 
 def suppress_crewai_first_time_tracing_prompt() -> bool:
-    if not _env_truthy("TEAMOS_SUPPRESS_CREWAI_TRACING_PROMPTS", "1"):
+    if not _env_truthy("OPENTEAM_SUPPRESS_CREWAI_TRACING_PROMPTS", "1"):
         return False
     try:
         tracing_utils = __import__(

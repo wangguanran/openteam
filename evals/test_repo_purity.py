@@ -24,7 +24,7 @@ class RepoPurityEvals(unittest.TestCase):
         data = json.loads(out)
         self.assertTrue(bool(data.get("ok")), msg=f"expected repo purity pass, got: {json.dumps(data, ensure_ascii=False)[:2000]}")
 
-    def test_repo_purity_fails_when_legacy_team_os_dir_exists(self):
+    def test_repo_purity_fails_when_legacy_openteam_dir_exists(self):
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "governance" / "check_repo_purity.py"
         self.assertTrue(script.exists(), f"missing checker: {script}")
@@ -34,7 +34,7 @@ class RepoPurityEvals(unittest.TestCase):
             # minimal allowlist root markers
             (fake / "docs").mkdir(parents=True, exist_ok=True)
             (fake / "scripts").mkdir(parents=True, exist_ok=True)
-            (fake / ".team-os").mkdir(parents=True, exist_ok=True)
+            (fake / ".openteam").mkdir(parents=True, exist_ok=True)
 
             p = subprocess.run(
                 [sys.executable, str(script), "--repo-root", str(fake), "--json"],
@@ -48,7 +48,7 @@ class RepoPurityEvals(unittest.TestCase):
             data = json.loads(out)
             self.assertFalse(bool(data.get("ok")), msg=f"expected repo purity failure, got: {json.dumps(data, ensure_ascii=False)[:2000]}")
         kinds = {str(v.get("kind") or "") for v in (data.get("violations") or [])}
-        self.assertIn("LEGACY_TEAM_OS_DIR", kinds)
+        self.assertIn("LEGACY_OPENTEAM_DIR", kinds)
 
 
 if __name__ == "__main__":

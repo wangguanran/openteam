@@ -1,11 +1,11 @@
 # Evals (Regression Checks)
 
-This directory contains regression checks for the Team OS "execution strategy" and the always-on self-improve loop.
+This directory contains regression checks for the OpenTeam "execution strategy" and the always-on self-improve loop.
 
 ## Run
 
 ```bash
-cd /Users/wangguanran/OpenTeam/team-os
+cd /Users/openteam-dev/OpenTeam/openteam
 bash evals/smoke_self_improve.sh
 ```
 

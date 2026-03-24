@@ -26,7 +26,7 @@ class BootstrapAndRunTests(unittest.TestCase):
 
     def test_runtime_layout_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
-            rt = Path(td) / "team-os-runtime"
+            rt = Path(td) / "openteam-runtime"
             self.mod._ensure_runtime_layout(rt)
             self.mod._ensure_runtime_layout(rt)
             self.assertTrue((rt / "state" / "audit").exists())
@@ -38,35 +38,35 @@ class BootstrapAndRunTests(unittest.TestCase):
             self.assertTrue((rt / "tmp").exists())
             self.assertTrue((rt / "cache").exists())
 
-    def test_quarantine_legacy_team_os_dir(self):
+    def test_quarantine_legacy_openteam_dir(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
-            runtime_root = Path(td) / "team-os-runtime"
-            (repo / ".team-os" / "state").mkdir(parents=True, exist_ok=True)
-            (repo / ".team-os" / "state" / "x.json").write_text("{}", encoding="utf-8")
-            out = self.mod._quarantine_legacy_team_os_dir(repo, runtime_root)
+            runtime_root = Path(td) / "openteam-runtime"
+            (repo / ".openteam" / "state").mkdir(parents=True, exist_ok=True)
+            (repo / ".openteam" / "state" / "x.json").write_text("{}", encoding="utf-8")
+            out = self.mod._quarantine_legacy_openteam_dir(repo, runtime_root)
             self.assertTrue(bool(out.get("ok")))
             self.assertTrue(bool(out.get("found")))
-            self.assertFalse((repo / ".team-os").exists())
+            self.assertFalse((repo / ".openteam").exists())
             self.assertTrue(Path(str(out.get("moved_to") or "")).exists())
 
-    def test_quarantine_empty_legacy_team_os_dir_removes_it(self):
+    def test_quarantine_empty_legacy_openteam_dir_removes_it(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
-            runtime_root = Path(td) / "team-os-runtime"
-            (repo / ".team-os").mkdir(parents=True, exist_ok=True)
+            runtime_root = Path(td) / "openteam-runtime"
+            (repo / ".openteam").mkdir(parents=True, exist_ok=True)
 
-            out = self.mod._quarantine_legacy_team_os_dir(repo, runtime_root)
+            out = self.mod._quarantine_legacy_openteam_dir(repo, runtime_root)
 
             self.assertTrue(bool(out.get("ok")))
             self.assertTrue(bool(out.get("found")))
             self.assertTrue(bool(out.get("removed_empty")))
-            self.assertFalse((repo / ".team-os").exists())
+            self.assertFalse((repo / ".openteam").exists())
 
     def test_llm_config_accepts_codex_oauth_without_api_key(self):
         with mock.patch.object(self.mod, "_codex_login_status", return_value=(True, "Logged in using ChatGPT")), mock.patch.dict(
             os.environ,
-            {"TEAMOS_LLM_MODEL": "openai-codex/gpt-5.4"},
+            {"OPENTEAM_LLM_MODEL": "openai-codex/gpt-5.4"},
             clear=True,
         ):
             cfg = self.mod._llm_config()
@@ -79,7 +79,7 @@ class BootstrapAndRunTests(unittest.TestCase):
     def test_crewai_pip_spec_prefers_archive_url(self):
         with mock.patch.dict(
             os.environ,
-            {"TEAMOS_CREWAI_ARCHIVE_URL": "https://codeload.github.com/acme/crewAI/tar.gz/refs/heads/main"},
+            {"OPENTEAM_CREWAI_ARCHIVE_URL": "https://codeload.github.com/acme/crewAI/tar.gz/refs/heads/main"},
             clear=True,
         ):
             spec = self.mod._crewai_pip_spec()
@@ -93,8 +93,8 @@ class BootstrapAndRunTests(unittest.TestCase):
         with mock.patch.dict(
             os.environ,
             {
-                "TEAMOS_CREWAI_GIT_URL": "https://github.com/example/crewAI.git",
-                "TEAMOS_CREWAI_GIT_REF": "main",
+                "OPENTEAM_CREWAI_GIT_URL": "https://github.com/example/crewAI.git",
+                "OPENTEAM_CREWAI_GIT_REF": "main",
             },
             clear=True,
         ):
@@ -105,16 +105,16 @@ class BootstrapAndRunTests(unittest.TestCase):
     def test_start_flow_requires_repo_improvement_actual_execution(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
-            runtime_root = Path(td) / "team-os-runtime"
+            runtime_root = Path(td) / "openteam-runtime"
             workspace_root = runtime_root / "workspace"
             repo.mkdir(parents=True, exist_ok=True)
             (runtime_root / "hub" / "env").mkdir(parents=True, exist_ok=True)
             (runtime_root / "hub" / "env" / ".env").write_text(
                 "\n".join(
                     [
-                        "POSTGRES_USER=teamos",
+                        "POSTGRES_USER=openteam",
                         "POSTGRES_PASSWORD=pw",
-                        "POSTGRES_DB=teamos",
+                        "POSTGRES_DB=openteam",
                         "PG_BIND_IP=127.0.0.1",
                         "PG_PORT=5432",
                         "REDIS_BIND_IP=127.0.0.1",
@@ -148,16 +148,16 @@ class BootstrapAndRunTests(unittest.TestCase):
     def test_start_flow_order_and_success(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
-            runtime_root = Path(td) / "team-os-runtime"
+            runtime_root = Path(td) / "openteam-runtime"
             workspace_root = runtime_root / "workspace"
             repo.mkdir(parents=True, exist_ok=True)
             (runtime_root / "hub" / "env").mkdir(parents=True, exist_ok=True)
             (runtime_root / "hub" / "env" / ".env").write_text(
                 "\n".join(
                     [
-                        "POSTGRES_USER=teamos",
+                        "POSTGRES_USER=openteam",
                         "POSTGRES_PASSWORD=pw",
-                        "POSTGRES_DB=teamos",
+                        "POSTGRES_DB=openteam",
                         "PG_BIND_IP=127.0.0.1",
                         "PG_PORT=5432",
                         "REDIS_BIND_IP=127.0.0.1",

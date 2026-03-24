@@ -27,9 +27,9 @@ def _list_migrations(repo_root):
 
 
 def _ensure_target_db_exists(*, env: dict[str, str]) -> None:
-    user = str(env.get("POSTGRES_USER") or "teamos")
+    user = str(env.get("POSTGRES_USER") or "openteam")
     pwd = str(env.get("POSTGRES_PASSWORD") or "")
-    db = str(env.get("POSTGRES_DB") or "teamos")
+    db = str(env.get("POSTGRES_DB") or "openteam")
     bind_ip = str(env.get("PG_BIND_IP") or "127.0.0.1")
     port = int(str(env.get("PG_PORT") or "5432"))
     admin_dsn = f"postgresql://{user}:{pwd}@{bind_ip}:{port}/postgres"

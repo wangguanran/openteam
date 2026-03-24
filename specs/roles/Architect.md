@@ -3,7 +3,7 @@ role_id: "Architect"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "系统方案收敛：边界/接口/数据流/失败模式/回滚策略"
   - "将需求拆分为可交付里程碑与 workstreams 子任务"
@@ -33,7 +33,7 @@ metrics_required:
   - "workstreams_identified"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Architect/index.md"
+    - ".openteam/memory/roles/Architect/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -94,4 +94,4 @@ permissions:
 ## 记忆写入规则
 
 - 可复用的架构模式/反模式写入：
-  - `.team-os/memory/roles/Architect/index.md`
+  - `.openteam/memory/roles/Architect/index.md`

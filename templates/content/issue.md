@@ -19,5 +19,5 @@
 ## 证据/引用
 
 - 任务：<TASK_ID>
-- 日志：`.team-os/logs/tasks/<TASK_ID>/07_retro.md`
+- 日志：`.openteam/logs/tasks/<TASK_ID>/07_retro.md`
 

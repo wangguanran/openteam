@@ -3,7 +3,7 @@ role_id: "Release-Ops"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "部署/回滚/升级/备份恢复/健康检查"
   - "发布闸门与审批记录（可追溯、可回滚、可观测）"
@@ -32,7 +32,7 @@ metrics_required:
   - "healthcheck_recorded"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Release-Ops/index.md"
+    - ".openteam/memory/roles/Release-Ops/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R2"
@@ -59,8 +59,8 @@ permissions:
 
 ## 输出
 
-- 发布记录：`.team-os/logs/tasks/<TASK_ID>/05_release.md`
-- 观测记录：`.team-os/logs/tasks/<TASK_ID>/06_observe.md`
+- 发布记录：`.openteam/logs/tasks/<TASK_ID>/05_release.md`
+- 观测记录：`.openteam/logs/tasks/<TASK_ID>/06_observe.md`
 - 运行手册更新（必要时更新 `docs/runbooks/EXECUTION_RUNBOOK.md`）
 
 ## 权限边界
@@ -87,4 +87,4 @@ permissions:
 ## 记忆写入规则
 
 - 运维套路、故障处理沉淀到：
-  - `.team-os/memory/roles/Release-Ops/index.md`
+  - `.openteam/memory/roles/Release-Ops/index.md`

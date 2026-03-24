@@ -27,9 +27,9 @@ steps:
     state: "intake"
     role: "PM-Intake"
     inputs:
-      - ".team-os/ledger/tasks/<TASK_ID>.yaml"
+      - ".openteam/ledger/tasks/<TASK_ID>.yaml"
     outputs:
-      - ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+      - ".openteam/logs/tasks/<TASK_ID>/00_intake.md"
     gates:
       - "R2/R3 actions require approval"
     exit_criteria:

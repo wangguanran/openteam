@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../_common.sh"
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 # Default policy: always create full 00~07 logs + metrics.jsonl (compliance requirement).
 # `--short` is available for special cases; `--full` is accepted as a no-op alias.
 FULL=1
@@ -18,7 +18,7 @@ fi
 
 TITLE="${1:-}"
 if [[ -z "$TITLE" ]]; then
-  echo "Usage: ./scripts/teamos.sh new-task [--full|--short] \"<title>\"" >&2
+  echo "Usage: ./scripts/openteam.sh new-task [--full|--short] \"<title>\"" >&2
   exit 2
 fi
 shift || true
@@ -33,20 +33,20 @@ elif [[ "${1:-}" == "--full" ]]; then
 fi
 if [[ "${1:-}" != "" ]]; then
   echo "Unexpected argument: $1" >&2
-  echo "Usage: ./scripts/teamos.sh new-task [--full|--short] \"<title>\"" >&2
+  echo "Usage: ./scripts/openteam.sh new-task [--full|--short] \"<title>\"" >&2
   exit 2
 fi
 
 DATE="$(today)"
 NOW_ISO="$(now_utc_iso)"
 
-ensure_dir "$ROOT/.team-os/ledger/tasks"
-ensure_dir "$ROOT/.team-os/logs/tasks"
+ensure_dir "$ROOT/.openteam/ledger/tasks"
+ensure_dir "$ROOT/.openteam/logs/tasks"
 
 task_id=""
 for _ in 1 2 3 4 5; do
   cand="TASK-$(ts_compact_utc)"
-  if [[ ! -e "$ROOT/.team-os/ledger/tasks/$cand.yaml" ]]; then
+  if [[ ! -e "$ROOT/.openteam/ledger/tasks/$cand.yaml" ]]; then
     task_id="$cand"
     break
   fi
@@ -58,7 +58,7 @@ if [[ -z "$task_id" ]]; then
   exit 1
 fi
 
-logs_dir="$ROOT/.team-os/logs/tasks/$task_id"
+logs_dir="$ROOT/.openteam/logs/tasks/$task_id"
 ensure_dir "$logs_dir"
 
 render_log() {
@@ -75,7 +75,7 @@ render_log() {
     "$tpl" >"$out"
 }
 
-ledger_out="$ROOT/.team-os/ledger/tasks/$task_id.yaml"
+ledger_out="$ROOT/.openteam/ledger/tasks/$task_id.yaml"
 if [[ -e "$ledger_out" ]]; then
   echo "Refusing to overwrite: $ledger_out" >&2
   exit 1
@@ -106,7 +106,7 @@ if [[ -e "$metrics_out" ]]; then
   exit 1
 fi
 cat >"$metrics_out" <<EOF
-{"ts":"$NOW_ISO","event_type":"TASK_CREATED","actor":"teamos.sh","task_id":"$task_id","project_id":"teamos","workstream_id":"general","severity":"INFO","message":"task scaffold created","payload":{"ledger":"$ledger_out","logs_dir":"$logs_dir"}}
+{"ts":"$NOW_ISO","event_type":"TASK_CREATED","actor":"openteam.sh","task_id":"$task_id","project_id":"openteam","workstream_id":"general","severity":"INFO","message":"task scaffold created","payload":{"ledger":"$ledger_out","logs_dir":"$logs_dir"}}
 EOF
 
 echo "created_task_id=$task_id"

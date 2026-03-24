@@ -1,6 +1,6 @@
 schema_version: 1
 
-# Team OS evolution policy: how the system should split roles/workflows and propose improvements.
+# OpenTeam evolution policy: how the system should split roles/workflows and propose improvements.
 # This is a "policy" input for repo-improvement scanning (it does not execute changes by itself).
 
 complexity_vector:

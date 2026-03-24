@@ -92,7 +92,7 @@ def _team_workflow_override(team_id: str, workflow_id: str, *, lane: str = "") -
 
 
 def _project_workflow_override(project_id: str, team_id: str, workflow_id: str, *, lane: str = "") -> dict[str, Any]:
-    config = project_config_store.load_project_config(str(project_id or "").strip() or "teamos")
+    config = project_config_store.load_project_config(str(project_id or "").strip() or "openteam")
     teams = config.get("teams") or {}
     if not isinstance(teams, dict):
         return {}
@@ -427,7 +427,7 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
     )
 
 
-def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: str = "teamos") -> dict[str, Any]:
+def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: str = "openteam") -> dict[str, Any]:
     canonical = _canonical_workflow_id(workflow_id)
     loaded = crewai_spec_loader.team_workflow_doc(team_id, canonical)
     if not loaded:
@@ -446,7 +446,7 @@ def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: 
     return merged
 
 
-def list_workflows(*, team_id: str = "", project_id: str = "teamos") -> tuple[WorkflowSpec, ...]:
+def list_workflows(*, team_id: str = "", project_id: str = "openteam") -> tuple[WorkflowSpec, ...]:
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
     out: list[WorkflowSpec] = []
     for doc in crewai_spec_loader.list_team_workflow_docs(resolved_team_id):
@@ -458,7 +458,7 @@ def list_workflows(*, team_id: str = "", project_id: str = "teamos") -> tuple[Wo
     return tuple(out)
 
 
-def workflow_spec(workflow_id: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
+def workflow_spec(workflow_id: str, *, team_id: str = "", project_id: str = "openteam") -> WorkflowSpec:
     wanted = _canonical_workflow_id(workflow_id)
     if not wanted:
         raise KeyError("workflow_id is required")
@@ -467,7 +467,7 @@ def workflow_spec(workflow_id: str, *, team_id: str = "", project_id: str = "tea
     return _workflow_spec_from_doc(merged)
 
 
-def workflow_for_phase(phase: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
+def workflow_for_phase(phase: str, *, team_id: str = "", project_id: str = "openteam") -> WorkflowSpec:
     normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
     for spec in list_workflows(team_id=resolved_team_id, project_id=project_id):
@@ -476,7 +476,7 @@ def workflow_for_phase(phase: str, *, team_id: str = "", project_id: str = "team
     raise KeyError(f"unknown workflow phase={normalized_phase!r}")
 
 
-def workflow_for_lane_phase(lane: str, phase: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
+def workflow_for_lane_phase(lane: str, phase: str, *, team_id: str = "", project_id: str = "openteam") -> WorkflowSpec:
     normalized_lane = str(lane or "").strip().lower() or "bug"
     normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
@@ -493,7 +493,7 @@ def workflow_for_lane_phase(lane: str, phase: str, *, team_id: str = "", project
     raise KeyError(f"unknown workflow for lane={normalized_lane!r} phase={normalized_phase!r}")
 
 
-def workflow_for_lane(lane: str, *, team_id: str = "", project_id: str = "teamos") -> WorkflowSpec:
+def workflow_for_lane(lane: str, *, team_id: str = "", project_id: str = "openteam") -> WorkflowSpec:
     return workflow_for_lane_phase(lane, PHASE_FINDING, team_id=team_id, project_id=project_id)
 
 

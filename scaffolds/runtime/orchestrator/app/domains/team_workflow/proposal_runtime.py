@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import yaml
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 from app import codex_llm
 from app import crew_tools
@@ -30,7 +30,7 @@ from app.panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from app.panel_mapping import PanelMappingError, get_project_cfg, load_mapping
 from app.plan_store import upsert_runtime_milestone
 from app.pydantic_compat import BaseModel, Field
-from app.state_store import ledger_tasks_dir, runtime_state_root, team_os_root
+from app.state_store import ledger_tasks_dir, runtime_state_root, openteam_root
 from app.workflow_models import ProposalDiscussionResponse
 from app.workflow_models import StructuredBugCandidate
 from app.workflow_models import StructuredBugScanResult
@@ -100,7 +100,7 @@ MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
     (("panel_github_sync", "github_projects", "github issue", "github project"), "GitHub-Project"),
     (("delivery", "review", "qa", "release"), "Delivery"),
     (("proposal", "discussion"), "Proposal"),
-    (("teamos", " cli ", " cli/", "/teamos"), "CLI"),
+    (("openteam", " cli ", " cli/", "/openteam"), "CLI"),
     (("postgres", "redis", "hub"), "Hub"),
     (("requirements", "raw_inputs", "requirement"), "Requirements"),
     (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
@@ -279,7 +279,7 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
         reasons.append("该任务属于功能增强或流程优化，默认需要同步说明文档。")
     if module in ("CLI", "Doctor", "Bootstrap", "Runtime", "Team-Workflow", "CI", "Release", "GitHub-Project"):
         reasons.append(f"模块 `{module}` 对外行为或运维流程敏感，需要记录使用/回滚说明。")
-    if any(path == "README.md" or path.startswith("docs/") or path.startswith(".github/workflows") or path == "teamos" for path in paths):
+    if any(path == "README.md" or path.startswith("docs/") or path.startswith(".github/workflows") or path == "openteam" for path in paths):
         reasons.append("任务涉及入口脚本、文档或工作流路径，需要同步说明和操作手册。")
     required = bool(reasons)
     if not reasons:
@@ -297,11 +297,11 @@ def _lane_requires_user_confirmation(lane: str) -> bool:
     return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).requires_user_confirmation
 
 
-def _lane_max_candidates(lane: str, *, project_id: str = "teamos") -> int:
+def _lane_max_candidates(lane: str, *, project_id: str = "openteam") -> int:
     return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING, project_id=project_id).max_candidates()
 
 
-def _lane_max_continuous_runtime_minutes(lane: str, *, project_id: str = "teamos") -> int:
+def _lane_max_continuous_runtime_minutes(lane: str, *, project_id: str = "openteam") -> int:
     return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING, project_id=project_id).max_continuous_runtime_minutes()
 
 
@@ -379,7 +379,7 @@ def _milestone_state_from_metrics(*, total_items: int, blocked_items: int, done_
 
 
 def _release_issue_marker(*, project_id: str, milestone_id: str) -> str:
-    return f"<!-- teamos:release-milestone:{str(project_id or '').strip()}:{str(milestone_id or '').strip()} -->"
+    return f"<!-- openteam:release-milestone:{str(project_id or '').strip()}:{str(milestone_id or '').strip()} -->"
 
 
 def _release_issue_title(*, milestone_title: str) -> str:
@@ -387,12 +387,12 @@ def _release_issue_title(*, milestone_title: str) -> str:
 
 
 def _proposal_issue_marker(doc: dict[str, Any]) -> str:
-    return f"<!-- teamos:feature-proposal:{str(doc.get('proposal_id') or '').strip()} -->"
+    return f"<!-- openteam:feature-proposal:{str(doc.get('proposal_id') or '').strip()} -->"
 
 
 def _task_issue_marker(*, repo_locator: str, repo_root: Path, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> str:
     fingerprint = _finding_fingerprint(repo_locator=repo_locator, repo_root=repo_root, finding=finding) + "-" + _slug(work_item.title, default="work")
-    return f"<!-- teamos:team_workflow:{fingerprint} -->"
+    return f"<!-- openteam:team_workflow:{fingerprint} -->"
 
 
 def _normalize_owner_role(role_id: str, lane: str) -> str:
@@ -441,7 +441,7 @@ def _normalize_issue_text(text: str, *, empty_fallback: str = "(空)") -> str:
 
 
 def _zh_localization_enabled() -> bool:
-    if not _env_truthy("TEAMOS_RUNTIME_LOCALIZE_ZH", "1"):
+    if not _env_truthy("OPENTEAM_RUNTIME_LOCALIZE_ZH", "1"):
         return False
     return shutil.which("codex") is not None
 
@@ -1143,24 +1143,24 @@ def _safe_project_id(raw: str) -> str:
 
 
 def _panel_project_id(requested_project_id: str) -> str:
-    pid = str(requested_project_id or "").strip() or "teamos"
+    pid = str(requested_project_id or "").strip() or "openteam"
     try:
         mapping = load_mapping()
         if get_project_cfg(mapping, pid):
             return pid
     except PanelMappingError:
         pass
-    return "teamos"
+    return "openteam"
 
 
 def _runtime_root() -> Path:
-    raw = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    raw = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
-    home = str(os.getenv("TEAMOS_HOME") or "").strip()
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
     if home:
         return (Path(home).expanduser().resolve() / "runtime" / "default").resolve()
-    return (Path.home() / ".teamos" / "runtime" / "default").resolve()
+    return (Path.home() / ".openteam" / "runtime" / "default").resolve()
 
 
 def _worktrees_root() -> Path:
@@ -1543,7 +1543,7 @@ def _should_skip(*, target_id: str, repo_root: Path, force: bool) -> tuple[bool,
 
 def _resolve_target(*, target_id: str, repo_path: str, repo_url: str, repo_locator: str, project_id: str) -> dict[str, Any]:
     target = improvement_store.ensure_target(
-        project_id=str(project_id or "teamos").strip() or "teamos",
+        project_id=str(project_id or "openteam").strip() or "openteam",
         target_id=str(target_id or "").strip(),
         repo_path=str(repo_path or "").strip(),
         repo_url=str(repo_url or "").strip(),
@@ -1641,7 +1641,7 @@ def collect_repo_context(
 
 
 def _codex_structured_model() -> str:
-    return str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
+    return str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
 
 
 def _codex_structured(prompt: str, *, schema_model: type[BaseModel], timeout_sec: int = 120) -> BaseModel:
@@ -1657,7 +1657,7 @@ def _codex_structured(prompt: str, *, schema_model: type[BaseModel], timeout_sec
 def _translate_to_zh_structured(*, payload: dict[str, Any], schema_model: type[BaseModel], prompt_title: str) -> BaseModel:
     prompt = "\n".join(
         [
-            f"你是 Team OS 的中文化助手。请把下面的 {prompt_title} 翻译成简体中文。",
+            f"你是 OpenTeam 的中文化助手。请把下面的 {prompt_title} 翻译成简体中文。",
             "要求：",
             "- 只翻译自然语言文本。",
             "- 保留 role id、状态枚举、版本号、issue/proposal/task id、路径、命令、URL、标签名、worktree_hint、repo_locator 原样不变。",
@@ -2135,7 +2135,7 @@ def _crewai_llm(*, workflow: Any | None = None):
     return crewai_llm_factory.build_crewai_llm(workflow=workflow)
 
 
-def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str, project_id: str = "teamos") -> UpgradePlan:
+def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str, project_id: str = "openteam") -> UpgradePlan:
     obj: Any = None
     if isinstance(raw_output, dict):
         obj = raw_output
@@ -2343,7 +2343,7 @@ def _structured_bug_scan_prompt(
     )
     return "\n".join(
         [
-            "你是 Team OS 的 Test-Manager。",
+            "你是 OpenTeam 的 Test-Manager。",
             f"请按模块完整通读 `{module}`，并使用仓库工具自行读取源码和测试文件，判断当前是否存在可证明的 bug。",
             "要求：",
             "- bug finding 数量不设上限；如果当前没有可证明缺陷，返回 0 个是完全正常的结果。",
@@ -2468,7 +2468,7 @@ def _structured_bug_scan_repo_prompt(
     )
     return "\n".join(
         [
-            "你是 Team OS 的 Test-Manager。",
+            "你是 OpenTeam 的 Test-Manager。",
             "你现在拥有整个仓库的只读扫描权限。请自行决定先读哪些目录、哪些源码文件、哪些测试文件，并使用工具完成整仓 bug triage。",
             "要求：",
             "- bug finding 数量不设上限；如果当前没有可证明缺陷，返回 0 个是完全正常的结果。",
@@ -2750,7 +2750,7 @@ def kickoff_upgrade_plan(
     *,
     team_id: str = "",
     repo_context: dict[str, Any],
-    project_id: str = "teamos",
+    project_id: str = "openteam",
     max_findings: int,
     verbose: bool = False,
     bug_scan_dormant: bool = False,
@@ -3014,14 +3014,14 @@ def kickoff_upgrade_plan(
 
 
 def _task_ledger_dir(project_id: str) -> Path:
-    if str(project_id) == "teamos":
+    if str(project_id) == "openteam":
         return ledger_tasks_dir()
     workspace_store.ensure_project_scaffold(project_id)
     return workspace_store.ledger_tasks_dir(project_id)
 
 
 def _compat_file_mirror_enabled() -> bool:
-    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
+    return _env_truthy("OPENTEAM_RUNTIME_FILE_MIRROR", "1")
 
 
 def _is_team_task_doc(doc: dict[str, Any]) -> bool:
@@ -3186,7 +3186,7 @@ def _proposal_issue_labels(doc: dict[str, Any]) -> list[str]:
     module = _proposal_module(doc)
     team_id = _normalize_team_id(str(doc.get("team_id") or ((doc.get("team") or {}) if isinstance(doc.get("team"), dict) else {}).get("team_id") or ""))
     labels = [
-        "teamos",
+        "openteam",
         _team_source_label(team_id),
         f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'feature'}",
         f"module:{_module_slug(module)}",
@@ -3249,7 +3249,7 @@ def _task_issue_labels(*, doc: dict[str, Any], finding: UpgradeFinding, work_ite
     lane = str(finding.lane or "bug").strip().lower() or "bug"
     team_id = _normalize_team_id(str(doc.get("team_id") or ((doc.get("team") or {}) if isinstance(doc.get("team"), dict) else {}).get("team_id") or ""))
     labels = [
-        "teamos",
+        "openteam",
         _team_source_label(team_id),
         f"type:{lane if lane in ('feature', 'bug', 'process', 'quality') else 'bug'}",
         f"module:{_module_slug(module)}",
@@ -3542,7 +3542,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     finding, work_item = _finding_from_task_doc(doc)
     if finding is None or work_item is None:
         return {"ok": False, "reason": "missing_team_finding"}
-    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(doc.get("project_id") or "openteam").strip() or "openteam"
     repo = doc.get("repo") or {}
     if not isinstance(repo, dict):
         repo = {}
@@ -3582,7 +3582,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             done_items=int(milestone.get("done_items") or 0),
         )
     if repo_locator:
-        description = f"Team OS team workflow release milestone for {str(milestone.get('title') or '').strip()}."
+        description = f"OpenTeam team workflow release milestone for {str(milestone.get('title') or '').strip()}."
         try:
             milestone_number = ensure_milestone(
                 repo_locator,
@@ -3598,7 +3598,7 @@ def sync_milestone_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         title = _release_issue_title(milestone_title=str(milestone.get("title") or "").strip())
         labels = sorted(
             {
-                "teamos",
+                "openteam",
                 _team_source_label(str(doc.get("team_id") or ((doc.get("team") or {}) if isinstance(doc.get("team"), dict) else {}).get("team_id") or "")),
                 "type:process",
                 "module:release",
@@ -3647,7 +3647,7 @@ def _task_issue_milestone_number(*, repo_locator: str, finding: UpgradeFinding, 
     milestone_title = _milestone_title_for_target_version(str(finding.target_version or ""))
     if lane not in ("feature", "bug") or not milestone_title or not repo_locator:
         return None
-    description = f"Team OS team workflow release milestone for {milestone_title}."
+    description = f"OpenTeam team workflow release milestone for {milestone_title}."
     try:
         return ensure_milestone(repo_locator, title=milestone_title, description=description)
     except (GitHubAuthError, GitHubIssuesBusError):
@@ -3825,12 +3825,12 @@ def _proposal_issue_body(doc: dict[str, Any]) -> str:
             "## 范围约束",
             "",
             "- 这是 proposal discussion issue，不直接进入编码执行。",
-            "- 只有在你明确确认后，Team OS 才会拆分 execution work items 并分配 milestone。",
+            "- 只有在你明确确认后，OpenTeam 才会拆分 execution work items 并分配 milestone。",
             "- 开发 issue 会单独创建，并遵守 [Type][Module] xxx 命名与单模块约束。",
             "",
             "## 如何回复",
             "",
-            "- 直接在这个 issue 里提问即可，Team OS 的需求答复 Agent 会回复并调整提案。",
+            "- 直接在这个 issue 里提问即可，OpenTeam 的需求答复 Agent 会回复并调整提案。",
             "- 如果确认进入开发，请回复 `/approve` 或 `确认`。",
             "- 如果要暂缓，请回复 `/hold` 或 `暂缓`。",
             "- 如果决定不做，请回复 `/reject` 或 `不做`。",
@@ -3896,7 +3896,7 @@ def _ensure_proposal_discussion_issue(proposal: dict[str, Any]) -> dict[str, Any
 def _comment_is_user_comment(comment: Any) -> bool:
     body = str(getattr(comment, "body", "") or "")
     login = str(getattr(comment, "user_login", "") or "").strip().lower()
-    if "<!-- teamos:" in body:
+    if "<!-- openteam:" in body:
         return False
     if login.endswith("[bot]"):
         return False
@@ -4008,7 +4008,7 @@ def reconcile_feature_discussions(
     from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
 
     stats = {"scanned": 0, "updated": 0, "replied": 0, "errors": 0, "skipped_disabled": 0, "skipped_runtime": 0}
-    normalized_project_id = str(project_id or "teamos").strip() or "teamos"
+    normalized_project_id = str(project_id or "openteam").strip() or "openteam"
     normalized_target_id = str(target_id or "").strip()
     workflows = [
         workflow
@@ -4118,7 +4118,7 @@ def _upsert_proposal(
         "rationale": str(existing.get("rationale") or finding.rationale),
         "impact": str(existing.get("impact") or finding.impact),
         "workstream_id": str(existing.get("workstream_id") or finding.workstream_id or "general"),
-        "project_id": str(existing.get("project_id") or project_id or "teamos"),
+        "project_id": str(existing.get("project_id") or project_id or "openteam"),
         "repo_root": str(repo_root),
         "repo_locator": repo_locator,
         "status": status,
@@ -4258,7 +4258,7 @@ def _task_issue_comment_reason(doc: dict[str, Any]) -> str:
     feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
     last_error = str(execution.get("last_error") or "").strip()
     title = str(doc.get("title") or doc.get("summary") or doc.get("id") or "task").strip()
-    reason = f"Syncing Team OS issue metadata for `{title}`."
+    reason = f"Syncing OpenTeam issue metadata for `{title}`."
     details: list[str] = []
     if status:
         details.append(f"status={status}")
@@ -4311,9 +4311,9 @@ def _ensure_task_record(
         ledger_path = Path(str(existing.get("ledger_path") or ""))
         doc = existing.get("doc") or {}
     else:
-        scope = "teamos" if panel_project_id == "teamos" else f"project:{panel_project_id}"
+        scope = "openteam" if panel_project_id == "openteam" else f"project:{panel_project_id}"
         delegated = crew_tools.run_task_create_pipeline(
-            repo_root=team_os_root(),
+            repo_root=openteam_root(),
             workspace_root=crew_tools.workspace_root(),
             scope=scope,
             title=title,
@@ -4561,7 +4561,7 @@ def _issue_body(
         summary=str(work_item.summary or finding.summary or ""),
         lane=str(finding.lane or ""),
     )
-    issue_marker = str(marker or "").strip() or f"<!-- teamos:team_workflow:{fingerprint} -->"
+    issue_marker = str(marker or "").strip() or f"<!-- openteam:team_workflow:{fingerprint} -->"
     lines = [
         issue_marker,
         "# 仓库改进任务",
@@ -4732,7 +4732,7 @@ def sync_task_issue_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(repo, dict):
         repo = {}
     repo_locator = str(repo.get("locator") or "").strip()
-    repo_root = Path(str(repo.get("source_workdir") or repo.get("workdir") or team_os_root())).resolve()
+    repo_root = Path(str(repo.get("source_workdir") or repo.get("workdir") or openteam_root())).resolve()
     if not repo_locator:
         return {"ok": False, "reason": "missing_repo_locator"}
     links = doc.get("links") or {}
@@ -4844,7 +4844,7 @@ def _finding_from_task_doc(doc: dict[str, Any]) -> tuple[Optional[UpgradeFinding
         return None, None
 
 
-def sync_existing_team_workflow_github_content_to_zh(*, project_id: str = "teamos") -> dict[str, Any]:
+def sync_existing_team_workflow_github_content_to_zh(*, project_id: str = "openteam") -> dict[str, Any]:
     stats = {"proposals": 0, "proposal_issues": 0, "tasks": 0, "task_issues": 0, "errors": 0}
     for proposal in list_proposals():
         try:
@@ -4881,7 +4881,7 @@ def sync_existing_team_workflow_github_content_to_zh(*, project_id: str = "teamo
                 if not isinstance(repo_info, dict):
                     repo_info = {}
                 repo_locator_for_fp = str(repo_info.get("locator") or "").strip()
-                repo_root_for_fp = Path(str(repo_info.get("source_workdir") or repo_info.get("workdir") or team_os_root())).resolve()
+                repo_root_for_fp = Path(str(repo_info.get("source_workdir") or repo_info.get("workdir") or openteam_root())).resolve()
                 orchestration = localized_doc.get("orchestration") or {}
                 if isinstance(orchestration, dict):
                     orchestration = dict(orchestration)
@@ -5088,7 +5088,7 @@ def run_team_workflow(*, db, spec: Any, actor: str, run_id: str, crewai_info: di
     from app.engines.crewai.workflow_runner import WorkflowRunContext, run_workflow
 
     team_id = _normalize_team_id(crew_tools.native_team_id(str(getattr(spec, "flow", "") or "")))
-    project_id = _safe_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
+    project_id = _safe_project_id(str(getattr(spec, "project_id", "openteam") or "openteam"))
     workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
     target = _resolve_target(
         target_id=str(getattr(spec, "target_id", "") or ""),
@@ -5097,8 +5097,8 @@ def run_team_workflow(*, db, spec: Any, actor: str, run_id: str, crewai_info: di
         repo_locator=str(getattr(spec, "repo_locator", "") or ""),
         project_id=project_id,
     )
-    target_id = str(target.get("target_id") or "").strip() or "teamos"
-    repo_root = Path(str(target.get("repo_root") or team_os_root())).expanduser().resolve()
+    target_id = str(target.get("target_id") or "").strip() or "openteam"
+    repo_root = Path(str(target.get("repo_root") or openteam_root())).expanduser().resolve()
     repo_locator = str(target.get("repo_locator") or "").strip()
     trigger = str(getattr(spec, "trigger", "") or "manual").strip() or "manual"
     dry_run = bool(getattr(spec, "dry_run", False))

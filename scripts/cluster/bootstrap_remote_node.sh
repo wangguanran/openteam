@@ -75,7 +75,7 @@ if [[ "$PASSWORD_STDIN" -eq 1 ]]; then
   fi
 fi
 
-REMOTE="/tmp/teamos_join_node.sh"
+REMOTE="/tmp/openteam_join_node.sh"
 JOIN_CMD="bash $REMOTE --cluster-repo \"$CLUSTER_REPO\" --brain-base-url \"$BRAIN_BASE_URL\" --role \"$ROLE\" --capabilities \"$CAPS\" --tags \"$TAGS\""
 
 echo "plan:"

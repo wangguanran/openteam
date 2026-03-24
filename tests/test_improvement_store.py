@@ -33,9 +33,9 @@ class ImprovementStoreTests(unittest.TestCase):
         os.environ.update(self._orig_env)
 
     def _configure_runtime(self, root: str) -> None:
-        os.environ["TEAMOS_RUNTIME_ROOT"] = root
-        os.environ["TEAMOS_WORKSPACE_ROOT"] = str(Path(root) / "workspace")
-        os.environ["TEAMOS_RUNTIME_DB_PATH"] = str(Path(root) / "state" / "runtime.db")
+        os.environ["OPENTEAM_RUNTIME_ROOT"] = root
+        os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(root) / "workspace")
+        os.environ["OPENTEAM_RUNTIME_DB_PATH"] = str(Path(root) / "state" / "runtime.db")
 
     def test_runtime_state_and_docs_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -235,8 +235,8 @@ class ImprovementStoreTests(unittest.TestCase):
             origin = Path(td) / "origin"
             origin.mkdir(parents=True, exist_ok=True)
             _git(["init"], cwd=origin)
-            _git(["config", "user.name", "Team OS"], cwd=origin)
-            _git(["config", "user.email", "team-os@example.com"], cwd=origin)
+            _git(["config", "user.name", "OpenTeam"], cwd=origin)
+            _git(["config", "user.email", "openteam@example.com"], cwd=origin)
             (origin / "README.md").write_text("# demo\n", encoding="utf-8")
             _git(["add", "README.md"], cwd=origin)
             _git(["commit", "-m", "init"], cwd=origin)
@@ -269,8 +269,8 @@ class ImprovementStoreTests(unittest.TestCase):
             legacy_repo.mkdir(parents=True, exist_ok=True)
             legacy_state.mkdir(parents=True, exist_ok=True)
             _git(["init"], cwd=legacy_repo)
-            _git(["config", "user.name", "Team OS"], cwd=legacy_repo)
-            _git(["config", "user.email", "team-os@example.com"], cwd=legacy_repo)
+            _git(["config", "user.name", "OpenTeam"], cwd=legacy_repo)
+            _git(["config", "user.email", "openteam@example.com"], cwd=legacy_repo)
             (legacy_repo / "README.md").write_text("# legacy\n", encoding="utf-8")
             _git(["add", "README.md"], cwd=legacy_repo)
             _git(["commit", "-m", "init"], cwd=legacy_repo)
@@ -301,8 +301,8 @@ class ImprovementStoreTests(unittest.TestCase):
             legacy_repo = Path(td) / "workspace" / "targets" / "demo-target" / "repo"
             legacy_repo.mkdir(parents=True, exist_ok=True)
             _git(["init"], cwd=legacy_repo)
-            _git(["config", "user.name", "Team OS"], cwd=legacy_repo)
-            _git(["config", "user.email", "team-os@example.com"], cwd=legacy_repo)
+            _git(["config", "user.name", "OpenTeam"], cwd=legacy_repo)
+            _git(["config", "user.email", "openteam@example.com"], cwd=legacy_repo)
             (legacy_repo / "README.md").write_text("# repaired\n", encoding="utf-8")
             _git(["add", "README.md"], cwd=legacy_repo)
             _git(["commit", "-m", "init"], cwd=legacy_repo)

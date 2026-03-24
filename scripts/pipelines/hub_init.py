@@ -54,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
 
             env_path = hub_env_path(hub)
             env = parse_env_file(env_path)
-            env.setdefault("POSTGRES_DB", "teamos")
-            env.setdefault("POSTGRES_USER", "teamos")
+            env.setdefault("POSTGRES_DB", "openteam")
+            env.setdefault("POSTGRES_USER", "openteam")
             env.setdefault("POSTGRES_PASSWORD", random_secret())
             env.setdefault("REDIS_PASSWORD", random_secret())
             env["PG_BIND_IP"] = "127.0.0.1"

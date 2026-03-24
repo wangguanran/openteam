@@ -50,7 +50,7 @@ jobs:
                   return None
               return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
-          crew = gh_api("repos/wangguanran/crewAI/commits/main")
+          crew = gh_api("repos/openteam-dev/crewAI/commits/main")
           crew_sha = str(crew.get("sha") or "").strip()
           crew_ts = parse_ts(((crew.get("commit") or {}).get("committer") or {}).get("date"))
 
@@ -60,7 +60,7 @@ jobs:
           openclaw_ts = parse_ts(str(((npm_pkg.get("time") or {}).get(openclaw_latest)) or "").strip())
 
           versions = gh_api(
-              f"/users/{owner}/packages/container/teamos-control-plane/versions?per_page=100",
+              f"/users/{owner}/packages/container/openteam-control-plane/versions?per_page=100",
               allow_failure=True,
           )
           versions = versions if isinstance(versions, list) else []

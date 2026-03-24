@@ -1,6 +1,6 @@
 # 安全策略与闸门
 
-本文件定义 Team OS 的安全基线与“必须审批”的安全闸门。
+本文件定义 OpenTeam 的安全基线与“必须审批”的安全闸门。
 
 ## 1. Secrets 管理 (Hard Rule)
 
@@ -46,7 +46,7 @@
 
 ## 6. GitHub 面板与 Token 最小权限
 
-本仓库支持将 Team OS 的“真相源”（ledger/requirements/state/runtime db）同步到 GitHub Projects v2 作为**视图层**。该同步会对 GitHub 产生远程写入，因此：
+本仓库支持将 OpenTeam 的“真相源”（ledger/requirements/state/runtime db）同步到 GitHub Projects v2 作为**视图层**。该同步会对 GitHub 产生远程写入，因此：
 
 - 默认不启用自动同步；必须显式开启（见 `docs/runbooks/EXECUTION_RUNBOOK.md`）。
 - GitHub 认证信息只能来自环境变量或本地 `.env`（不入库）。
@@ -64,20 +64,20 @@
 最小化策略：
 
 - 只给同步所需的 scope；不要复用高权限 PAT
-- 仅在需要同步的环境注入 token（例如本机 `team-os-runtime/.env`）
+- 仅在需要同步的环境注入 token（例如本机 `openteam-runtime/.env`）
 - 定期轮换 token（轮换属于高风险动作，需审批并记录）
 
 ## 7. CrewAI + 确定性 Pipelines 边界
 
-Team OS 的控制面与自动化边界如下：
+OpenTeam 的控制面与自动化边界如下：
 
 - 编排层由 CrewAI Orchestrator 负责（任务流转、工具调用、状态聚合）。
 - 所有会改变真相源的写操作必须经过确定性 pipelines（CLI/脚本入口），不得绕过写入。
-- GitHub Projects 仅作为视图层；真相源仍在 Team OS 的 ledger/logs/requirements/runtime store。
+- GitHub Projects 仅作为视图层；真相源仍在 OpenTeam 的 ledger/logs/requirements/runtime store。
 - 任何通知或外围自动化都不能成为主状态机，也不能引入未审计的写路径。
 
 ## 8. Hub Exposure Controls
 
 - Local hub defaults: Postgres + Redis enabled, both bound to loopback.
-- Remote exposure requires explicit high-risk approval (`teamos hub expose`).
+- Remote exposure requires explicit high-risk approval (`openteam hub expose`).
 - `hub push-config` distributes secrets over SSH only; secrets must not appear in CLI args/logs.

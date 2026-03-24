@@ -1,7 +1,7 @@
 # Self-Improve Run Audit Snapshot
 
 - ts: 20260305T132940Z
-- repo_root: /team-os
+- repo_root: /openteam
 
 ## Checks
 
@@ -19,34 +19,34 @@
 
 ```json
 {
-  "repo_root": "/team-os",
+  "repo_root": "/openteam",
   "missing_files": [],
   "missing_dirs": [
-    ".team-os/roles",
-    ".team-os/workflows",
-    ".team-os/kb/global",
-    ".team-os/kb/roles",
-    ".team-os/kb/platforms",
-    ".team-os/kb/sources",
-    ".team-os/memory/roles",
-    ".team-os/ledger/team_os_issues_pending",
-    ".team-os/logs/tasks",
-    ".team-os/templates",
-    ".team-os/scripts"
+    ".openteam/roles",
+    ".openteam/workflows",
+    ".openteam/kb/global",
+    ".openteam/kb/roles",
+    ".openteam/kb/platforms",
+    ".openteam/kb/sources",
+    ".openteam/memory/roles",
+    ".openteam/ledger/openteam_issues_pending",
+    ".openteam/logs/tasks",
+    ".openteam/templates",
+    ".openteam/scripts"
   ],
   "gitignore_missing_patterns": [],
   "repo_purity_violations": [],
   "runtime_template_mount_missing": [],
   "roles_missing_contract_keys": {},
   "workflow_missing": [
-    ".team-os/workflows/trunk.yaml",
-    ".team-os/workflows/plugins/"
+    ".openteam/workflows/trunk.yaml",
+    ".openteam/workflows/plugins/"
   ],
   "policy_missing": [
-    ".team-os/policies/evolution_policy.yaml"
+    ".openteam/policies/evolution_policy.yaml"
   ],
   "schema_missing": [
-    ".team-os/schemas/telemetry_event.schema.json"
+    ".openteam/schemas/telemetry_event.schema.json"
   ],
   "task_artifacts_missing": {},
   "routes_missing": []

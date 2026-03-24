@@ -4,8 +4,8 @@ import importlib.util
 from pathlib import Path
 
 
-_IMPL_PATH = Path(__file__).resolve().parents[3] / "team_os_yaml.py"
-_SPEC = importlib.util.spec_from_file_location("team_os_yaml", _IMPL_PATH)
+_IMPL_PATH = Path(__file__).resolve().parents[3] / "openteam_yaml.py"
+_SPEC = importlib.util.spec_from_file_location("openteam_yaml", _IMPL_PATH)
 if _SPEC is None or _SPEC.loader is None:  # pragma: no cover - defensive
     raise ImportError(f"unable to load YAML compatibility module: {_IMPL_PATH}")
 _MODULE = importlib.util.module_from_spec(_SPEC)

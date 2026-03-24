@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Team OS policy checks (local, no remote writes).
+OpenTeam policy checks (local, no remote writes).
 
 This script codifies non-negotiable norms that should not live only in docs:
 - No secrets in git
-- Repo vs Workspace separation (team-os repo stays repo-pure)
+- Repo vs Workspace separation (openteam repo stays repo-pure)
 - Runtime template must mount Workspace for all project truth sources
 """
 
@@ -21,7 +21,7 @@ from typing import Any
 
 
 def _repo_root_from_script() -> Path:
-    # team-os/scripts/policy_check.py -> repo root is 1 parent up
+    # openteam/scripts/policy_check.py -> repo root is 1 parent up
     return Path(__file__).resolve().parents[1]
 
 
@@ -149,19 +149,19 @@ def run_checks(*, repo_root: Path) -> CheckResult:
     compose_tpl = repo_root / "scaffolds" / "runtime" / "docker-compose.yml"
     if compose_tpl.exists():
         text = compose_tpl.read_text(encoding="utf-8", errors="replace")
-        if "TEAMOS_WORKSPACE_ROOT" not in text:
-            failures.append("runtime template missing TEAMOS_WORKSPACE_ROOT env (workspace support)")
-        if "/teamos-workspace" not in text:
-            failures.append("runtime template missing /teamos-workspace mount (workspace support)")
+        if "OPENTEAM_WORKSPACE_ROOT" not in text:
+            failures.append("runtime template missing OPENTEAM_WORKSPACE_ROOT env (workspace support)")
+        if "/openteam-workspace" not in text:
+            failures.append("runtime template missing /openteam-workspace mount (workspace support)")
     else:
         warnings.append("runtime template docker-compose.yml missing (cannot verify workspace mount policy)")
 
     # 5) AGENTS/governance docs must codify the canonical task workflow.
     # This prevents drift back to ad-hoc changes that bypass the task gate.
     doc_checks: list[tuple[Path, list[str]]] = [
-        (repo_root / "AGENTS.md", ["./teamos task new --scope teamos", "./teamos task close"]),
-        (repo_root / "docs" / "GOVERNANCE.md", ["./teamos task close"]),
-        (repo_root / "docs" / "EXECUTION_RUNBOOK.md", ["./teamos task new", "./teamos task close"]),
+        (repo_root / "AGENTS.md", ["./openteam task new --scope openteam", "./openteam task close"]),
+        (repo_root / "docs" / "GOVERNANCE.md", ["./openteam task close"]),
+        (repo_root / "docs" / "EXECUTION_RUNBOOK.md", ["./openteam task new", "./openteam task close"]),
     ]
     for p, needles in doc_checks:
         missing_phrases = _missing_phrases(p, needles)
@@ -173,8 +173,8 @@ def run_checks(*, repo_root: Path) -> CheckResult:
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description="Team OS policy checks (local, safe)")
-    ap.add_argument("--repo-root", default="", help="override Team OS repo root (default: derived from script path)")
+    ap = argparse.ArgumentParser(description="OpenTeam policy checks (local, safe)")
+    ap.add_argument("--repo-root", default="", help="override OpenTeam repo root (default: derived from script path)")
     ap.add_argument("--json", action="store_true", help="output machine-readable JSON")
     ap.add_argument("--quiet", action="store_true", help="only print one-line summary (human mode)")
     args = ap.parse_args(argv)

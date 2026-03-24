@@ -11,8 +11,8 @@ trunk_stages:
   - id: "intake"
     roles: ["PM-Intake"]
     required_artifacts:
-      - ".team-os/ledger/tasks/<TASK_ID>.yaml"
-      - ".team-os/logs/tasks/<TASK_ID>/00_intake.md"
+      - ".openteam/ledger/tasks/<TASK_ID>.yaml"
+      - ".openteam/logs/tasks/<TASK_ID>/00_intake.md"
     exit_criteria:
       - "scope clarified"
       - "risk assessed"
@@ -21,8 +21,8 @@ trunk_stages:
   - id: "plan"
     roles: ["Architect", "PM-Intake"]
     required_artifacts:
-      - ".team-os/logs/tasks/<TASK_ID>/01_plan.md"
-      - ".team-os/logs/tasks/<TASK_ID>/02_todo.md"
+      - ".openteam/logs/tasks/<TASK_ID>/01_plan.md"
+      - ".openteam/logs/tasks/<TASK_ID>/02_todo.md"
     exit_criteria:
       - "workstreams identified"
       - "acceptance criteria defined"
@@ -31,7 +31,7 @@ trunk_stages:
   - id: "execute"
     roles: ["Developer-Backend", "Developer-AI", "Developer-Web"]
     required_artifacts:
-      - ".team-os/logs/tasks/<TASK_ID>/03_work.md"
+      - ".openteam/logs/tasks/<TASK_ID>/03_work.md"
     exit_criteria:
       - "implementation complete"
       - "code changes reviewed (if any)"
@@ -39,7 +39,7 @@ trunk_stages:
   - id: "verify"
     roles: ["QA", "Reviewer"]
     required_artifacts:
-      - ".team-os/logs/tasks/<TASK_ID>/04_test.md"
+      - ".openteam/logs/tasks/<TASK_ID>/04_test.md"
     exit_criteria:
       - "tests executed"
       - "quality gates passed"
@@ -47,7 +47,7 @@ trunk_stages:
   - id: "release"
     roles: ["Release-Ops"]
     required_artifacts:
-      - ".team-os/logs/tasks/<TASK_ID>/05_release.md"
+      - ".openteam/logs/tasks/<TASK_ID>/05_release.md"
     exit_criteria:
       - "release approved (if risky)"
       - "rollback plan documented"
@@ -55,7 +55,7 @@ trunk_stages:
   - id: "observe"
     roles: ["Data-Analyst", "Release-Ops"]
     required_artifacts:
-      - ".team-os/logs/tasks/<TASK_ID>/06_observe.md"
+      - ".openteam/logs/tasks/<TASK_ID>/06_observe.md"
     exit_criteria:
       - "health checks OK"
       - "metrics/alerts reviewed"
@@ -63,7 +63,7 @@ trunk_stages:
   - id: "retro"
     roles: ["Process-Guardian"]
     required_artifacts:
-      - ".team-os/logs/tasks/<TASK_ID>/07_retro.md"
+      - ".openteam/logs/tasks/<TASK_ID>/07_retro.md"
     exit_criteria:
       - "retro completed"
       - "repo-improvement items captured"

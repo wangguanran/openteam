@@ -85,7 +85,7 @@ class GitHubGraphQL:
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self.token}",
-                "User-Agent": "teamos-control-plane",
+                "User-Agent": "openteam-control-plane",
             },
         )
 

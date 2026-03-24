@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-teamos_root() {
+openteam_root() {
   # scripts -> repo root
   (cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 }
@@ -59,16 +59,16 @@ ensure_dir() {
   mkdir -p "$d"
 }
 
-teamos_home_dir() {
-  if [[ -n "${TEAMOS_HOME:-}" ]]; then
-    printf '%s\n' "$TEAMOS_HOME"
+openteam_home_dir() {
+  if [[ -n "${OPENTEAM_HOME:-}" ]]; then
+    printf '%s\n' "$OPENTEAM_HOME"
   else
-    printf '%s/.teamos\n' "$HOME"
+    printf '%s/.openteam\n' "$HOME"
   fi
 }
 
 default_runtime_config_dir() {
-  printf '%s/runtime-config/default\n' "$(teamos_home_dir)"
+  printf '%s/runtime-config/default\n' "$(openteam_home_dir)"
 }
 
 safe_create_file() {

@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
-_DEFAULT_CREWAI_GIT_URL = "https://github.com/wangguanran/crewAI.git"
+_DEFAULT_CREWAI_GIT_URL = "https://github.com/openteam-dev/crewAI.git"
 _DEFAULT_CREWAI_GIT_REF = "main"
-_DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/wangguanran/crewAI/tar.gz/refs/heads/main"
+_DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/openteam-dev/crewAI/tar.gz/refs/heads/main"
 
 
 class BootstrapError(Exception):
@@ -35,17 +35,17 @@ def _repo_root() -> Path:
 
 
 def _runtime_root(repo: Path) -> Path:
-    v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    v = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
     if v:
         return Path(v).expanduser().resolve()
-    home = str(os.getenv("TEAMOS_HOME") or "").strip()
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
     if home:
         return (Path(home).expanduser().resolve() / "runtime" / "default").resolve()
-    return (Path.home() / ".teamos" / "runtime" / "default").resolve()
+    return (Path.home() / ".openteam" / "runtime" / "default").resolve()
 
 
 def _workspace_root(runtime_root: Path) -> Path:
-    v = str(os.getenv("TEAMOS_WORKSPACE_ROOT") or "").strip()
+    v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if v:
         return Path(v).expanduser().resolve()
     return runtime_root / "workspace"
@@ -65,7 +65,7 @@ def _ensure_runtime_layout(runtime_root: Path) -> None:
         runtime_root / "state" / "audit",
         runtime_root / "state" / "logs",
         runtime_root / "state" / "runs",
-        runtime_root / "state" / "teamos",
+        runtime_root / "state" / "openteam",
         runtime_root / "state" / "kb" / "sources",
         runtime_root / "workspace",
         runtime_root / "workspace" / "projects",
@@ -117,8 +117,8 @@ def _run(cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[str, 
     return p.returncode, (p.stdout or ""), (p.stderr or "")
 
 
-def _quarantine_legacy_team_os_dir(repo: Path, runtime_root: Path) -> dict[str, Any]:
-    legacy = repo / ".team-os"
+def _quarantine_legacy_openteam_dir(repo: Path, runtime_root: Path) -> dict[str, Any]:
+    legacy = repo / ".openteam"
     if not legacy.exists():
         return {"ok": True, "found": False}
     try:
@@ -128,7 +128,7 @@ def _quarantine_legacy_team_os_dir(repo: Path, runtime_root: Path) -> dict[str, 
         return {"ok": True, "found": True, "removed_empty": True}
     except Exception:
         pass
-    dst = runtime_root / "state" / "audit" / "legacy_team_os" / _utc_compact()
+    dst = runtime_root / "state" / "audit" / "legacy_openteam" / _utc_compact()
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(legacy), str(dst))
     return {"ok": True, "found": True, "moved_to": str(dst)}
@@ -141,11 +141,11 @@ def _venv_python(runtime_root: Path) -> Path:
 
 
 def _crewai_archive_url() -> str:
-    explicit = str(os.getenv("TEAMOS_CREWAI_ARCHIVE_URL") or "").strip()
+    explicit = str(os.getenv("OPENTEAM_CREWAI_ARCHIVE_URL") or "").strip()
     if explicit:
         return explicit.split("#", 1)[0]
-    git_url = str(os.getenv("TEAMOS_CREWAI_GIT_URL") or _DEFAULT_CREWAI_GIT_URL).strip()
-    git_ref = str(os.getenv("TEAMOS_CREWAI_GIT_REF") or _DEFAULT_CREWAI_GIT_REF).strip()
+    git_url = str(os.getenv("OPENTEAM_CREWAI_GIT_URL") or _DEFAULT_CREWAI_GIT_URL).strip()
+    git_ref = str(os.getenv("OPENTEAM_CREWAI_GIT_REF") or _DEFAULT_CREWAI_GIT_REF).strip()
     normalized = git_url.removesuffix(".git").rstrip("/")
     prefix = "https://github.com/"
     if normalized.startswith(prefix):
@@ -203,7 +203,7 @@ def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
     if not missing:
         return {"ok": True, "installed": [], "missing": [], "python": str(venv_py)}
 
-    allow_auto = str(os.getenv("TEAMOS_AUTO_INSTALL_PY_DEPS", "1") or "").strip().lower() not in ("0", "false", "no", "off")
+    allow_auto = str(os.getenv("OPENTEAM_AUTO_INSTALL_PY_DEPS", "1") or "").strip().lower() not in ("0", "false", "no", "off")
     if not allow_auto:
         need = sorted(list(set([pkg for _, pkg in missing])))
         raise BootstrapError(
@@ -317,11 +317,11 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 
 def _db_url_from_hub_env(env: dict[str, str]) -> str:
-    u = str(env.get("POSTGRES_USER") or "teamos")
+    u = str(env.get("POSTGRES_USER") or "openteam")
     p = str(env.get("POSTGRES_PASSWORD") or "")
     h = str(env.get("PG_BIND_IP") or "127.0.0.1")
     pt = str(env.get("PG_PORT") or "5432")
-    db = str(env.get("POSTGRES_DB") or "teamos")
+    db = str(env.get("POSTGRES_DB") or "openteam")
     return f"postgresql://{u}:{p}@{h}:{pt}/{db}"
 
 
@@ -361,9 +361,9 @@ def _codex_login_status() -> tuple[bool, str]:
 
 
 def _llm_config() -> dict[str, Any]:
-    base = str(os.getenv("TEAMOS_LLM_BASE_URL") or "").strip()
-    key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
-    model = str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
+    base = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
+    key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
+    model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
     needs_codex = "codex" in model.lower()
     codex_logged_in, codex_login_message = _codex_login_status()
     codex_oauth_ready = bool(needs_codex and codex_logged_in)
@@ -384,7 +384,7 @@ def _llm_config() -> dict[str, Any]:
         "codex_oauth_ready": codex_oauth_ready,
         "required": [
             "Codex OAuth login via `codex login` for codex models",
-            "or TEAMOS_LLM_BASE_URL + TEAMOS_LLM_API_KEY",
+            "or OPENTEAM_LLM_BASE_URL + OPENTEAM_LLM_API_KEY",
         ],
     }
 
@@ -394,7 +394,7 @@ def _require_llm_config(runtime_root: Path) -> dict[str, Any]:
     if not bool(cfg.get("ok")):
         raise BootstrapError(
             "missing required LLM config: either run `codex login` for codex models, "
-            "or set TEAMOS_LLM_BASE_URL and TEAMOS_LLM_API_KEY"
+            "or set OPENTEAM_LLM_BASE_URL and OPENTEAM_LLM_API_KEY"
         )
     _append_audit(
         runtime_root,
@@ -467,16 +467,16 @@ def _start_control_plane(
     logf = log_path.open("a", encoding="utf-8")
 
     env = os.environ.copy()
-    env["TEAM_OS_REPO_PATH"] = str(repo)
-    env["TEAMOS_RUNTIME_ROOT"] = str(runtime_root)
-    env["TEAMOS_WORKSPACE_ROOT"] = str(workspace_root)
-    env["TEAMOS_DB_URL"] = db_url
-    env["TEAMOS_REDIS_URL"] = redis_url
-    env["TEAMOS_RUNTIME_DB_PATH"] = str(runtime_root / "state" / "runtime.db")
-    env["TEAMOS_BASE_URL"] = base_url
+    env["OPENTEAM_REPO_PATH"] = str(repo)
+    env["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
+    env["OPENTEAM_WORKSPACE_ROOT"] = str(workspace_root)
+    env["OPENTEAM_DB_URL"] = db_url
+    env["OPENTEAM_REDIS_URL"] = redis_url
+    env["OPENTEAM_RUNTIME_DB_PATH"] = str(runtime_root / "state" / "runtime.db")
+    env["OPENTEAM_BASE_URL"] = base_url
     env["CONTROL_PLANE_BASE_URL"] = base_url
-    env["TEAMOS_PIPELINE_PYTHON"] = str(sys.executable)
-    env["TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED"] = "0"
+    env["OPENTEAM_PIPELINE_PYTHON"] = str(sys.executable)
+    env["OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED"] = "0"
     env.setdefault("CREWAI_TRACING_ENABLED", "false")
     py_path = str(orch_dir)
     if str(env.get("PYTHONPATH") or "").strip():
@@ -550,7 +550,7 @@ def _run_default_team_bootstrap(repo: Path, base_url: str) -> dict[str, Any]:
         "POST",
         base_url + f"/v1/teams/{team_id}/run",
         {
-            "project_id": "teamos",
+            "project_id": "openteam",
             "workstream_id": "general",
             "repo_path": str(repo),
             "objective": f"Bootstrap team:{team_id} for current repository",
@@ -669,10 +669,10 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     hub_env = _parse_env_file(runtime_root / "hub" / "env" / ".env")
     db_url = _db_url_from_hub_env(hub_env)
     redis_url = _redis_url_from_hub_env(hub_env)
-    os.environ["TEAMOS_DB_URL"] = db_url
-    os.environ["TEAMOS_REDIS_URL"] = redis_url
-    os.environ["TEAMOS_RUNTIME_ROOT"] = str(runtime_root)
-    os.environ["TEAMOS_WORKSPACE_ROOT"] = str(workspace_root)
+    os.environ["OPENTEAM_DB_URL"] = db_url
+    os.environ["OPENTEAM_REDIS_URL"] = redis_url
+    os.environ["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
+    os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(workspace_root)
 
     # 7) control plane
     control_plane = _start_control_plane(
@@ -763,7 +763,7 @@ def _doctor(repo: Path, workspace_root: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Team-OS one-click bootstrap and runtime controller")
     ap.add_argument("action", nargs="?", default="start", choices=["start", "status", "stop", "restart", "doctor"])
-    ap.add_argument("--control-plane-port", type=int, default=int(os.getenv("TEAMOS_CONTROL_PLANE_PORT") or "8787"))
+    ap.add_argument("--control-plane-port", type=int, default=int(os.getenv("OPENTEAM_CONTROL_PLANE_PORT") or "8787"))
     ap.add_argument("--keep-hub", action="store_true", help="used with stop: keep hub running")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -778,9 +778,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.action == "start":
-            legacy_dir = _quarantine_legacy_team_os_dir(repo, runtime_root)
+            legacy_dir = _quarantine_legacy_openteam_dir(repo, runtime_root)
             if legacy_dir.get("found"):
-                _append_audit(runtime_root, f"quarantined legacy .team-os dir -> {legacy_dir.get('moved_to')}")
+                _append_audit(runtime_root, f"quarantined legacy .openteam dir -> {legacy_dir.get('moved_to')}")
             out = _start_flow(repo, runtime_root, workspace_root, port=int(args.control_plane_port))
         elif args.action == "status":
             base_url = f"http://127.0.0.1:{int(args.control_plane_port)}"
@@ -789,9 +789,9 @@ def main(argv: list[str] | None = None) -> int:
             out = _stop_flow(repo, runtime_root, workspace_root, keep_hub=bool(args.keep_hub))
         elif args.action == "restart":
             _ = _stop_flow(repo, runtime_root, workspace_root, keep_hub=False)
-            legacy_dir = _quarantine_legacy_team_os_dir(repo, runtime_root)
+            legacy_dir = _quarantine_legacy_openteam_dir(repo, runtime_root)
             if legacy_dir.get("found"):
-                _append_audit(runtime_root, f"quarantined legacy .team-os dir -> {legacy_dir.get('moved_to')}")
+                _append_audit(runtime_root, f"quarantined legacy .openteam dir -> {legacy_dir.get('moved_to')}")
             out = _start_flow(repo, runtime_root, workspace_root, port=int(args.control_plane_port))
         else:
             base_url = f"http://127.0.0.1:{int(args.control_plane_port)}"

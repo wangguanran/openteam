@@ -3,7 +3,7 @@
 Repo Purity Check
 
 Hard governance rule:
-- `team-os/` git repo must ONLY contain Team OS itself.
+- `openteam/` git repo must ONLY contain OpenTeam itself.
 - Runtime dynamic outputs must live outside repo under runtime root.
 - Any `project:<id>` truth-source artifacts must live in the Workspace (outside the repo).
 
@@ -41,7 +41,7 @@ def _is_dir(p: Path) -> bool:
         return False
 
 
-# Root-level static directories intentionally allowed inside team-os git repo.
+# Root-level static directories intentionally allowed inside openteam git repo.
 # This is a governance reference list for reviewers; checker only denies known-dynamic roots.
 _ROOT_STATIC_ALLOWLIST = {
     ".git",
@@ -58,15 +58,15 @@ _ROOT_STATIC_ALLOWLIST = {
 }
 
 # Root-level runtime/dynamic directories forbidden in repo.
-# These must live under runtime root (default: ../team-os-runtime, override: TEAMOS_RUNTIME_ROOT).
+# These must live under runtime root (default: ../openteam-runtime, override: OPENTEAM_RUNTIME_ROOT).
 _ROOT_DYNAMIC_DENYLIST: dict[str, tuple[str, str]] = {
-    ".team-os": (
-        "LEGACY_TEAM_OS_DIR",
-        "legacy .team-os directory is forbidden in repo; move dynamic data under runtime root",
+    ".openteam": (
+        "LEGACY_OPENTEAM_DIR",
+        "legacy .openteam directory is forbidden in repo; move dynamic data under runtime root",
     ),
-    "team-os-runtime": (
+    "openteam-runtime": (
         "IN_REPO_RUNTIME_ROOT",
-        "runtime root must be outside repo (default: ../team-os-runtime)",
+        "runtime root must be outside repo (default: ../openteam-runtime)",
     ),
     "runtime": (
         "IN_REPO_DYNAMIC_RUNTIME_PATH",
@@ -113,7 +113,7 @@ def check_repo_purity(repo_root: Path) -> dict[str, Any]:
 
     # 1) obvious in-repo project roots
     if _is_dir(repo_root / "projects"):
-        add("IN_REPO_PROJECTS_DIR", repo_root / "projects", "Workspace projects must not be inside team-os repo")
+        add("IN_REPO_PROJECTS_DIR", repo_root / "projects", "Workspace projects must not be inside openteam repo")
 
     legacy_project_prompts = repo_root / "prompt-library" / "projects"
     if _is_dir(legacy_project_prompts):
@@ -123,17 +123,17 @@ def check_repo_purity(repo_root: Path) -> dict[str, Any]:
     if _is_dir(scoped_project_prompts):
         add("IN_REPO_PROJECT_PROMPTS", scoped_project_prompts, "Project prompts must live in workspace")
 
-    # 2) docs/requirements must not exist in repo (projects moved; teamos self lives under docs/product/teamos/)
+    # 2) docs/requirements must not exist in repo (projects moved; openteam self lives under docs/product/openteam/)
     if _is_dir(repo_root / "docs" / "requirements"):
-        add("IN_REPO_REQUIREMENTS_DIR", repo_root / "docs" / "requirements", "Project requirements must live in workspace; teamos lives under docs/product/teamos/")
+        add("IN_REPO_REQUIREMENTS_DIR", repo_root / "docs" / "requirements", "Project requirements must live in workspace; openteam lives under docs/product/openteam/")
 
-    # 3) docs/plans may only contain teamos (project plans must live in workspace)
+    # 3) docs/plans may only contain openteam (project plans must live in workspace)
     plan = repo_root / "docs" / "plans"
     if _is_dir(plan):
         for d in sorted(plan.iterdir()):
             if not d.is_dir():
                 continue
-            if d.name == "teamos":
+            if d.name == "openteam":
                 continue
             add("IN_REPO_PROJECT_PLAN", d, "Project plan overlay must live in workspace")
 
@@ -148,7 +148,7 @@ def check_repo_purity(repo_root: Path) -> dict[str, Any]:
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description="Team OS repo purity checker (no project artifacts in repo)")
+    ap = argparse.ArgumentParser(description="OpenTeam repo purity checker (no project artifacts in repo)")
     ap.add_argument("--repo-root", default="", help="override repo root (default: git rev-parse)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true")
@@ -170,8 +170,8 @@ def main(argv: list[str]) -> int:
                     print(f"- {v['kind']}: {v['path']} :: {v['detail']}")
                 print("")
                 print("next:")
-                print("  teamos workspace migrate --from-repo  # dry-run plan")
-                print("  teamos workspace migrate --from-repo --force  # apply (high risk)")
+                print("  openteam workspace migrate --from-repo  # dry-run plan")
+                print("  openteam workspace migrate --from-repo --force  # apply (high risk)")
         else:
             print(f"repo_purity.ok={str(out['ok']).lower()} violations={len(out['violations'])}")
 

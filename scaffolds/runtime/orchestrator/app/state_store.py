@@ -4,54 +4,54 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 
 class StateError(Exception):
     pass
 
 
-def _teamos_home() -> Path:
-    raw = str(os.getenv("TEAMOS_HOME") or "").strip()
+def _openteam_home() -> Path:
+    raw = str(os.getenv("OPENTEAM_HOME") or "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
-    return (Path.home() / ".teamos").resolve()
+    return (Path.home() / ".openteam").resolve()
 
 
-def team_os_root() -> Path:
+def openteam_root() -> Path:
     """
-    Team OS repo root.
+    OpenTeam repo root.
 
-    In container runtime this is injected via TEAM_OS_REPO_PATH (default mount: /team-os).
+    In container runtime this is injected via OPENTEAM_REPO_PATH (default mount: /openteam).
     For local execution (unit tests / scripts) we fall back to discovering the repo root by
     walking up from this file until we find Team-OS repo markers.
     """
-    env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
+    env = str(os.getenv("OPENTEAM_REPO_PATH") or "").strip()
     if env:
         return Path(env).expanduser().resolve()
 
     p = Path(__file__).resolve()
     for parent in [p.parent] + list(p.parents):
         if (parent / "scripts" / "pipelines").exists() and (
-            (parent / "TEAMOS.md").exists()
+            (parent / "OPENTEAM.md").exists()
             or (parent / "templates" / "runtime" / "orchestrator").exists()
             or (parent / "schemas").exists()
         ):
             return parent.resolve()
 
-    return Path("/team-os").resolve()
+    return Path("/openteam").resolve()
 
 
 def runtime_root() -> Path:
     """
     Runtime root contract:
-    - env TEAMOS_RUNTIME_ROOT
-    - default: ~/.teamos/runtime/default
+    - env OPENTEAM_RUNTIME_ROOT
+    - default: ~/.openteam/runtime/default
     """
-    v = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    v = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
     if v:
         return Path(v).expanduser().resolve()
-    return (_teamos_home() / "runtime" / "default").resolve()
+    return (_openteam_home() / "runtime" / "default").resolve()
 
 
 def runtime_state_root() -> Path:
@@ -63,24 +63,24 @@ def state_dir() -> Path:
 
 
 def ledger_tasks_dir() -> Path:
-    # Team OS self task ledgers (scope=teamos).
+    # OpenTeam self task ledgers (scope=openteam).
     return runtime_state_root() / "ledger" / "tasks"
 
 
 def logs_tasks_dir() -> Path:
-    # Team OS self task logs (scope=teamos).
+    # OpenTeam self task logs (scope=openteam).
     return runtime_state_root() / "logs" / "tasks"
 
 
-def teamos_requirements_dir() -> Path:
-    # Team OS self requirements truth source (scope=teamos).
+def openteam_requirements_dir() -> Path:
+    # OpenTeam self requirements truth source (scope=openteam).
     # Project requirements must live in Workspace.
-    return team_os_root() / "docs" / "product" / "teamos" / "requirements"
+    return openteam_root() / "docs" / "product" / "openteam" / "requirements"
 
 
-def teamos_plan_dir() -> Path:
-    # Team OS self planning overlay (scope=teamos).
-    return team_os_root() / "docs" / "plans" / "teamos"
+def openteam_plan_dir() -> Path:
+    # OpenTeam self planning overlay (scope=openteam).
+    return openteam_root() / "docs" / "plans" / "openteam"
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -183,4 +183,4 @@ def load_workstreams() -> list[dict[str, Any]]:
 
 
 def github_projects_mapping_path() -> Path:
-    return team_os_root() / "integrations" / "github_projects" / "mapping.yaml"
+    return openteam_root() / "integrations" / "github_projects" / "mapping.yaml"

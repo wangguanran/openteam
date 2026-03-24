@@ -29,10 +29,10 @@ from _common import (
 )
 
 
-def _next_teamos_seq(tasks_dir: Path) -> int:
+def _next_openteam_seq(tasks_dir: Path) -> int:
     import re
 
-    pat = re.compile(r"^TEAMOS-(\d{4})$")
+    pat = re.compile(r"^OPENTEAM-(\d{4})$")
     mx = 0
     for p in sorted(tasks_dir.glob("*.yaml")):
         stem = p.stem
@@ -47,9 +47,9 @@ def _next_teamos_seq(tasks_dir: Path) -> int:
 
 
 def _generate_task_id(*, scope: str, project_id: str, tasks_dir: Path, logs_root: Path) -> str:
-    if scope == "teamos":
-        seq = _next_teamos_seq(tasks_dir)
-        return f"TEAMOS-{seq:04d}"
+    if scope == "openteam":
+        seq = _next_openteam_seq(tasks_dir)
+        return f"OPENTEAM-{seq:04d}"
     # project scope: keep local-only deterministic id in its own ledger dir
     import re
 
@@ -80,8 +80,8 @@ def _task_paths(*, repo: Path, ws_root: Path, scope: str, project_id: str) -> tu
     """
     Returns (tasks_dir, logs_root).
     """
-    if scope == "teamos":
-        runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
+    if scope == "openteam":
+        runtime_override = "" if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
         state_root = runtime_state_root(override=runtime_override)
         return (state_root / "ledger" / "tasks", state_root / "logs" / "tasks")
 
@@ -111,9 +111,9 @@ def _render_log_from_tpl(repo: Path, *, name: str, task_id: str, title: str) -> 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Create a Team OS task (deterministic scaffold)")
+    ap = argparse.ArgumentParser(description="Create a OpenTeam task (deterministic scaffold)")
     add_default_args(ap)
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--title", required=True)
     ap.add_argument("--workstreams", default="general", help="comma-separated; first item used as workstream_id")
     ap.add_argument("--risk-level", default="R1", help="R0|R1|R2|R3")
@@ -125,13 +125,13 @@ def main(argv: list[str] | None = None) -> int:
     ws_root = resolve_workspace_root(args)
     scope, pid = parse_scope(args.scope)
 
-    # Concurrency: repo lock (teamos only) + scope lock.
+    # Concurrency: repo lock (openteam only) + scope lock.
     repo_lock = None
     scope_lock = None
     if not args.dry_run:
-        if scope == "teamos":
-            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
-        scope_lock = locks.acquire_scope_lock(scope, repo_root=repo, workspace_root=ws_root, req_dir=None, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+        if scope == "openteam":
+            repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""))
+        scope_lock = locks.acquire_scope_lock(scope, repo_root=repo, workspace_root=ws_root, req_dir=None, task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""))
 
     def _cleanup_locks() -> None:
         locks.release_lock(scope_lock)

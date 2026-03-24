@@ -1,11 +1,11 @@
-# Team OS Execution Strategy Audit (20260215-2334 UTC)
+# OpenTeam Execution Strategy Audit (20260215-2334 UTC)
 
-> 目标：对 Team OS “执行策略/机制/约束”做全量合规审计（事无巨细），并给出可回归验证的修复方案。  
+> 目标：对 OpenTeam “执行策略/机制/约束”做全量合规审计（事无巨细），并给出可回归验证的修复方案。  
 > 本文件为 **Step 1 初稿**：只做扫描与判定，不实施修复；后续步骤会在同一文件中更新 FAIL -> PASS/WAIVED，并补充提交摘要与下一轮改进计划。
 
 ## 审计范围与证据
 
-- 仓库：`/Users/wangguanran/OpenTeam/team-os`
+- 仓库：`/Users/openteam-dev/OpenTeam/openteam`
 - 分支：`main`
 - HEAD：`a3c02a9`
 - 本机：macOS，Python `3.9.6`，`pytest` 未安装
@@ -14,22 +14,22 @@
 ### 低风险证据命令（已执行）
 
 ```bash
-cd /Users/wangguanran/OpenTeam/team-os
+cd /Users/openteam-dev/OpenTeam/openteam
 git status --porcelain
 git rev-parse --abbrev-ref HEAD
 git log -5 --oneline
 python3 -V
 python3 -m pip --version
 pytest --version   # not installed
-./teamos --help
+./openteam --help
 curl -fsS http://127.0.0.1:8787/v1/status
-./teamos --profile local doctor
+./openteam --profile local doctor
 ```
 
 ## 总体结论（初稿）
 
 - PASS：基础仓库骨架、项目 requirements 框架、面板同步（GitHub Projects view-layer）已具备雏形；Control Plane 基础端点可用。
-- FAIL（高优先级）：**缺少“运行 teamos 即触发”的自我优化闭环**、缺少 telemetry/metrics 体系、缺少 workflow trunk+plugins 与 evolution policy、Control Plane/CLI 缺失大量集群/恢复/任务新建端点与命令、`.gitignore` 未覆盖 tokens/credentials 等关键模式、缺少 `evals/` 回归入口。
+- FAIL（高优先级）：**缺少“运行 openteam 即触发”的自我优化闭环**、缺少 telemetry/metrics 体系、缺少 workflow trunk+plugins 与 evolution policy、Control Plane/CLI 缺失大量集群/恢复/任务新建端点与命令、`.gitignore` 未覆盖 tokens/credentials 等关键模式、缺少 `evals/` 回归入口。
 
 ---
 
@@ -40,12 +40,12 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### A1. 核心规范文件存在且自洽 — PASS
 
 - Evidence:
-  - `AGENTS.md`, `TEAMOS.md`, `docs/EXECUTION_RUNBOOK.md`, `docs/SECURITY.md`, `docs/GOVERNANCE.md` 均存在。
+  - `AGENTS.md`, `OPENTEAM.md`, `docs/EXECUTION_RUNBOOK.md`, `docs/SECURITY.md`, `docs/GOVERNANCE.md` 均存在。
 
 ### A2. 必须目录齐全 — FAIL
 
 - Evidence:
-  - `.team-os/*` 关键目录存在（roles/workflows/kb/memory/ledger/logs/templates/scripts/state/integrations/cluster）。
+  - `.openteam/*` 关键目录存在（roles/workflows/kb/memory/ledger/logs/templates/scripts/state/integrations/cluster）。
   - `prompt-library/` 存在。
   - `evals/` **不存在**。
 - Gap:
@@ -65,7 +65,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### A3. .gitignore 覆盖 secrets/auth/credentials 等 — FAIL
 
 - Evidence:
-  - `.gitignore` 已忽略：`.env*`, `.codex/`, `auth.json`, `.team-os/state/*.db`, `.team-os/cluster/state/*`, `.team-os/ledger/conversations/`。
+  - `.gitignore` 已忽略：`.env*`, `.codex/`, `auth.json`, `.openteam/state/*.db`, `.openteam/cluster/state/*`, `.openteam/ledger/conversations/`。
 - Gap:
   - 未覆盖：`*_token*`、`*credentials*`、`id_rsa*`、`known_hosts`、`sshpass` 临时文件、`*.pem`、`*.p12`、`*.key`、`*.crt`、`*.cer`、`.secrets/`、临时工作区等常见敏感/凭证落盘模式。
 - Impact:
@@ -73,9 +73,9 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Fix (proposed):
   - 扩充 `.gitignore`，并在 `docs/SECURITY.md` 增补“本地凭证落盘位置与忽略清单”。
 - Acceptance:
-  - `git status` 不会显示上述敏感文件；提供 `teamos doctor` secret-scan（轻量 regex）提示。
+  - `git status` 不会显示上述敏感文件；提供 `openteam doctor` secret-scan（轻量 regex）提示。
 - Files:
-  - `.gitignore`, `docs/SECURITY.md`, `teamos`（doctor 扩展）
+  - `.gitignore`, `docs/SECURITY.md`, `openteam`（doctor 扩展）
 
 ## B) 角色（Role）与工作流（Workflow）的可进化机制
 
@@ -91,9 +91,9 @@ curl -fsS http://127.0.0.1:8787/v1/status
   - 定义 role schema（文档 + 简易校验脚本），并将现有角色按最小字段补齐。
   - 更新 `templates/role.md` 作为唯一模板源。
 - Acceptance:
-  - 新增 `teamos doctor` 检查：roles frontmatter 必含字段；缺失则 FAIL。
+  - 新增 `openteam doctor` 检查：roles frontmatter 必含字段；缺失则 FAIL。
 - Files:
-  - `roles/*.md`, `templates/role.md`, `teamos`, `docs/GOVERNANCE.md`
+  - `roles/*.md`, `templates/role.md`, `openteam`, `docs/GOVERNANCE.md`
 
 ### B2. Role Registry 足够细 + ROLE_TAXONOMY.yaml — FAIL
 
@@ -102,9 +102,9 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Fix (proposed):
   - 新增 `roles/ROLE_TAXONOMY.yaml`（含示例层级、capability_tags 约束、扩展规则）。
 - Acceptance:
-  - `teamos doctor` 能读取并校验 taxonomy 与 role_id 一致性（子角色可选）。
+  - `openteam doctor` 能读取并校验 taxonomy 与 role_id 一致性（子角色可选）。
 - Files:
-  - `roles/ROLE_TAXONOMY.yaml`, `teamos`
+  - `roles/ROLE_TAXONOMY.yaml`, `openteam`
 
 ### B3. 工作流必须“主干 + 插件” — FAIL
 
@@ -115,7 +115,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Fix (proposed):
   - 引入 `workflows/trunk.yaml` 与 `workflows/plugins/*.yaml`（至少包含 `repo_understanding` 插件、`risk_gate` 插件）。
 - Acceptance:
-  - `teamos doctor` 校验 trunk+plugins 结构存在；control plane `/v1/tasks/new` 在 upgrade 模式强制触发插件（见 H/I）。
+  - `openteam doctor` 校验 trunk+plugins 结构存在；control plane `/v1/tasks/new` 在 upgrade 模式强制触发插件（见 H/I）。
 - Files:
   - `workflows/*`
 
@@ -126,7 +126,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Fix (proposed):
   - 新增政策文件，定义复杂度向量（D/M/A/R/U/T/E/F）、拆分触发器、新增角色触发器、规则优先级。
 - Acceptance:
-  - `teamos self-improve --dry-run` 能引用该政策生成 ROLE_SPLIT/PLUGIN_ADD/GATE_TUNE 建议。
+  - `openteam self-improve --dry-run` 能引用该政策生成 ROLE_SPLIT/PLUGIN_ADD/GATE_TUNE 建议。
 - Files:
   - `policies/evolution_policy.yaml`, self-improve 实现（CLI/CP）
 
@@ -137,25 +137,25 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Fix (proposed):
   - 新增 metrics 脚本（纯本地、可离线），生成 self_improve 提案。
 - Acceptance:
-  - `teamos metrics analyze` 输出改进候选并落盘为 proposal（见 K）。
+  - `openteam metrics analyze` 输出改进候选并落盘为 proposal（见 K）。
 - Files:
-  - `scripts/metrics/*`, `teamos`
+  - `scripts/metrics/*`, `openteam`
 
 ## C) 任务台账/日志/遥测（任务×阶段×角色）
 
 ### C1. 每任务必须有 00~07 + metrics.jsonl — FAIL
 
 - Evidence:
-  - `.team-os/logs/tasks/*` 中多数任务仅有 `00~02`，且无 `metrics.jsonl`。
+  - `.openteam/logs/tasks/*` 中多数任务仅有 `00~02`，且无 `metrics.jsonl`。
 - Gap:
   - 任务全流程日志与 metrics 未强制生成；无法追溯与分析。
 - Fix (proposed):
   - 更新任务模板/创建脚本：强制生成 `00~07` + `metrics.jsonl`（空文件也要落盘）。
   - 为历史任务补齐缺失日志文件（仅追加，不覆盖已有内容）。
 - Acceptance:
-  - `teamos doctor` 检查所有 OPEN/DOING/BLOCKED 任务具备完整日志与 metrics。
+  - `openteam doctor` 检查所有 OPEN/DOING/BLOCKED 任务具备完整日志与 metrics。
 - Files:
-  - `templates/task_log_*.md`, `templates/task_ledger.yaml`, `scripts/new_task.sh`（或等价）、`teamos`
+  - `templates/task_log_*.md`, `templates/task_ledger.yaml`, `scripts/new_task.sh`（或等价）、`openteam`
 
 ### C2. telemetry schema 存在且 metrics.jsonl 符合 — FAIL
 
@@ -164,27 +164,27 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Fix (proposed):
   - 新增 schema；self-improve/requirements/panel sync/agent heartbeat 等事件写入 metrics.jsonl 并通过 schema 校验。
 - Acceptance:
-  - `teamos metrics check` 能校验每个 task 的 metrics.jsonl。
+  - `openteam metrics check` 能校验每个 task 的 metrics.jsonl。
 - Files:
   - `schemas/telemetry_event.schema.json`, metrics 写入代码（CP/CLI）
 
-### C3. teamos 提供 metrics-check/analyze 命令 + 关闭闸门 — FAIL
+### C3. openteam 提供 metrics-check/analyze 命令 + 关闭闸门 — FAIL
 
 - Gap:
   - CLI 无 metrics 子命令；任务关闭前无强制校验。
 - Fix (proposed):
-  - `teamos metrics check|analyze`；在 `teamos task close`（待新增）或 control plane close gate 中拦截缺失指标。
+  - `openteam metrics check|analyze`；在 `openteam task close`（待新增）或 control plane close gate 中拦截缺失指标。
 - Acceptance:
   - 关闭任务前必须通过 metrics_required（role/workflow 定义）。
 - Files:
-  - `teamos`, role/workflow 定义、metrics 脚本
+  - `openteam`, role/workflow 定义、metrics 脚本
 
 ## D) 需求登记与冲突检测（项目级与 Team‑OS 自身）
 
 ### D1. 每项目 requirements 四件套存在 — PASS
 
 - Evidence:
-  - `docs/requirements/DEMO|demo_panel|teamos/` 均包含：`requirements.yaml`、`REQUIREMENTS.md`、`CHANGELOG.md`、`conflicts/`。
+  - `docs/requirements/DEMO|demo_panel|openteam/` 均包含：`requirements.yaml`、`REQUIREMENTS.md`、`CHANGELOG.md`、`conflicts/`。
 
 ### D2. 新增需求必须先冲突检测并生成报告 — PASS (code-present)
 
@@ -196,11 +196,11 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### D3. Team‑OS 自身 requirements 真相源存在 — PASS (equivalent)
 
 - Evidence:
-  - Team‑OS 作为 project_id=`teamos` 的 requirements 真相源位于：`docs/requirements/teamos/requirements.yaml`（等价于 `docs/teamos/requirements.yaml` 要求）。
+  - Team‑OS 作为 project_id=`openteam` 的 requirements 真相源位于：`docs/requirements/openteam/requirements.yaml`（等价于 `docs/openteam/requirements.yaml` 要求）。
 - Follow-up:
-  - 在 `TEAMOS.md`/Runbook 中显式声明：`docs/requirements/<project_id>/requirements.yaml` 为统一真相源路径。
+  - 在 `OPENTEAM.md`/Runbook 中显式声明：`docs/requirements/<project_id>/requirements.yaml` 为统一真相源路径。
 
-## E) Control Plane API 与 teamos CLI 合规
+## E) Control Plane API 与 openteam CLI 合规
 
 ### E1. Control Plane 端点齐全 — FAIL
 
@@ -212,48 +212,48 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Impact:
   - 无法满足集群协作、断点续跑、自动 repo bootstrap/upgrade gate、自我升级的强制闭环。
 - Fix (proposed):
-  - 在现有 FastAPI 服务中增量加入缺失 endpoints（可先 MVP：dry_run + 明确 501/blocked gate），并落盘 state 到 `.team-os/cluster/state/` 与 runtime DB。
+  - 在现有 FastAPI 服务中增量加入缺失 endpoints（可先 MVP：dry_run + 明确 501/blocked gate），并落盘 state 到 `.openteam/cluster/state/` 与 runtime DB。
 - Acceptance:
   - `curl` 访问上述端点均返回 200/明确错误码（非 404）；dry_run 可离线演示。
 - Files:
   - `templates/runtime/orchestrator/app/main.py`（或拆分模块）、`runtime_db.py`, `state_store.py`, `docs/*`
 
-### E2. teamos CLI 命令覆盖完整 — FAIL
+### E2. openteam CLI 命令覆盖完整 — FAIL
 
 - Evidence:
   - 当前 CLI 命令：`config/status/focus/agents/tasks/panel/chat/req/doctor`。
 - Gap:
   - 缺少：`self-improve`、`cluster status`、`node add/join-script`、`repo create`、`task new/resume`、`metrics check/analyze` 等。
 - Fix (proposed):
-  - 扩展 `./teamos` 子命令与参数；保持无依赖（argparse + urllib）原则。
+  - 扩展 `./openteam` 子命令与参数；保持无依赖（argparse + urllib）原则。
 - Acceptance:
-  - `./teamos --help` 显示所有必需命令；每条命令至少支持 dry-run。
+  - `./openteam --help` 显示所有必需命令；每条命令至少支持 dry-run。
 - Files:
-  - `teamos`
+  - `openteam`
 
 ### E3. OAuth 默认且必须拦截未登录 — FAIL (partial)
 
 - Evidence:
-  - `./teamos --profile local doctor` 可检查 `codex login status` 并输出已登录。
+  - `./openteam --profile local doctor` 可检查 `codex login status` 并输出已登录。
 - Gap:
   - doctor 未检查 `gh auth status`；LLM/写面板/写需求等动作未统一走 OAuth gate（leader-only + approvals）。
 - Fix (proposed):
   - 统一 gate：control plane self-improve 与 panel sync（real）前必须检查 codex/gh 登录状态；未登录写 telemetry event 并返回可执行修复步骤。
 - Acceptance:
-  - 未登录时任何 LLM 相关调用返回明确错误并记录事件；`teamos doctor` 覆盖 codex+gh。
+  - 未登录时任何 LLM 相关调用返回明确错误并记录事件；`openteam doctor` 覆盖 codex+gh。
 - Files:
-  - `teamos`, control plane auth/gate 模块, `docs/AUTH.md`
+  - `openteam`, control plane auth/gate 模块, `docs/AUTH.md`
 
 ## F) GitHub Projects 面板（主面板）与“一次性写入”
 
 ### F1. mapping 完整（含 req_id↔issue_id↔item_id）— FAIL
 
 - Evidence:
-  - `integrations/github_projects/mapping.yaml` 存在并绑定 `teamos -> projects/3`。
+  - `integrations/github_projects/mapping.yaml` 存在并绑定 `openteam -> projects/3`。
 - Gap:
   - mapping 未显式记录 `req_id`/`issue_id`/`item_id` 的可追溯映射（需要落盘到 truth-source 或 runtime DB，并可全量重建）。
 - Fix (proposed):
-  - 增补 mapping 策略 + 在 runtime DB `panel_kv` 保存 resolved ids（可重建），并提供导出到 `.team-os/ledger/panel_sync/` 的审计快照。
+  - 增补 mapping 策略 + 在 runtime DB `panel_kv` 保存 resolved ids（可重建），并提供导出到 `.openteam/ledger/panel_sync/` 的审计快照。
 - Acceptance:
   - full sync 可在空项目面板上重建 items；dry-run 输出稳定的 key 列表。
 - Files:
@@ -269,18 +269,18 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Gap:
   - 缺少 Team‑OS 自我升级 Roadmap 的自动生成与同步（K2/K4/F3）。
 - Fix (proposed):
-  - Self‑Improve 产出的 proposals 写入 `docs/requirements/teamos/requirements.yaml` 并 sync 到 `projects/3`（可标记 Capability/Maturity 字段）。
+  - Self‑Improve 产出的 proposals 写入 `docs/requirements/openteam/requirements.yaml` 并 sync 到 `projects/3`（可标记 Capability/Maturity 字段）。
 - Acceptance:
-  - `teamos self-improve --dry-run` 生成 ≥3 改进项草案并可被 `panel sync --dry-run` 展示；真实 sync 需 gh auth + 用户批准（写远端）。
+  - `openteam self-improve --dry-run` 生成 ≥3 改进项草案并可被 `panel sync --dry-run` 展示；真实 sync 需 gh auth + 用户批准（写远端）。
 - Files:
-  - self-improve 实现、panel sync 扩展、requirements（teamos）
+  - self-improve 实现、panel sync 扩展、requirements（openteam）
 
 ## G) 多机协作集群（GitHub‑Only 最低可用）
 
 ### G1. leader lease + nodes registry（GitHub Issues 总线）— FAIL
 
 - Evidence:
-  - 已有文档与 config 骨架：`docs/CLUSTER_RUNBOOK.md`, `.team-os/cluster/config.yaml`。
+  - 已有文档与 config 骨架：`docs/CLUSTER_RUNBOOK.md`, `.openteam/cluster/config.yaml`。
 - Gap:
   - 缺少实际实现：CLUSTER-LEADER/CLUSTER-NODES issue 约定、续租/接管、nodes comment 心跳编辑、leader-only 写隔离。
 - Fix (proposed):
@@ -288,12 +288,12 @@ curl -fsS http://127.0.0.1:8787/v1/status
 - Acceptance:
   - 两个节点启动后：cluster status 可见 leader/nodes；leader 过期 assistant 可接管并落盘 recovery 记录。
 - Files:
-  - control plane cluster 模块、`docs/CLUSTER_RUNBOOK.md`, `teamos`
+  - control plane cluster 模块、`docs/CLUSTER_RUNBOOK.md`, `openteam`
 
 ### G2. Brain 掉线 assistant 接管与恢复序列落盘 — FAIL
 
 - Gap:
-  - 缺少 `.team-os/cluster/state/recovery_*.md` 自动生成机制与 API 触发点。
+  - 缺少 `.openteam/cluster/state/recovery_*.md` 自动生成机制与 API 触发点。
 - Fix/Acceptance:
   - 见 I（recovery scan/resume）与 cluster 接管实现。
 
@@ -312,7 +312,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### H1. 未指定 repo 自动创建（gh cli）— FAIL
 
 - Gap:
-  - 未实现 `/v1/tasks/new` 与 `teamos task new --create-repo`；缺少“创建 repo 属高风险需批准”的闸门实现。
+  - 未实现 `/v1/tasks/new` 与 `openteam task new --create-repo`；缺少“创建 repo 属高风险需批准”的闸门实现。
 
 ### H2. 非空 repo upgrade 前必须 Repo Understanding Gate — FAIL
 
@@ -348,16 +348,16 @@ curl -fsS http://127.0.0.1:8787/v1/status
 ### J1/J2/J3 — FAIL (sqlite-only)
 
 - Evidence:
-  - 当前 runtime DB 仅支持 sqlite（`runtime_db.py`），未支持 `TEAMOS_DB_URL`/`TEAMOS_REDIS_URL`。
+  - 当前 runtime DB 仅支持 sqlite（`runtime_db.py`），未支持 `OPENTEAM_DB_URL`/`OPENTEAM_REDIS_URL`。
 - Fix (proposed):
-  - 引入 DB 抽象：默认 sqlite；当 `TEAMOS_DB_URL` 为 postgres 时启用（最小：agent_registry/events/panel_sync_runs）。
+  - 引入 DB 抽象：默认 sqlite；当 `OPENTEAM_DB_URL` 为 postgres 时启用（最小：agent_registry/events/panel_sync_runs）。
   - doctor 增加连通性校验与最小权限提示。
 - Acceptance:
   - 无 DB 时 sqlite fallback 生效；配置 DB 时能通过 doctor 并写入数据。
 
-## K) “运行 teamos 即触发自我优化升级”
+## K) “运行 openteam 即触发自我优化升级”
 
-### K1. 任意 teamos 命令触发 self-improve scheduler（异步、debounce）— FAIL
+### K1. 任意 openteam 命令触发 self-improve scheduler（异步、debounce）— FAIL
 
 - Gap:
   - 当前 CLI 不会自动触发 self-improve；缺少 scheduler 与落盘证据。
@@ -373,15 +373,15 @@ curl -fsS http://127.0.0.1:8787/v1/status
 
 - Fix (proposed, summary):
   - 新增 Self‑Improve Scheduler：
-    - CLI：新增 `teamos self-improve`（dry-run/force）+ “任何命令前后唤醒调度器”（不阻塞）。
+    - CLI：新增 `openteam self-improve`（dry-run/force）+ “任何命令前后唤醒调度器”（不阻塞）。
     - Control Plane：新增 `/v1/self_improve/run`（dry_run 支持）+ 落盘：
-      - `.team-os/ledger/self_improve/<ts>-proposal.md`
+      - `.openteam/ledger/self_improve/<ts>-proposal.md`
       - `docs/audits/EXECUTION_STRATEGY_AUDIT_*.md`（本文件更新）
-      - pending issues：`.team-os/ledger/team_os_issues_pending/`
-    - 面板：将 teamos requirements/proposals 同步到 `projects/3`（真实写远端需 gh auth + 用户批准）。
+      - pending issues：`.openteam/ledger/openteam_issues_pending/`
+    - 面板：将 openteam requirements/proposals 同步到 `projects/3`（真实写远端需 gh auth + 用户批准）。
 - Acceptance:
-  - `./teamos self-improve --dry-run` 生成 ≥3 改进项并落盘。
-  - 任意 `./teamos status`/`./teamos doctor` 触发 scheduler，可在 metrics/ledger 中看到事件证据。
+  - `./openteam self-improve --dry-run` 生成 ≥3 改进项并落盘。
+  - 任意 `./openteam status`/`./openteam doctor` 触发 scheduler，可在 metrics/ledger 中看到事件证据。
 
 ---
 
@@ -410,43 +410,43 @@ curl -fsS http://127.0.0.1:8787/v1/status
 2) Telemetry/Metrics 体系（C1/C2/C3 + B5）
 - 变更：新增 `schemas/telemetry_event.schema.json`；新增 `scripts/metrics/*`；任务模板与 new-task 逻辑补齐 `00~07` 与 `metrics.jsonl`；CLI 增加 `metrics check/analyze`。
 - 验证：
-  - `./teamos metrics check --all`（或等价）通过
+  - `./openteam metrics check --all`（或等价）通过
   - self-improve 生成 proposal 可引用 metrics 聚类
 - 风险：中（会为历史任务补齐缺失文件，必须“只增不覆写”）。
 
 3) Always-on Self‑Improve（K1-K4 + E1/E2/F3）
 - 变更：
   - Control Plane：实现 `POST /v1/self_improve/run`（支持 dry_run/force；落盘 proposal/telemetry；可选触发 panel sync dry-run）
-  - CLI：新增 `teamos self-improve`；并在任意 `teamos <cmd>` 前/后异步唤醒（debounce=6h，可 `--force`）
-  - 落盘：`.team-os/ledger/self_improve/<ts>-proposal.md` + pending issue 草稿
+  - CLI：新增 `openteam self-improve`；并在任意 `openteam <cmd>` 前/后异步唤醒（debounce=6h，可 `--force`）
+  - 落盘：`.openteam/ledger/self_improve/<ts>-proposal.md` + pending issue 草稿
 - 验证：
-  - `./teamos self-improve --dry-run` 生成 ≥3 改进项（落盘）
-  - 任意 `./teamos status` 后能在 ledger/telemetry 中看到 self-improve 触发事件
+  - `./openteam self-improve --dry-run` 生成 ≥3 改进项（落盘）
+  - 任意 `./openteam status` 后能在 ledger/telemetry 中看到 self-improve 触发事件
 - 风险：中（涉及后台触发与节流；需避免递归触发）。
 
 4) Role 契约化与 taxonomy（B1/B2）
 - 变更：补齐所有 `roles/*.md` frontmatter 字段；新增 `roles/ROLE_TAXONOMY.yaml`；doctor 校验。
-- 验证：`./teamos doctor` role-check PASS。
+- 验证：`./openteam doctor` role-check PASS。
 - 风险：低（文档与校验）。
 
 5) Workflow trunk+plugins + evolution policy（B3/B4）
 - 变更：新增 `workflows/trunk.yaml` 与 `workflows/plugins/*.yaml`（至少 repo_understanding/risk_gate）；新增 `policies/evolution_policy.yaml`；doctor 校验。
-- 验证：`./teamos doctor` workflow-check PASS。
+- 验证：`./openteam doctor` workflow-check PASS。
 - 风险：低（新增文件；保持旧 workflow YAML 兼容不删除）。
 
 6) Control Plane/CLI 补齐关键端点与命令（E1/E2/G/H/I/J）
 - 变更：
   - CP：补 `/v1/cluster/*`, `/v1/nodes/*`, `/v1/tasks/new`, `/v1/recovery/*`（支持 dry-run；leader-only 写隔离；落盘 recovery 记录）
   - CLI：补 `cluster/node/repo/task` 命令（最小可用：dry-run + 明确闸门提示）
-  - DB：实现 `TEAMOS_DB_URL` postgres 可选后端（缺依赖则 doctor 提示）；保留 sqlite fallback
+  - DB：实现 `OPENTEAM_DB_URL` postgres 可选后端（缺依赖则 doctor 提示）；保留 sqlite fallback
 - 验证：
   - `curl` 访问端点不再 404
-  - `./teamos cluster status` 输出结构化状态
+  - `./openteam cluster status` 输出结构化状态
 - 风险：中高（涉及 GitHub 协作总线与远端写；默认 dry-run + 需要显式允许）。
 
 7) 文档与治理补齐（A1/F/G/H/I/J/K）
-- 变更：更新 `AGENTS.md`/`TEAMOS.md`/Runbook/Security/Governance，确保与实现一致。
-- 验证：`./teamos doctor` 输出提供可执行修复步骤与闸门提示。
+- 变更：更新 `AGENTS.md`/`OPENTEAM.md`/Runbook/Security/Governance，确保与实现一致。
+- 验证：`./openteam doctor` 输出提供可执行修复步骤与闸门提示。
 
 ---
 

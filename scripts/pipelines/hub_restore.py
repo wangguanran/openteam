@@ -38,8 +38,8 @@ def main(argv: list[str] | None = None) -> int:
         raise PipelineError(f"backup file not found: {src}")
     validate_hub_runtime_path(src, hub=hub, label="restore input")
 
-    user = str(env.get("POSTGRES_USER") or "teamos")
-    db = str(env.get("POSTGRES_DB") or "teamos")
+    user = str(env.get("POSTGRES_USER") or "openteam")
+    db = str(env.get("POSTGRES_DB") or "openteam")
     cmd = _compose_cmd(hub) + ["exec", "-T", "postgres", "psql", "-U", user, "-d", db]
 
     with src.open("rb") as f:

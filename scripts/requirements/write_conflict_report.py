@@ -4,14 +4,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 from _common import requirements_dir, parse_scope
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Write a manual conflict report markdown under conflicts/")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--new-id", required=True, help="new requirement id (e.g. REQ-0007)")
     ap.add_argument("--conflicts-with", required=True, help="comma-separated req ids")
     ap.add_argument("--points", nargs="*", default=[], help="conflict points (optional)")

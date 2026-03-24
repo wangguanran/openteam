@@ -23,7 +23,7 @@ def safe_project_id(project_id: str) -> str:
     return _proposal_runtime()._safe_project_id(project_id)
 
 
-def resolve_target(*, target_id: str = "", repo_path: str = "", repo_url: str = "", repo_locator: str = "", project_id: str = "teamos") -> dict[str, Any]:
+def resolve_target(*, target_id: str = "", repo_path: str = "", repo_url: str = "", repo_locator: str = "", project_id: str = "openteam") -> dict[str, Any]:
     return _proposal_runtime()._resolve_target(
         target_id=target_id,
         repo_path=repo_path,
@@ -33,8 +33,8 @@ def resolve_target(*, target_id: str = "", repo_path: str = "", repo_url: str = 
     )
 
 
-def team_os_root() -> Path:
-    return _proposal_runtime().team_os_root()
+def openteam_root() -> Path:
+    return _proposal_runtime().openteam_root()
 
 
 def prepare_discovery_repo(*, source_repo_root: Path, target: dict[str, Any]) -> Path:
@@ -181,7 +181,7 @@ def proposal_action_from_comment_text(text: str) -> str:
 
 
 def utc_now_iso() -> str:
-    from team_os_common import utc_now_iso as _utc_now_iso
+    from openteam_common import utc_now_iso as _utc_now_iso
     return _utc_now_iso()
 
 
@@ -323,7 +323,7 @@ def run_team_iteration(*, team_id: str, db: Any, spec: Any, actor: str, run_id: 
     if not normalized_team_id:
         raise RuntimeError("team_id is required")
 
-    project_id = proposal_runtime._safe_project_id(str(getattr(spec, "project_id", "teamos") or "teamos"))
+    project_id = proposal_runtime._safe_project_id(str(getattr(spec, "project_id", "openteam") or "openteam"))
     workstream_id = str(getattr(spec, "workstream_id", "") or "general").strip() or "general"
     target = proposal_runtime._resolve_target(
         target_id=str(getattr(spec, "target_id", "") or ""),
@@ -332,8 +332,8 @@ def run_team_iteration(*, team_id: str, db: Any, spec: Any, actor: str, run_id: 
         repo_locator=str(getattr(spec, "repo_locator", "") or ""),
         project_id=project_id,
     )
-    target_id = str(target.get("target_id") or "").strip() or "teamos"
-    repo_root = Path(str(target.get("repo_root") or proposal_runtime.team_os_root())).expanduser().resolve()
+    target_id = str(target.get("target_id") or "").strip() or "openteam"
+    repo_root = Path(str(target.get("repo_root") or proposal_runtime.openteam_root())).expanduser().resolve()
     repo_locator = str(target.get("repo_locator") or "").strip()
     trigger = str(getattr(spec, "trigger", "") or "manual").strip() or "manual"
     dry_run = bool(getattr(spec, "dry_run", False))

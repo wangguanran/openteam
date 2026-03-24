@@ -1,7 +1,7 @@
 # Self-Improve Run Audit Snapshot
 
 - ts: 20260216T163115Z
-- repo_root: /Users/wangguanran/OpenTeam/team-os
+- repo_root: /Users/openteam-dev/OpenTeam/openteam
 
 ## Checks
 
@@ -19,7 +19,7 @@
 
 ```json
 {
-  "repo_root": "/Users/wangguanran/OpenTeam/team-os",
+  "repo_root": "/Users/openteam-dev/OpenTeam/openteam",
   "missing_files": [],
   "missing_dirs": [],
   "gitignore_missing_patterns": [],

@@ -23,12 +23,12 @@ class MigrationDryRunEvals(unittest.TestCase):
             )
             (fake_repo / "docs" / "plans" / "demo").mkdir(parents=True, exist_ok=True)
             (fake_repo / "docs" / "plans" / "demo" / "plan.yaml").write_text("schema_version: 1\nmilestones: []\n", encoding="utf-8")
-            (fake_repo / ".team-os" / "ledger" / "conversations" / "demo").mkdir(parents=True, exist_ok=True)
-            (fake_repo / ".team-os" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").write_text("{\"msg\":\"hi\"}\n", encoding="utf-8")
-            (fake_repo / ".team-os" / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
-            (fake_repo / ".team-os" / "logs" / "tasks" / "DEMO-0001").mkdir(parents=True, exist_ok=True)
-            (fake_repo / ".team-os" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").write_text("# intake\n", encoding="utf-8")
-            (fake_repo / ".team-os" / "ledger" / "tasks" / "DEMO-0001.yaml").write_text(
+            (fake_repo / ".openteam" / "ledger" / "conversations" / "demo").mkdir(parents=True, exist_ok=True)
+            (fake_repo / ".openteam" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").write_text("{\"msg\":\"hi\"}\n", encoding="utf-8")
+            (fake_repo / ".openteam" / "ledger" / "tasks").mkdir(parents=True, exist_ok=True)
+            (fake_repo / ".openteam" / "logs" / "tasks" / "DEMO-0001").mkdir(parents=True, exist_ok=True)
+            (fake_repo / ".openteam" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").write_text("# intake\n", encoding="utf-8")
+            (fake_repo / ".openteam" / "ledger" / "tasks" / "DEMO-0001.yaml").write_text(
                 "id: DEMO-0001\nproject_id: demo\nstatus: intake\n", encoding="utf-8"
             )
             (fake_repo / "prompt-library" / "projects" / "demo").mkdir(parents=True, exist_ok=True)
@@ -37,9 +37,9 @@ class MigrationDryRunEvals(unittest.TestCase):
             before = {
                 "req": (fake_repo / "docs" / "requirements" / "demo" / "requirements.yaml").read_text(encoding="utf-8"),
                 "plan": (fake_repo / "docs" / "plans" / "demo" / "plan.yaml").read_text(encoding="utf-8"),
-                "conv": (fake_repo / ".team-os" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").read_text(encoding="utf-8"),
-                "task": (fake_repo / ".team-os" / "ledger" / "tasks" / "DEMO-0001.yaml").read_text(encoding="utf-8"),
-                "log": (fake_repo / ".team-os" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").read_text(encoding="utf-8"),
+                "conv": (fake_repo / ".openteam" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").read_text(encoding="utf-8"),
+                "task": (fake_repo / ".openteam" / "ledger" / "tasks" / "DEMO-0001.yaml").read_text(encoding="utf-8"),
+                "log": (fake_repo / ".openteam" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").read_text(encoding="utf-8"),
                 "prompt": (fake_repo / "prompt-library" / "projects" / "demo" / "NEW_TASK.md").read_text(encoding="utf-8"),
             }
 
@@ -68,9 +68,9 @@ class MigrationDryRunEvals(unittest.TestCase):
             after = {
                 "req": (fake_repo / "docs" / "requirements" / "demo" / "requirements.yaml").read_text(encoding="utf-8"),
                 "plan": (fake_repo / "docs" / "plans" / "demo" / "plan.yaml").read_text(encoding="utf-8"),
-                "conv": (fake_repo / ".team-os" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").read_text(encoding="utf-8"),
-                "task": (fake_repo / ".team-os" / "ledger" / "tasks" / "DEMO-0001.yaml").read_text(encoding="utf-8"),
-                "log": (fake_repo / ".team-os" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").read_text(encoding="utf-8"),
+                "conv": (fake_repo / ".openteam" / "ledger" / "conversations" / "demo" / "2026-01-01.jsonl").read_text(encoding="utf-8"),
+                "task": (fake_repo / ".openteam" / "ledger" / "tasks" / "DEMO-0001.yaml").read_text(encoding="utf-8"),
+                "log": (fake_repo / ".openteam" / "logs" / "tasks" / "DEMO-0001" / "00_intake.md").read_text(encoding="utf-8"),
                 "prompt": (fake_repo / "prompt-library" / "projects" / "demo" / "NEW_TASK.md").read_text(encoding="utf-8"),
             }
             self.assertEqual(before, after)

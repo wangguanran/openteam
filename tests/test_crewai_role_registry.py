@@ -39,7 +39,7 @@ class CrewAIRoleRegistryTests(unittest.TestCase):
         out = crewai_role_registry.register_team_blueprint(
             db=db,
             blueprint=blueprint,
-            project_id="teamos",
+            project_id="openteam",
             workstream_id="general",
             task_id="run-1",
         )

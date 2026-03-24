@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 from app import cluster_manager
 from app import crewai_agent_factory
@@ -84,7 +84,7 @@ def _normalize_team_id(team_id: Any = "") -> str:
 
 
 def _compat_file_mirror_enabled() -> bool:
-    return _env_truthy("TEAMOS_RUNTIME_FILE_MIRROR", "1")
+    return _env_truthy("OPENTEAM_RUNTIME_FILE_MIRROR", "1")
 
 
 def _coding_contract(doc: dict[str, Any]) -> dict[str, Any]:
@@ -164,15 +164,15 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _fallback_ledger_path(*, project_id: str, task_id: str) -> Path:
-    return (_runtime_root() / "state" / "improvement_ledger" / (str(project_id or "teamos").strip() or "teamos") / f"{str(task_id or 'task').strip()}.yaml").resolve()
+    return (_runtime_root() / "state" / "improvement_ledger" / (str(project_id or "openteam").strip() or "openteam") / f"{str(task_id or 'task').strip()}.yaml").resolve()
 
 
 def _task_scope(project_id: str) -> str:
-    return "teamos" if str(project_id or "").strip() == "teamos" else f"project:{str(project_id or '').strip()}"
+    return "openteam" if str(project_id or "").strip() == "openteam" else f"project:{str(project_id or '').strip()}"
 
 
 def _task_ledger_dir(project_id: str) -> Path:
-    if str(project_id or "").strip() == "teamos":
+    if str(project_id or "").strip() == "openteam":
         return planning.ledger_tasks_dir()
     workspace_store.ensure_project_scaffold(project_id)
     return workspace_store.ledger_tasks_dir(project_id)
@@ -223,7 +223,7 @@ def _source_repo_root(doc: dict[str, Any]) -> Path:
     target = doc.get("target") or {}
     if not isinstance(target, dict):
         target = {}
-    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(doc.get("project_id") or "openteam").strip() or "openteam"
     target_id = str(target.get("target_id") or "").strip()
     exec_state = planning._team_section(doc, key="team_execution")
     candidates = [
@@ -277,7 +277,7 @@ def _execution_state(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _delivery_lease_key(*, project_id: str, task_id: str) -> str:
-    return f"{_DELIVERY_LEASE_SCOPE}:{str(project_id or 'teamos').strip() or 'teamos'}:{str(task_id or '').strip()}"
+    return f"{_DELIVERY_LEASE_SCOPE}:{str(project_id or 'openteam').strip() or 'openteam'}:{str(task_id or '').strip()}"
 
 
 def _delivery_lease_settings() -> dict[str, int]:
@@ -358,7 +358,7 @@ class _DeliveryLeaseGuard:
 
 def _claim_delivery_task_lease(*, db: Any, actor: str, task: dict[str, Any]) -> Optional[dict[str, Any]]:
     task_id = str(task.get("task_id") or "").strip()
-    project_id = str(task.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(task.get("project_id") or "openteam").strip() or "openteam"
     if not task_id:
         return None
     instance_id = ensure_instance_id()
@@ -1114,7 +1114,7 @@ def _issue_close_comment_body(
     task_id = str(doc.get("id") or doc.get("task_id") or "").strip()
     reason = str(close_reason or "").strip() or "completed_and_released"
     lines = [
-        "Team OS is closing this team workflow issue.",
+        "OpenTeam is closing this team workflow issue.",
         "",
         f"Task: {task_id or '(unknown)'}",
         f"Reason: `{reason}`",
@@ -1157,7 +1157,7 @@ def _issue_sync_comment_body(*, doc: dict[str, Any]) -> str:
     feedback = [str(x).strip() for x in (execution.get("last_feedback") or []) if str(x).strip()]
     last_error = str(execution.get("last_error") or "").strip()
     lines = [
-        "Team OS is updating this team workflow issue.",
+        "OpenTeam is updating this team workflow issue.",
         "",
         f"Task: {task_id or '(unknown)'}",
         f"Reason: status={status or 'unknown'}; stage={stage or 'unknown'}",
@@ -2166,7 +2166,7 @@ def _release_task(*, task_doc: dict[str, Any], ledger_path: Path, worktree_root:
 
 
 def _register_delivery_agents(*, db: Any, task_doc: dict[str, Any]) -> dict[str, str]:
-    project_id = str(task_doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(task_doc.get("project_id") or "openteam").strip() or "openteam"
     workstream_id = str(task_doc.get("workstream_id") or "general").strip() or "general"
     task_id = str(task_doc.get("id") or "").strip()
     execution_policy = task_doc.get("execution_policy") or {}
@@ -2213,7 +2213,7 @@ def _emit_event(db: Any, *, event_type: str, actor: str, task_doc: dict[str, Any
         db.add_event(
             event_type=event_type,
             actor=actor,
-            project_id=str(task_doc.get("project_id") or "teamos"),
+            project_id=str(task_doc.get("project_id") or "openteam"),
             workstream_id=str(task_doc.get("workstream_id") or "general"),
             payload=payload,
         )
@@ -2331,7 +2331,7 @@ def execute_task_delivery(
     if status in ("blocked", "needs_clarification") and not force:
         return {"ok": True, "task_id": task_id, "skipped": True, "reason": "task_blocked"}
 
-    project_id = str(doc.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(doc.get("project_id") or "openteam").strip() or "openteam"
     workstream_id = str(doc.get("workstream_id") or "general").strip() or "general"
     owner_role = str(doc.get("owner_role") or (((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("owner_role") or planning.ROLE_CODING_AGENT)).strip() or planning.ROLE_CODING_AGENT
     review_role = str((((doc.get("execution_policy") or {}) if isinstance(doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
@@ -3129,7 +3129,7 @@ def list_delivery_tasks(*, team_id: str = "", project_id: str = "", target_id: s
     if pid:
         project_ids = [pid]
     else:
-        project_ids = ["teamos"] + [p for p in workspace_store.list_projects() if p != "teamos"]
+        project_ids = ["openteam"] + [p for p in workspace_store.list_projects() if p != "openteam"]
     status_filter = str(status or "").strip().lower()
     out: list[dict[str, Any]] = []
     seen_task_ids: set[str] = set()
@@ -3210,7 +3210,7 @@ def migrate_legacy_worktrees(*, project_id: str = "", task_id: str = "") -> dict
         if wanted_task_id and str(task.get("task_id") or "") != wanted_task_id:
             continue
         ledger_path = Path(
-            str(task.get("ledger_path") or _fallback_ledger_path(project_id=str(task.get("project_id") or "teamos"), task_id=str(task.get("task_id") or "")))
+            str(task.get("ledger_path") or _fallback_ledger_path(project_id=str(task.get("project_id") or "openteam"), task_id=str(task.get("task_id") or "")))
         ).expanduser().resolve()
         doc = _load_yaml(ledger_path)
         if not _is_team_workflow_task(doc, team_id=normalized_team_id):
@@ -3335,7 +3335,7 @@ def run_delivery_sweep(*, db: Any, actor: str, team_id: str = "", project_id: st
             if (not wanted_task_id) and str(task.get("status") or "") not in ("todo", "doing", "test", "release", "merge_conflict"):
                 continue
             scanned += 1
-            task_project_id = str(task.get("project_id") or project_id or "teamos").strip() or "teamos"
+            task_project_id = str(task.get("project_id") or project_id or "openteam").strip() or "openteam"
             task_target_id = str(task.get("target_id") or target_id or "").strip()
             workflow = crewai_workflow_registry.workflow_for_phase(
                 crewai_workflow_registry.PHASE_CODING,
@@ -3364,7 +3364,7 @@ def run_delivery_sweep(*, db: Any, actor: str, team_id: str = "", project_id: st
             lease = _claim_delivery_task_lease(db=db, actor=actor, task=task)
             if lease is None:
                 current = None
-                lease_key = _delivery_lease_key(project_id=str(task.get("project_id") or "teamos"), task_id=str(task.get("task_id") or ""))
+                lease_key = _delivery_lease_key(project_id=str(task.get("project_id") or "openteam"), task_id=str(task.get("task_id") or ""))
                 try:
                     current = db.get_task_lease(lease_key=lease_key)
                 except Exception:

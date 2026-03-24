@@ -3,7 +3,7 @@ role_id: "Data-Analyst"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "指标口径/埋点/日志字段定义"
   - "观测报告与验收信号落盘"
@@ -31,7 +31,7 @@ metrics_required:
   - "success_metrics_defined"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Data-Analyst/index.md"
+    - ".openteam/memory/roles/Data-Analyst/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -80,4 +80,4 @@ permissions:
 ## 记忆写入规则
 
 - 口径与报表模板写入：
-  - `.team-os/memory/roles/Data-Analyst/index.md`
+  - `.openteam/memory/roles/Data-Analyst/index.md`

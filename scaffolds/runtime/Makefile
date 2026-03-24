@@ -30,7 +30,7 @@ config:
 		-e 's/(POSTGRES_PWD:).*/\1 ***REDACTED***/' \
 		-e 's/(SQL_PASSWORD:).*/\1 ***REDACTED***/' \
 		-e 's/(DATABASE_URL:).*/\1 ***REDACTED***/' \
-		-e 's/(TEAMOS_LLM_API_KEY:).*/\1 ***REDACTED***/' \
+		-e 's/(OPENTEAM_LLM_API_KEY:).*/\1 ***REDACTED***/' \
 		-e 's/(GITHUB_TOKEN:).*/\1 ***REDACTED***/' \
 		-e 's/(OH_SECRET_KEY:).*/\1 ***REDACTED***/'
 

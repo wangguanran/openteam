@@ -3,7 +3,7 @@ role_id: "QA"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "测试范围/用例/回归策略定义"
   - "验收与可复现测试证据落盘"
@@ -30,7 +30,7 @@ metrics_required:
   - "failures_recorded"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/QA/index.md"
+    - ".openteam/memory/roles/QA/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -55,7 +55,7 @@ permissions:
 
 ## 输出
 
-- 测试记录：`.team-os/logs/tasks/<TASK_ID>/04_test.md`
+- 测试记录：`.openteam/logs/tasks/<TASK_ID>/04_test.md`
 - 风险与回归建议（写入 `04_test.md` 或 `07_retro.md`）
 
 ## 权限边界
@@ -80,4 +80,4 @@ permissions:
 ## 记忆写入规则
 
 - 将“可复用测试策略/回归清单”写入：
-  - `.team-os/memory/roles/QA/index.md`
+  - `.openteam/memory/roles/QA/index.md`

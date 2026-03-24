@@ -1,6 +1,6 @@
 # 认证与登录（OAuth 优先）
 
-本 Team OS 默认使用 **Codex CLI 的 ChatGPT OAuth 登录** 作为 LLM 后端的认证方式（不要求在仓库中保存任何密钥）。
+本 OpenTeam 默认使用 **Codex CLI 的 ChatGPT OAuth 登录** 作为 LLM 后端的认证方式（不要求在仓库中保存任何密钥）。
 
 ## 1) Codex CLI 登录
 
@@ -35,7 +35,7 @@ codex login status
 如果你明确允许使用 API Key（例如在无法使用 OAuth 的环境），只能通过环境变量提供：
 
 ```bash
-export TEAMOS_LLM_API_KEY="***"
+export OPENTEAM_LLM_API_KEY="***"
 ```
 
-禁止将 `TEAMOS_LLM_API_KEY` 写入 git 或任何仓库文件；仅允许本地 `.env`（不入库）。
+禁止将 `OPENTEAM_LLM_API_KEY` 写入 git 或任何仓库文件；仅允许本地 `.env`（不入库）。

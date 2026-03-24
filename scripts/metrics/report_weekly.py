@@ -20,9 +20,9 @@ def _md(title: str, body: str) -> str:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Generate a weekly evolution report from Team OS metrics/logs")
-    ap.add_argument("--out", default=str(_repo_root() / ".team-os" / "ledger" / "team_workflow" / f"weekly_{_utc_today()}.md"))
-    ap.add_argument("--tasks-dir", default=str(_repo_root() / ".team-os" / "logs" / "tasks"))
+    ap = argparse.ArgumentParser(description="Generate a weekly evolution report from OpenTeam metrics/logs")
+    ap.add_argument("--out", default=str(_repo_root() / ".openteam" / "ledger" / "team_workflow" / f"weekly_{_utc_today()}.md"))
+    ap.add_argument("--tasks-dir", default=str(_repo_root() / ".openteam" / "logs" / "tasks"))
     args = ap.parse_args(argv)
 
     from .collect_from_logs import collect  # type: ignore
@@ -48,7 +48,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(_md("Team OS Weekly Evolution Report", "\n".join(lines)), encoding="utf-8")
+    out_path.write_text(_md("OpenTeam Weekly Evolution Report", "\n".join(lines)), encoding="utf-8")
     print(str(out_path))
     return 0
 

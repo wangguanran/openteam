@@ -3,7 +3,7 @@ role_id: "PM-Intake"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "需求澄清、范围定义、验收标准（DoR/DoD）"
   - "风险分级（R0-R3）与闸门识别（需要用户批准的动作清单）"
@@ -15,12 +15,12 @@ capability_tags:
   - "approval_gates"
 inputs:
   - "用户的一句话需求"
-  - "现有 Team OS 角色与工作流定义"
+  - "现有 OpenTeam 角色与工作流定义"
 outputs:
-  - "任务台账（.team-os/ledger/tasks/<TASK_ID>.yaml）"
-  - "任务日志 00~02（.team-os/logs/tasks/<TASK_ID>/00~02_*.md）"
+  - "任务台账（.openteam/ledger/tasks/<TASK_ID>.yaml）"
+  - "任务日志 00~02（.openteam/logs/tasks/<TASK_ID>/00~02_*.md）"
 tools_allowed:
-  - "read/write: .team-os/ledger, .team-os/logs (append-only for evidence)"
+  - "read/write: .openteam/ledger, .openteam/logs (append-only for evidence)"
 quality_gates:
   - "禁止 secrets 入库（仅 .env.example）"
   - "明确标注 need_pm_decision / approvals_required"
@@ -32,7 +32,7 @@ metrics_required:
   - "risk_level_set"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/PM-Intake/index.md"
+    - ".openteam/memory/roles/PM-Intake/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -60,11 +60,11 @@ permissions:
 ## 输入
 
 - 用户/业务的一句话需求
-- 现有 Team OS 角色与工作流：`specs/roles/`、`specs/workflows/`
+- 现有 OpenTeam 角色与工作流：`specs/roles/`、`specs/workflows/`
 
 ## 输出
 
-- 任务台账：`.team-os/ledger/tasks/<TASK_ID>.yaml`
+- 任务台账：`.openteam/ledger/tasks/<TASK_ID>.yaml`
 - 任务日志：`00_intake.md`、`01_plan.md`、`02_todo.md`
 - 明确的“下一步执行清单”与“审批点清单”
 
@@ -96,4 +96,4 @@ permissions:
 ## 记忆写入规则
 
 - 抽象出可复用的 intake 问题清单、验收模板，写入：
-  - `.team-os/memory/roles/PM-Intake/index.md`
+  - `.openteam/memory/roles/PM-Intake/index.md`

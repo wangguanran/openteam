@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 import yaml
 
@@ -37,7 +37,7 @@ def _render_template(tpl: str, *, task_id: str, title: str, date: str) -> str:
 
 
 def _ensure_task_logs(repo: Path, *, task_id: str, title: str, date: str, full: bool, dry_run: bool) -> dict[str, Any]:
-    logs_dir = repo / ".team-os" / "logs" / "tasks" / task_id
+    logs_dir = repo / ".openteam" / "logs" / "tasks" / task_id
     logs_dir.mkdir(parents=True, exist_ok=True)
     tpls = repo / "templates" / "tasks"
     created: list[str] = []
@@ -92,10 +92,10 @@ def _ensure_ledger_fields(ledger: dict[str, Any]) -> bool:
         tid = str(ledger.get("id") or "")
         if tid.startswith("DEMO"):
             ledger["project_id"] = "DEMO" if tid.startswith("DEMO-") else "demo"
-        elif tid.startswith("TEAMOS"):
-            ledger["project_id"] = "teamos"
+        elif tid.startswith("OPENTEAM"):
+            ledger["project_id"] = "openteam"
         else:
-            ledger["project_id"] = "teamos"
+            ledger["project_id"] = "openteam"
         changed = True
     if "workstream_id" not in ledger:
         ledger["workstream_id"] = "general"
@@ -113,14 +113,14 @@ def _ensure_ledger_fields(ledger: dict[str, Any]) -> bool:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Bootstrap missing Team OS task artifacts (logs 00~07 + metrics + ledger fields)")
+    ap = argparse.ArgumentParser(description="Bootstrap missing OpenTeam task artifacts (logs 00~07 + metrics + ledger fields)")
     ap.add_argument("--full", action="store_true", help="also ensure 03~07 logs (recommended)")
     ap.add_argument("--dry-run", action="store_true", help="print planned actions only")
     ap.add_argument("--limit", type=int, default=0, help="limit number of tasks (0=all)")
     args = ap.parse_args(argv)
 
     repo = _repo_root()
-    tasks_dir = repo / ".team-os" / "ledger" / "tasks"
+    tasks_dir = repo / ".openteam" / "ledger" / "tasks"
     if not tasks_dir.exists():
         print("no_tasks_dir")
         return 0

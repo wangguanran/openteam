@@ -8,7 +8,7 @@ from _common import add_template_app_to_syspath, requirements_dir, parse_scope
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Ensure Baseline v1 exists (create-once; never overwrite)")
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     ap.add_argument("--seed-text", help="seed text (if omitted, read stdin)")
     ap.add_argument("--raw-input-ts", default="", help="optional raw input timestamp reference")
     ap.add_argument("--channel", default="cli")

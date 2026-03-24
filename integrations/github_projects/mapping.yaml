@@ -2,12 +2,12 @@ schema_version: 1
 
 # GitHub Projects v2 mapping (view layer only).
 # Truth source:
-# - scope=teamos: team-os repo (.team-os/ledger, docs/product/teamos/requirements)
+# - scope=openteam: openteam repo (.openteam/ledger, docs/product/openteam/requirements)
 # - scope=project:<id>: Workspace (<WORKSPACE>/projects/<id>/state/{ledger,logs,requirements,plan,prompts})
 # - control-plane runtime state DB (sqlite/postgres)
 #
 # This file can be used to:
-# - bind TeamOS project_id -> GitHub ProjectV2
+# - bind OpenTeam project_id -> GitHub ProjectV2
 # - map required custom fields -> field_id/option_id
 # - define status/risk normalization rules
 #
@@ -36,8 +36,8 @@ projects:
     # --- Field mapping ---
     # Fill these once you have a real project. For many users, `mode=full` sync can discover fields by name.
     fields:
-      teamos_status:
-        name: "TeamOS Status"
+      openteam_status:
+        name: "OpenTeam Status"
         type: "SINGLE_SELECT"
         field_id: ""
         options:
@@ -116,7 +116,7 @@ projects:
 
     # --- Normalization rules ---
     status_mapping:
-      # ledger_state -> TeamOS Status option key
+      # ledger_state -> OpenTeam Status option key
       intake: "TODO"
       plan: "TODO"
       todo: "TODO"
@@ -159,20 +159,20 @@ projects:
         mode: "draft_issue"
         key_prefix: "MILESTONE:"
 
-  teamos:
-    project_id: "teamos"
+  openteam:
+    project_id: "openteam"
 
-    # Bind to the same Project v2 as the main Team OS dev panel (view-layer).
+    # Bind to the same Project v2 as the main OpenTeam dev panel (view-layer).
     owner_type: "USER"
-    owner: "wangguanran"
+    owner: "openteam-dev"
     repo: ""
     project_number: 3
     project_node_id: ""
-    project_url: "https://github.com/users/wangguanran/projects/3"
+    project_url: "https://github.com/users/openteam-dev/projects/3"
 
     fields:
-      teamos_status:
-        name: "TeamOS Status"
+      openteam_status:
+        name: "OpenTeam Status"
         type: "SINGLE_SELECT"
         field_id: ""
         options:

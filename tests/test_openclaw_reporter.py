@@ -33,7 +33,7 @@ class OpenClawReporterTests(unittest.TestCase):
     def test_save_and_load_config_roundtrip(self):
         with tempfile.TemporaryDirectory() as td:
             env = {
-                "TEAMOS_RUNTIME_ROOT": td,
+                "OPENTEAM_RUNTIME_ROOT": td,
                 "HOME": td,
             }
             with mock.patch.dict(os.environ, env, clear=False):
@@ -41,14 +41,14 @@ class OpenClawReporterTests(unittest.TestCase):
                     {
                         "enabled": True,
                         "channel": "telegram",
-                        "target": "@team_os",
+                        "target": "@openteam",
                         "path_patterns": ["scaffolds/runtime/orchestrator/app/**"],
                         "event_types": ["SELF_UPGRADE_*"],
                     }
                 )
                 loaded = openclaw_reporter.load_config()
         self.assertTrue(cfg["enabled"])
-        self.assertEqual(loaded["target"], "@team_os")
+        self.assertEqual(loaded["target"], "@openteam")
         self.assertEqual(loaded["path_patterns"], ["scaffolds/runtime/orchestrator/app/**"])
 
     def test_detect_openclaw_infers_remote_gateway_in_container(self):
@@ -68,7 +68,7 @@ class OpenClawReporterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             env = {
-                "TEAMOS_RUNTIME_ROOT": td,
+                "OPENTEAM_RUNTIME_ROOT": td,
                 "HOME": td,
             }
         with mock.patch.dict(os.environ, env, clear=False), mock.patch(
@@ -94,11 +94,11 @@ class OpenClawReporterTests(unittest.TestCase):
     def test_health_uses_remote_temp_config_when_gateway_url_present(self):
         with tempfile.TemporaryDirectory() as td:
             env = {
-                "TEAMOS_RUNTIME_ROOT": td,
+                "OPENTEAM_RUNTIME_ROOT": td,
                 "HOME": td,
-                "TEAMOS_OPENCLAW_GATEWAY_URL": "ws://host.docker.internal:18789",
-                "TEAMOS_OPENCLAW_GATEWAY_TOKEN": "abc123",
-                "TEAMOS_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS": "1",
+                "OPENTEAM_OPENCLAW_GATEWAY_URL": "ws://host.docker.internal:18789",
+                "OPENTEAM_OPENCLAW_GATEWAY_TOKEN": "abc123",
+                "OPENTEAM_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS": "1",
             }
             captured: dict[str, str] = {}
 
@@ -136,7 +136,7 @@ class OpenClawReporterTests(unittest.TestCase):
             (Path(td) / ".openclaw").mkdir(parents=True, exist_ok=True)
             ((Path(td) / ".openclaw") / "openclaw.json").write_text("{}\n", encoding="utf-8")
             env = {
-                "TEAMOS_RUNTIME_ROOT": td,
+                "OPENTEAM_RUNTIME_ROOT": td,
                 "HOME": td,
             }
             with mock.patch.dict(os.environ, env, clear=False), mock.patch(
@@ -153,7 +153,7 @@ class OpenClawReporterTests(unittest.TestCase):
                     {
                         "enabled": True,
                         "channel": "telegram",
-                        "target": "@team_os",
+                        "target": "@openteam",
                         "path_patterns": ["scaffolds/runtime/orchestrator/app/**"],
                         "event_types": ["SELF_UPGRADE_*"],
                     }
@@ -163,7 +163,7 @@ class OpenClawReporterTests(unittest.TestCase):
                         "id": 1,
                         "ts": "2026-03-07T00:00:00Z",
                         "event_type": "SELF_UPGRADE_TASK_DELIVERY_FINISHED",
-                        "project_id": "teamos",
+                        "project_id": "openteam",
                         "workstream_id": "general",
                         "payload": {"changed_files": ["docs/README.md"]},
                     }
@@ -173,7 +173,7 @@ class OpenClawReporterTests(unittest.TestCase):
                         "id": 2,
                         "ts": "2026-03-07T00:00:01Z",
                         "event_type": "SELF_UPGRADE_TASK_DELIVERY_FINISHED",
-                        "project_id": "teamos",
+                        "project_id": "openteam",
                         "workstream_id": "general",
                         "payload": {"changed_files": ["scaffolds/runtime/orchestrator/app/main.py"]},
                     }
@@ -188,12 +188,12 @@ class OpenClawReporterTests(unittest.TestCase):
             (Path(td) / ".openclaw").mkdir(parents=True, exist_ok=True)
             ((Path(td) / ".openclaw") / "openclaw.json").write_text("{}\n", encoding="utf-8")
             env = {
-                "TEAMOS_RUNTIME_ROOT": td,
+                "OPENTEAM_RUNTIME_ROOT": td,
                 "HOME": td,
             }
             rows = [
-                EventRow(id=1, ts="2026-03-07T00:00:00Z", event_type="OPENCLAW_CONFIG_UPDATED", actor="api", project_id="teamos", workstream_id="general", payload={}),
-                EventRow(id=2, ts="2026-03-07T00:00:01Z", event_type="SELF_UPGRADE_TASK_DELIVERY_BLOCKED", actor="api", project_id="teamos", workstream_id="general", payload={"changed_files": ["scaffolds/runtime/orchestrator/app/main.py"]}),
+                EventRow(id=1, ts="2026-03-07T00:00:00Z", event_type="OPENCLAW_CONFIG_UPDATED", actor="api", project_id="openteam", workstream_id="general", payload={}),
+                EventRow(id=2, ts="2026-03-07T00:00:01Z", event_type="SELF_UPGRADE_TASK_DELIVERY_BLOCKED", actor="api", project_id="openteam", workstream_id="general", payload={"changed_files": ["scaffolds/runtime/orchestrator/app/main.py"]}),
             ]
             with mock.patch.dict(os.environ, env, clear=False), mock.patch(
                 "app.openclaw_reporter._which_openclaw",
@@ -209,7 +209,7 @@ class OpenClawReporterTests(unittest.TestCase):
                     {
                         "enabled": True,
                         "channel": "telegram",
-                        "target": "@team_os",
+                        "target": "@openteam",
                         "path_patterns": ["*"],
                         "event_types": ["SELF_UPGRADE_*"],
                     }
@@ -224,7 +224,7 @@ class OpenClawReporterTests(unittest.TestCase):
     def test_report_manual_requires_target(self):
         with tempfile.TemporaryDirectory() as td:
             env = {
-                "TEAMOS_RUNTIME_ROOT": td,
+                "OPENTEAM_RUNTIME_ROOT": td,
                 "HOME": td,
             }
             with mock.patch.dict(os.environ, env, clear=False):

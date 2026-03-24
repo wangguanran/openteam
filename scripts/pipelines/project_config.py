@@ -24,7 +24,7 @@ from _common import (
 
 
 def _project_config_path(*, repo_root: Path, workspace_root: Path, project_id: str) -> Path:
-    # Governance: workspace must be outside the team-os repo.
+    # Governance: workspace must be outside the openteam repo.
     if is_within(workspace_root, repo_root):
         raise PipelineError(f"invalid workspace_root={workspace_root} (must be outside repo_root={repo_root})")
     return workspace_root / "projects" / project_id / "state" / "config" / "project.yaml"
@@ -98,7 +98,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     pid = safe_project_id(str(args.project_id or ""))
     path = _project_config_path(repo_root=repo, workspace_root=ws, project_id=pid)
     if not path.exists():
-        raise PipelineError(f"missing project config: {path} (run: teamos project config init --project {pid})")
+        raise PipelineError(f"missing project config: {path} (run: openteam project config init --project {pid})")
     print(read_text(path).rstrip() + "\n")
     return 0
 
@@ -109,7 +109,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     pid = safe_project_id(str(args.project_id or ""))
     path = _project_config_path(repo_root=repo, workspace_root=ws, project_id=pid)
     if not path.exists():
-        raise PipelineError(f"missing project config: {path} (run: teamos project config init --project {pid})")
+        raise PipelineError(f"missing project config: {path} (run: openteam project config init --project {pid})")
 
     doc = _load_yaml_obj(path)
     validate_or_die(doc, repo / "specs" / "schemas" / "project_config.schema.json", label="project_config")
@@ -127,7 +127,7 @@ def cmd_set(args: argparse.Namespace) -> int:
     pid = safe_project_id(str(args.project_id or ""))
     path = _project_config_path(repo_root=repo, workspace_root=ws, project_id=pid)
     if not path.exists():
-        raise PipelineError(f"missing project config: {path} (run: teamos project config init --project {pid})")
+        raise PipelineError(f"missing project config: {path} (run: openteam project config init --project {pid})")
 
     doc = _load_yaml_obj(path)
     # Parse value using YAML scalar/object parsing for deterministic typing.

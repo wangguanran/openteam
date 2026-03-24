@@ -60,16 +60,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--user", required=True)
     ap.add_argument("--ssh-key", default="")
     ap.add_argument("--password-stdin", action="store_true")
-    ap.add_argument("--remote-env-path", default="~/.teamos/node.env")
+    ap.add_argument("--remote-env-path", default="~/.openteam/node.env")
     ap.add_argument("--hub-host", default="", help="override advertised hub host/ip")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
     password = ""
     if bool(args.password_stdin):
-        password = (os.getenv("TEAMOS_SSH_PASSWORD") or "").strip()
+        password = (os.getenv("OPENTEAM_SSH_PASSWORD") or "").strip()
         if not password:
-            return _stage_fail(stage="prepare", stderr="missing TEAMOS_SSH_PASSWORD env for --password-stdin mode")
+            return _stage_fail(stage="prepare", stderr="missing OPENTEAM_SSH_PASSWORD env for --password-stdin mode")
 
     repo = resolve_repo_root(args)
     hub = hub_root()
@@ -89,27 +89,27 @@ def main(argv: list[str] | None = None) -> int:
 
     hub_host = str(args.hub_host or "").strip() or str(env_local.get("PG_BIND_IP") or "127.0.0.1")
     pg_port = str(env_local.get("PG_PORT") or "5432")
-    pg_user = str(env_local.get("POSTGRES_USER") or "teamos")
+    pg_user = str(env_local.get("POSTGRES_USER") or "openteam")
     pg_pwd = str(env_local.get("POSTGRES_PASSWORD") or "")
-    pg_db = str(env_local.get("POSTGRES_DB") or "teamos")
+    pg_db = str(env_local.get("POSTGRES_DB") or "openteam")
 
     redis_port = str(env_local.get("REDIS_PORT") or "6379")
     redis_pwd = str(env_local.get("REDIS_PASSWORD") or "")
 
     db_url = f"postgresql://{pg_user}:{pg_pwd}@{hub_host}:{pg_port}/{pg_db}"
     redis_url = f"redis://:{redis_pwd}@{hub_host}:{redis_port}/0"
-    remote_env_path = str(args.remote_env_path or "~/.teamos/node.env")
-    remote_policy_dir = "~/.teamos/policies"
+    remote_env_path = str(args.remote_env_path or "~/.openteam/node.env")
+    remote_policy_dir = "~/.openteam/policies"
     remote_allowlist_path = f"{remote_policy_dir}/central_model_allowlist.yaml"
     remote_approvals_path = f"{remote_policy_dir}/approvals.yaml"
 
     remote_text_lines = [
-        f"TEAMOS_DB_URL={db_url}",
-        f"TEAMOS_REDIS_URL={redis_url}",
-        f"TEAMOS_HUB_HOST={hub_host}",
-        "TEAMOS_HUB_REDIS_ENABLED=1",
-        f"TEAMOS_CENTRAL_MODEL_ALLOWLIST_PATH={remote_allowlist_path}",
-        f"TEAMOS_APPROVALS_POLICY_PATH={remote_approvals_path}",
+        f"OPENTEAM_DB_URL={db_url}",
+        f"OPENTEAM_REDIS_URL={redis_url}",
+        f"OPENTEAM_HUB_HOST={hub_host}",
+        "OPENTEAM_HUB_REDIS_ENABLED=1",
+        f"OPENTEAM_CENTRAL_MODEL_ALLOWLIST_PATH={remote_allowlist_path}",
+        f"OPENTEAM_APPROVALS_POLICY_PATH={remote_approvals_path}",
     ]
     remote_text = "\n".join(remote_text_lines).rstrip() + "\n"
 
@@ -125,8 +125,8 @@ def main(argv: list[str] | None = None) -> int:
                 "remote_allowlist_path": remote_allowlist_path,
                 "remote_approvals_path": remote_approvals_path,
                 "remote_env_vars": {
-                    "TEAMOS_CENTRAL_MODEL_ALLOWLIST_PATH": remote_allowlist_path,
-                    "TEAMOS_APPROVALS_POLICY_PATH": remote_approvals_path,
+                    "OPENTEAM_CENTRAL_MODEL_ALLOWLIST_PATH": remote_allowlist_path,
+                    "OPENTEAM_APPROVALS_POLICY_PATH": remote_approvals_path,
                 },
                 "policy_sources": {
                     "central_model_allowlist": str(central_allowlist_src),
@@ -166,9 +166,9 @@ def main(argv: list[str] | None = None) -> int:
             ssh_cmd += ["-i", ssh_key]
 
         target = f"{args.user}@{args.host}"
-        remote_tmp_env = "/tmp/teamos_node_env"
-        remote_tmp_allow = "/tmp/teamos_central_model_allowlist.yaml"
-        remote_tmp_appr = "/tmp/teamos_approvals.yaml"
+        remote_tmp_env = "/tmp/openteam_node_env"
+        remote_tmp_allow = "/tmp/openteam_central_model_allowlist.yaml"
+        remote_tmp_appr = "/tmp/openteam_approvals.yaml"
 
         p1 = subprocess.run(
             scp_cmd + [str(temp_env_path), f"{target}:{remote_tmp_env}"],

@@ -17,7 +17,7 @@ def _add_template_app_to_syspath():
 _add_template_app_to_syspath()
 
 # Unit tests must be offline/fast: disable Codex semantic check (LLM).
-os.environ["TEAMOS_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
+os.environ["OPENTEAM_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
 
 from app.requirements_store import add_requirement_system_update  # noqa: E402
 

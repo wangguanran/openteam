@@ -4,7 +4,7 @@
 
 ## 场景 1：未指定 repo（自动创建新仓库）
 
-目标：允许你只给出任务标题与基本参数，系统自动创建一个新的 GitHub 仓库并 bootstrap Team OS 结构。
+目标：允许你只给出任务标题与基本参数，系统自动创建一个新的 GitHub 仓库并 bootstrap OpenTeam 结构。
 
 规则：
 
@@ -22,7 +22,7 @@
 预期命令（待实现）：
 
 ```bash
-teamos task new --title "..." --create-repo --org <org?> --private --workstreams "backend,ai,web"
+openteam task new --title "..." --create-repo --org <org?> --private --workstreams "backend,ai,web"
 ```
 
 ## 场景 2：指定 repo 且非空（Upgrade 模式）
@@ -33,7 +33,7 @@ teamos task new --title "..." --create-repo --org <org?> --private --workstreams
 
 在任何代码变更前，必须生成架构理解文档（落盘到目标项目仓库）：
 
-- 推荐路径：`docs/product/teamos/REPO_UNDERSTANDING.md`
+- 推荐路径：`docs/product/openteam/REPO_UNDERSTANDING.md`
 
 内容必须包含：
 

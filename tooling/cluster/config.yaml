@@ -1,6 +1,6 @@
 schema_version: 1
 
-# Team OS Cluster configuration (GitHub-first bus).
+# OpenTeam Cluster configuration (GitHub-first bus).
 # Secrets must NOT be stored here. Tokens/passwords must come from env/stdin.
 #
 # Design principles:
@@ -15,8 +15,8 @@ cluster:
   bus: "github_issues"     # github_issues | (future) postgres | (future) redis
 
   # The repo used to host cluster control issues (CLUSTER-LEADER / CLUSTER-NODES).
-  # Convention: use the Team OS repo (this repo) unless you want a dedicated "cluster-bus" repo.
-  cluster_repo: "wangguanran/team-os"
+  # Convention: use the OpenTeam repo (this repo) unless you want a dedicated "cluster-bus" repo.
+  cluster_repo: "openteam-dev/openteam"
 
   leader_lease:
     issue_title: "CLUSTER-LEADER"
@@ -24,18 +24,18 @@ cluster:
     renew_interval_sec: 30
     grace_sec: 30
     # Leader writes enabled gate (remote write).
-    write_enable_env: "TEAMOS_GH_CLUSTER_WRITE_ENABLED"   # set to "1" to allow lease writes
+    write_enable_env: "OPENTEAM_GH_CLUSTER_WRITE_ENABLED"   # set to "1" to allow lease writes
 
   nodes_registry:
     issue_title: "CLUSTER-NODES"
     heartbeat_interval_sec: 60
     # Nodes registry updates are remote writes.
-    write_enable_env: "TEAMOS_GH_CLUSTER_WRITE_ENABLED"
+    write_enable_env: "OPENTEAM_GH_CLUSTER_WRITE_ENABLED"
 
   task_lease:
     lease_ttl_sec: 600          # 10 minutes
     renew_interval_sec: 300     # 5 minutes
-    write_enable_env: "TEAMOS_GH_CLUSTER_WRITE_ENABLED"
+    write_enable_env: "OPENTEAM_GH_CLUSTER_WRITE_ENABLED"
 
   recovery:
     scan_interval_sec: 60

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "TeamOS Requirement Raw Input (v3 Raw-First, user-only)",
+  "title": "OpenTeam Requirement Raw Input (v3 Raw-First, user-only)",
   "type": "object",
   "additionalProperties": false,
   "required": ["raw_id", "timestamp", "scope", "user", "channel", "text", "text_sha256"],
@@ -16,7 +16,7 @@
     },
     "scope": {
       "type": "string",
-      "description": "teamos | project:<project_id>"
+      "description": "openteam | project:<project_id>"
     },
     "user": {
       "type": "string",

@@ -1,25 +1,25 @@
 # 集群运行与接管手册（GitHub-First）
 
-本手册定义 Team OS 多机协作的最小闭环：Brain/Assistant、选主、节点注册、任务 lease、故障接管与恢复。  
+本手册定义 OpenTeam 多机协作的最小闭环：Brain/Assistant、选主、节点注册、任务 lease、故障接管与恢复。  
 强调：GitHub Projects 只是面板（视图层）。真相源分层如下：
 
-- scope=`teamos`（Team OS 自身）：`team-os/` git 仓库内（例如 `.team-os/ledger`、`docs/product/teamos/requirements/**`）
-- scope=`project:<id>`（项目）：每台机器本地 **Workspace**（默认 `~/.teamos/workspace`），例如 `<WORKSPACE>/projects/<id>/state/**`
+- scope=`openteam`（OpenTeam 自身）：`openteam/` git 仓库内（例如 `.openteam/ledger`、`docs/product/openteam/requirements/**`）
+- scope=`project:<id>`（项目）：每台机器本地 **Workspace**（默认 `~/.openteam/workspace`），例如 `<WORKSPACE>/projects/<id>/state/**`
 - 运行态 DB：Control Plane 的状态库（SQLite/Postgres），不作为面板编辑事实来源
 
 重要约束（多节点）：
 
 - 每台机器各自有本地 Workspace；**Workspace 不是共享文件系统**。
-- 需要跨节点共享的事实，应通过 GitHub（issue/PR/comments/labels/Projects）或共享中枢（Postgres/Redis）同步；不要把项目真相源复制进 `team-os/` 仓库目录树。
+- 需要跨节点共享的事实，应通过 GitHub（issue/PR/comments/labels/Projects）或共享中枢（Postgres/Redis）同步；不要把项目真相源复制进 `openteam/` 仓库目录树。
 
 ## 核心概念
 
 - Brain（Leader）
   - 通过 GitHub Issue Lease 选主获得租约
   - 只有 Brain 可以执行“全局写操作”
-    - 写 Team OS 自身需求主文档（`docs/product/teamos/requirements/**`）
+    - 写 OpenTeam 自身需求主文档（`docs/product/openteam/requirements/**`）
     - 写项目需求主文档（`<WORKSPACE>/projects/<id>/state/requirements/**`）
-    - 写 focus（`.team-os/state/focus.yaml`）
+    - 写 focus（`.openteam/state/focus.yaml`）
     - 同步 GitHub Projects 面板（Projects v2）
     - 创建新任务/新仓库（`gh repo create`，需审批）
 - Assistant（Follower）
@@ -56,7 +56,7 @@ last_updated_at: "2026-02-15T12:34:10Z"
 
 - 任何写入该 issue（选主/续租/接管）属于 GitHub 远程写操作
 - 默认必须显式启用环境变量（见 `tooling/cluster/config.yaml`）：
-  - `TEAMOS_GH_CLUSTER_WRITE_ENABLED=1`
+  - `OPENTEAM_GH_CLUSTER_WRITE_ENABLED=1`
 
 ### 2) CLUSTER-NODES（节点注册与心跳）
 
@@ -88,8 +88,8 @@ tags: ["site:bj", "device:yes"]
 每个 Task 必须有对应的 GitHub issue（或 draft issue），并在 issue body 顶部包含 machine-readable frontmatter：
 
 ```yaml
-task_id: "TEAMOS-CLUSTER-0004"
-project_id: "teamos"
+task_id: "OPENTEAM-CLUSTER-0004"
+project_id: "openteam"
 workstreams: ["devops"]
 required_capabilities: ["repo_rw", "docker"]
 risk_level: "R2"
@@ -115,15 +115,15 @@ Assistant 成功接管后，必须执行恢复序列，并落盘到：
 恢复序列（最小要求）：
 
 1. 扫描未完成任务：`RUNNING/BLOCKED/WAITING_PM/NEED_PM_DECISION`
-2. 恢复 focus：从 `.team-os/state/focus.yaml` + 需求变更日志/冲突报告
+2. 恢复 focus：从 `.openteam/state/focus.yaml` + 需求变更日志/冲突报告
 3. 恢复 Projects 同步：继续刷新面板（限频）
 4. 恢复执行队列：继续分配/续租任务 lease
 5. 在 `CLUSTER-LEADER` issue 追加一条 comment 记录接管（时间/原因/版本）
 
 ## 运维检查清单（最小）
 
-- `teamos cluster status`（待实现）
-- `teamos status --project teamos`
+- `openteam cluster status`（待实现）
+- `openteam status --project openteam`
 - GitHub Projects 面板确认：
   - Current Focus 是否更新
   - NEED_PM_DECISION 是否可见

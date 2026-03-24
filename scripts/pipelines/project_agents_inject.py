@@ -4,8 +4,8 @@ Idempotently inject/update a Team-OS manual block into a project repo's AGENTS.m
 
 Governance:
 - Uses fixed markers for replacement:
-  - <!-- TEAMOS_MANUAL_START -->
-  - <!-- TEAMOS_MANUAL_END -->
+  - <!-- OPENTEAM_MANUAL_START -->
+  - <!-- OPENTEAM_MANUAL_END -->
 - Preserves all project content outside the marked block.
 - Leader-only writes by default (non-leader runs are plan-only).
 """
@@ -33,8 +33,8 @@ from _common import (
 )
 
 
-START = "<!-- TEAMOS_MANUAL_START -->"
-END = "<!-- TEAMOS_MANUAL_END -->"
+START = "<!-- OPENTEAM_MANUAL_START -->"
+END = "<!-- OPENTEAM_MANUAL_END -->"
 
 
 def _http_json(url: str, *, timeout_sec: int = 5) -> dict[str, Any]:
@@ -52,7 +52,7 @@ def _http_json(url: str, *, timeout_sec: int = 5) -> dict[str, Any]:
 
 
 def _load_base_url(*, profile: str = "") -> str:
-    cfg = Path.home() / ".teamos" / "config.toml"
+    cfg = Path.home() / ".openteam" / "config.toml"
     if not cfg.exists():
         return "http://127.0.0.1:8787"
     try:
@@ -106,7 +106,7 @@ def _render_block(repo: Path, *, project_id: str, manual_version: str) -> str:
     )
     # Ensure markers exist in the rendered block.
     if START not in md or END not in md:
-        raise PipelineError("template must include TEAMOS_MANUAL_START/END markers")
+        raise PipelineError("template must include OPENTEAM_MANUAL_START/END markers")
     return md.rstrip() + "\n"
 
 
@@ -128,7 +128,7 @@ def _compute_new_text(*, old: str, block: str) -> tuple[str, str]:
             new_text = pat.sub(block.strip("\n"), old_norm, count=1)
             new_text = new_text.rstrip() + "\n"
             return ("replace", new_text)
-        raise PipelineError("invalid AGENTS.md markers: must contain both TEAMOS_MANUAL_START and TEAMOS_MANUAL_END")
+        raise PipelineError("invalid AGENTS.md markers: must contain both OPENTEAM_MANUAL_START and OPENTEAM_MANUAL_END")
 
     # Append at end.
     sep = "" if old_norm.endswith("\n") else "\n"
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--project-id", "--project", dest="project_id", required=True)
     ap.add_argument("--project-repo-path", "--repo-path", dest="project_repo_path", default="", help="default: <workspace>/projects/<id>/repo")
     ap.add_argument("--manual-version", default="v1")
-    ap.add_argument("--profile", default="", help="teamos profile name (for leader check)")
+    ap.add_argument("--profile", default="", help="openteam profile name (for leader check)")
     ap.add_argument("--base-url", default="", help="override control plane base url (for leader check)")
     ap.add_argument("--no-leader-only", action="store_false", dest="leader_only", help="allow writes even if not leader (not recommended)")
     ap.add_argument("--leader-only", action="store_true", default=True, help="leader-only writes (default)")
@@ -156,9 +156,9 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_path = Path(str(args.project_repo_path or "").strip()).expanduser().resolve() if str(args.project_repo_path or "").strip() else (ws / "projects" / pid / "repo")
 
-    # Governance: do not let project repos live inside the team-os git repo.
+    # Governance: do not let project repos live inside the openteam git repo.
     if is_within(repo_path, repo):
-        raise PipelineError(f"project_repo_path is inside team-os repo (refusing): {repo_path}")
+        raise PipelineError(f"project_repo_path is inside openteam repo (refusing): {repo_path}")
     # Strong preference: project repos live in workspace.
     if not is_within(repo_path, ws):
         raise PipelineError(f"project_repo_path must be within workspace_root (refusing): repo={repo_path} workspace={ws}")

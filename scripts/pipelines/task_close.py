@@ -45,15 +45,15 @@ def _locate_task(repo: Path, ws_root: Path, *, scope: str, task_id: str) -> tupl
     if scope:
         scope = str(scope).strip()
 
-    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
+    runtime_override = "" if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
     state_root = runtime_state_root(override=runtime_override)
 
-    # 1) explicit teamos
-    if scope in ("", "teamos"):
+    # 1) explicit openteam
+    if scope in ("", "openteam"):
         led = _find_task_in_dir(state_root / "ledger" / "tasks", task_id)
         if led:
             logs = state_root / "logs" / "tasks" / task_id
-            return ("teamos", "teamos", led, logs)
+            return ("openteam", "openteam", led, logs)
 
     # 2) explicit project:<id>
     if scope.startswith("project:"):
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Close a task (validate DoD + mark ledger closed)")
     add_default_args(ap)
     ap.add_argument("task_id")
-    ap.add_argument("--scope", default="", help="optional: teamos | project:<id> (auto-detect if omitted)")
+    ap.add_argument("--scope", default="", help="optional: openteam | project:<id> (auto-detect if omitted)")
     ap.add_argument("--skip-tests", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="validate only; do not write ledger/metrics")
     args = ap.parse_args(argv)
@@ -138,11 +138,11 @@ def main(argv: list[str] | None = None) -> int:
 
     scope, pid, ledger_path, logs_dir = _locate_task(repo, ws_root, scope=str(args.scope or ""), task_id=str(args.task_id))
 
-    # Concurrency: repo lock (teamos only) + scope lock.
+    # Concurrency: repo lock (openteam only) + scope lock.
     repo_lock = None
     scope_lock = None
     if not args.dry_run:
-        if scope == "teamos":
+        if scope == "openteam":
             repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(args.task_id))
         scope_lock = locks.acquire_scope_lock(scope, repo_root=repo, workspace_root=ws_root, req_dir=None, task_id=str(args.task_id))
 
@@ -208,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
 
     purity_ok = True
     purity_violations: list[dict[str, Any]] = []
-    if scope == "teamos":
+    if scope == "openteam":
         try:
             sys.path.insert(0, str(repo / "scripts" / "governance"))
             import check_repo_purity  # type: ignore

@@ -13,7 +13,7 @@
 - 主题：
 - 角色：
 - 预期产物：
-  - 来源摘要：`.team-os/kb/sources/...`
-  - Skill Card：`.team-os/kb/...`
-  - 记忆索引：`.team-os/memory/roles/...`
+  - 来源摘要：`.openteam/kb/sources/...`
+  - Skill Card：`.openteam/kb/...`
+  - 记忆索引：`.openteam/memory/roles/...`
 

@@ -70,8 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     cluster_lock = None
     try:
         if not args.dry_run:
-            hub_lock = locks.acquire_hub_lock(task_id=str(env.get("TEAMOS_TASK_ID") or ""))
-            cluster_lock = locks.acquire_cluster_lock(repo_root=repo, task_id=str(env.get("TEAMOS_TASK_ID") or ""))
+            hub_lock = locks.acquire_hub_lock(task_id=str(env.get("OPENTEAM_TASK_ID") or ""))
+            cluster_lock = locks.acquire_cluster_lock(repo_root=repo, task_id=str(env.get("OPENTEAM_TASK_ID") or ""))
 
             env["PG_BIND_IP"] = bind_ip if bool(args.open_postgres) else "127.0.0.1"
             env["REDIS_BIND_IP"] = bind_ip if bool(args.open_redis) else "127.0.0.1"

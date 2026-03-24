@@ -196,7 +196,7 @@ def load_hub_env_required(hub: Path) -> dict[str, str]:
     env_path = hub_env_path(hub)
     env = parse_env_file(env_path)
     if not env:
-        raise PipelineError(f"missing hub env: {env_path} (run: teamos hub init)")
+        raise PipelineError(f"missing hub env: {env_path} (run: openteam hub init)")
     validate_hub_postgres_required(env, env_path=env_path)
     validate_hub_redis_required(env, env_path=env_path)
     return env
@@ -205,7 +205,7 @@ def load_hub_env_required(hub: Path) -> dict[str, str]:
 def validate_hub_compose_required(hub: Path) -> None:
     compose = hub_compose_path(hub)
     if not compose.exists():
-        raise PipelineError(f"missing compose file: {compose} (run: teamos hub init)")
+        raise PipelineError(f"missing compose file: {compose} (run: openteam hub init)")
     text = read_text(compose)
     missing_services: list[str] = []
     if not re.search(r"(?m)^  postgres:\s*$", text):
@@ -223,17 +223,17 @@ def validate_hub_runtime_path(path: Path, *, hub: Path, label: str) -> None:
 
 
 def local_db_dsn(env: dict[str, str]) -> str:
-    user = str(env.get("POSTGRES_USER") or "teamos")
+    user = str(env.get("POSTGRES_USER") or "openteam")
     pwd = str(env.get("POSTGRES_PASSWORD") or "")
-    db = str(env.get("POSTGRES_DB") or "teamos")
+    db = str(env.get("POSTGRES_DB") or "openteam")
     bind_ip = str(env.get("PG_BIND_IP") or "127.0.0.1")
     port = int(str(env.get("PG_PORT") or "5432"))
     return f"postgresql://{user}:{pwd}@{bind_ip}:{port}/{db}"
 
 
 def connection_info_md(env: dict[str, str]) -> str:
-    pg_user = str(env.get("POSTGRES_USER") or "teamos")
-    pg_db = str(env.get("POSTGRES_DB") or "teamos")
+    pg_user = str(env.get("POSTGRES_USER") or "openteam")
+    pg_db = str(env.get("POSTGRES_DB") or "openteam")
     pg_host = str(env.get("PG_BIND_IP") or "127.0.0.1")
     pg_port = str(env.get("PG_PORT") or "5432")
     redis_host = str(env.get("REDIS_BIND_IP") or "127.0.0.1")

@@ -27,7 +27,7 @@ def _render_master_prompt(*, repo: Path, ws: Path, scope: str, project_id: str) 
     tpl_sha = sha256_file(tpl_path)
     build_id = sha256_text("\n".join([baseline_sha, req_sha, tpl_sha]))
 
-    manifest_ref = "prompt_manifest.json" if scope != "teamos" else "specs/prompts/teamos/prompt_manifest.json"
+    manifest_ref = "prompt_manifest.json" if scope != "openteam" else "specs/prompts/openteam/prompt_manifest.json"
 
     body = (
         render_template(
@@ -51,7 +51,7 @@ def _render_master_prompt(*, repo: Path, ws: Path, scope: str, project_id: str) 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Show unified diff for MASTER_PROMPT.md vs deterministic build output")
     add_default_args(ap)
-    ap.add_argument("--scope", required=True, help="teamos | project:<id>")
+    ap.add_argument("--scope", required=True, help="openteam | project:<id>")
     args = ap.parse_args(argv)
 
     repo = resolve_repo_root(args)

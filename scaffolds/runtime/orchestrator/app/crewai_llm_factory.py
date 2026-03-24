@@ -44,9 +44,9 @@ def build_crewai_llm(*, workflow: Any | None = None):
     crewai_runtime.require_crewai_importable(refresh=True)
     from crewai.llm import LLM
 
-    model = str(os.getenv("TEAMOS_LLM_MODEL") or "openai/gpt-5.4").strip()
-    base_url = str(os.getenv("TEAMOS_LLM_BASE_URL") or "").strip()
-    api_key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
+    model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
+    base_url = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
+    api_key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
     if workflow is not None:
         override_base_url = str(getattr(workflow, "llm_url", "") or "").strip()
         override_api_key = str(getattr(workflow, "llm_api_key", "") or "").strip()
@@ -54,7 +54,7 @@ def build_crewai_llm(*, workflow: Any | None = None):
             base_url = override_base_url
         if override_api_key:
             api_key = override_api_key
-    auth_mode = str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower()
+    auth_mode = str(os.getenv("OPENTEAM_CREWAI_AUTH_MODE") or "").strip().lower()
 
     logged_in = False
     if "codex" in model.lower():
@@ -65,18 +65,18 @@ def build_crewai_llm(*, workflow: Any | None = None):
 
     explicit_llm_credentials = bool(api_key) or bool(base_url)
     if logged_in and "codex" in model.lower() and not explicit_llm_credentials:
-        os.environ["TEAMOS_CREWAI_AUTH_MODE"] = "oauth_codex"
+        os.environ["OPENTEAM_CREWAI_AUTH_MODE"] = "oauth_codex"
         os.environ.pop("OPENAI_OAUTH_ACCESS_TOKEN", None)
         os.environ.pop("OPENAI_ACCESS_TOKEN", None)
         api_key = ""
         base_url = ""
     elif (not auth_mode) and ("codex" in model.lower()) and (not api_key):
-        os.environ["TEAMOS_CREWAI_AUTH_MODE"] = "oauth_codex"
+        os.environ["OPENTEAM_CREWAI_AUTH_MODE"] = "oauth_codex"
 
-    if "codex" in model.lower() and str(os.getenv("TEAMOS_CREWAI_AUTH_MODE") or "").strip().lower() == "oauth_codex":
+    if "codex" in model.lower() and str(os.getenv("OPENTEAM_CREWAI_AUTH_MODE") or "").strip().lower() == "oauth_codex":
         _ensure_codex_proxy_bypass()
 
-    reasoning_effort = str(os.getenv("TEAMOS_CREWAI_REASONING_EFFORT") or "xhigh").strip().lower()
+    reasoning_effort = str(os.getenv("OPENTEAM_CREWAI_REASONING_EFFORT") or "xhigh").strip().lower()
     reasoning_effort_aliases = {
         "highest": "xhigh",
         "max": "xhigh",
@@ -91,7 +91,7 @@ def build_crewai_llm(*, workflow: Any | None = None):
         "is_litellm": "openrouter" in model.lower(),
         "max_tokens": 4000,
     }
-    max_retries_raw = str(os.getenv("TEAMOS_CREWAI_MAX_RETRIES") or "").strip()
+    max_retries_raw = str(os.getenv("OPENTEAM_CREWAI_MAX_RETRIES") or "").strip()
     if max_retries_raw:
         try:
             kwargs["max_retries"] = max(0, int(max_retries_raw))

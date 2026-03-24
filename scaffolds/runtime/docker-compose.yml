@@ -1,19 +1,19 @@
-name: ${TEAMOS_DOCKER_PROJECT_NAME:-team-os-runtime}
+name: ${OPENTEAM_DOCKER_PROJECT_NAME:-openteam-runtime}
 
 services:
   postgres:
     image: postgres:${POSTGRESQL_VERSION:-16}
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-team_os}
-      POSTGRES_USER: ${POSTGRES_USER:-teamos}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teamos-local-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-openteam}
+      POSTGRES_USER: ${POSTGRES_USER:-openteam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openteam-local-dev}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-teamos} -d ${POSTGRES_DB:-team_os}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openteam} -d ${POSTGRES_DB:-openteam}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -36,8 +36,8 @@ services:
       retries: 12
 
   control-plane:
-    image: ${TEAMOS_CONTROL_PLANE_IMAGE:-ghcr.io/wangguanran/teamos-control-plane:main}
-    working_dir: /team-os/scaffolds/runtime/orchestrator
+    image: ${OPENTEAM_CONTROL_PLANE_IMAGE:-ghcr.io/openteam-dev/openteam-control-plane:main}
+    working_dir: /openteam/scaffolds/runtime/orchestrator
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8787"]
     restart: unless-stopped
     depends_on:
@@ -46,76 +46,76 @@ services:
       openhands-agent-server:
         condition: service_healthy
     environment:
-      TEAM_OS_REPO_PATH: /team-os
+      OPENTEAM_REPO_PATH: /openteam
       # Runtime root for all runtime-generated state/artifacts.
-      TEAMOS_RUNTIME_ROOT: /teamos-runtime
-      # Workspace root (project truth sources live here; must be outside the team-os git repo).
-      TEAMOS_WORKSPACE_ROOT: /teamos-workspace
-      TEAMOS_LLM_API_KEY: ${TEAMOS_LLM_API_KEY:-}
-      TEAMOS_LLM_BASE_URL: ${TEAMOS_LLM_BASE_URL:-}
+      OPENTEAM_RUNTIME_ROOT: /openteam-runtime
+      # Workspace root (project truth sources live here; must be outside the openteam git repo).
+      OPENTEAM_WORKSPACE_ROOT: /openteam-workspace
+      OPENTEAM_LLM_API_KEY: ${OPENTEAM_LLM_API_KEY:-}
+      OPENTEAM_LLM_BASE_URL: ${OPENTEAM_LLM_BASE_URL:-}
       # GitHub auth: recommended to set from `gh auth token` (OAuth); do not commit real values.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
-      TEAMOS_DB_URL: ${TEAMOS_DB_URL:-postgresql://${POSTGRES_USER:-teamos}:${POSTGRES_PASSWORD:-teamos-local-dev}@postgres:5432/${POSTGRES_DB:-team_os}}
-      TEAMOS_DEMO_SEED: ${TEAMOS_DEMO_SEED:-0}
-      TEAMOS_CODEX_MODEL: ${TEAMOS_CODEX_MODEL:-}
-      TEAMOS_RUNTIME_FILE_MIRROR: ${TEAMOS_RUNTIME_FILE_MIRROR:-1}
-      TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED: ${TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED:-1}
-      TEAMOS_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC: ${TEAMOS_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC:-60}
-      TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC: ${TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC:-900}
-      TEAMOS_RUNTIME_LOCALIZE_ZH: ${TEAMOS_RUNTIME_LOCALIZE_ZH:-1}
-      TEAMOS_CREWAI_AUTH_MODE: ${TEAMOS_CREWAI_AUTH_MODE:-oauth_codex}
-      TEAMOS_LLM_MODEL: ${TEAMOS_LLM_MODEL:-openrouter/openai/gpt-5.4}
-      TEAMOS_CREWAI_REASONING_EFFORT: ${TEAMOS_CREWAI_REASONING_EFFORT:-xhigh}
-      TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX: ${TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX:-1}
-      TEAMOS_OPENCLAW_AUTO: ${TEAMOS_OPENCLAW_AUTO:-0}
-      TEAMOS_OPENCLAW_INTERVAL_SEC: ${TEAMOS_OPENCLAW_INTERVAL_SEC:-30}
-      TEAMOS_OPENCLAW_INITIAL_DELAY_SEC: ${TEAMOS_OPENCLAW_INITIAL_DELAY_SEC:-10}
-      TEAMOS_OPENCLAW_CHANNEL: ${TEAMOS_OPENCLAW_CHANNEL:-telegram}
-      TEAMOS_OPENCLAW_TARGET: ${TEAMOS_OPENCLAW_TARGET:-}
-      TEAMOS_OPENCLAW_GATEWAY_MODE: ${TEAMOS_OPENCLAW_GATEWAY_MODE:-}
-      TEAMOS_OPENCLAW_GATEWAY_URL: ${TEAMOS_OPENCLAW_GATEWAY_URL:-}
-      TEAMOS_OPENCLAW_GATEWAY_TOKEN: ${TEAMOS_OPENCLAW_GATEWAY_TOKEN:-}
-      TEAMOS_OPENCLAW_GATEWAY_PASSWORD: ${TEAMOS_OPENCLAW_GATEWAY_PASSWORD:-}
-      TEAMOS_OPENCLAW_GATEWAY_TRANSPORT: ${TEAMOS_OPENCLAW_GATEWAY_TRANSPORT:-direct}
-      TEAMOS_OPENCLAW_STATE_DIR: ${TEAMOS_OPENCLAW_STATE_DIR:-/teamos-runtime/state/openclaw-client}
-      TEAMOS_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${TEAMOS_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      TEAMOS_OPENCLAW_PATH_PATTERNS: ${TEAMOS_OPENCLAW_PATH_PATTERNS:-*}
-      TEAMOS_OPENCLAW_EVENT_TYPES: ${TEAMOS_OPENCLAW_EVENT_TYPES:-TEAM_*}
-      TEAMOS_OPENCLAW_EXCLUDE_EVENT_TYPES: ${TEAMOS_OPENCLAW_EXCLUDE_EVENT_TYPES:-}
-      TEAMOS_OPENCLAW_MESSAGE_PREFIX: ${TEAMOS_OPENCLAW_MESSAGE_PREFIX:-[TeamOS 上报]}
-      TEAMOS_OPENCLAW_CONFIG_DIR: ${TEAMOS_OPENCLAW_CONFIG_DIR:-/root/.openclaw}
-      HTTP_PROXY: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
-      HTTPS_PROXY: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
-      ALL_PROXY: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      NO_PROXY: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com,openrouter.ai,api.openrouter.ai,api.openrouter.com}
-      http_proxy: ${TEAMOS_RUNTIME_HTTP_PROXY:-}
-      https_proxy: ${TEAMOS_RUNTIME_HTTPS_PROXY:-}
-      all_proxy: ${TEAMOS_RUNTIME_ALL_PROXY:-}
-      no_proxy: ${TEAMOS_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com,openrouter.ai,api.openrouter.ai,api.openrouter.com}
+      OPENTEAM_DB_URL: ${OPENTEAM_DB_URL:-postgresql://${POSTGRES_USER:-openteam}:${POSTGRES_PASSWORD:-openteam-local-dev}@postgres:5432/${POSTGRES_DB:-openteam}}
+      OPENTEAM_DEMO_SEED: ${OPENTEAM_DEMO_SEED:-0}
+      OPENTEAM_CODEX_MODEL: ${OPENTEAM_CODEX_MODEL:-}
+      OPENTEAM_RUNTIME_FILE_MIRROR: ${OPENTEAM_RUNTIME_FILE_MIRROR:-1}
+      OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED: ${OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED:-1}
+      OPENTEAM_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC: ${OPENTEAM_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC:-60}
+      OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC: ${OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC:-900}
+      OPENTEAM_RUNTIME_LOCALIZE_ZH: ${OPENTEAM_RUNTIME_LOCALIZE_ZH:-1}
+      OPENTEAM_CREWAI_AUTH_MODE: ${OPENTEAM_CREWAI_AUTH_MODE:-oauth_codex}
+      OPENTEAM_LLM_MODEL: ${OPENTEAM_LLM_MODEL:-openrouter/openai/gpt-5.4}
+      OPENTEAM_CREWAI_REASONING_EFFORT: ${OPENTEAM_CREWAI_REASONING_EFFORT:-xhigh}
+      OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX: ${OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX:-1}
+      OPENTEAM_OPENCLAW_AUTO: ${OPENTEAM_OPENCLAW_AUTO:-0}
+      OPENTEAM_OPENCLAW_INTERVAL_SEC: ${OPENTEAM_OPENCLAW_INTERVAL_SEC:-30}
+      OPENTEAM_OPENCLAW_INITIAL_DELAY_SEC: ${OPENTEAM_OPENCLAW_INITIAL_DELAY_SEC:-10}
+      OPENTEAM_OPENCLAW_CHANNEL: ${OPENTEAM_OPENCLAW_CHANNEL:-telegram}
+      OPENTEAM_OPENCLAW_TARGET: ${OPENTEAM_OPENCLAW_TARGET:-}
+      OPENTEAM_OPENCLAW_GATEWAY_MODE: ${OPENTEAM_OPENCLAW_GATEWAY_MODE:-}
+      OPENTEAM_OPENCLAW_GATEWAY_URL: ${OPENTEAM_OPENCLAW_GATEWAY_URL:-}
+      OPENTEAM_OPENCLAW_GATEWAY_TOKEN: ${OPENTEAM_OPENCLAW_GATEWAY_TOKEN:-}
+      OPENTEAM_OPENCLAW_GATEWAY_PASSWORD: ${OPENTEAM_OPENCLAW_GATEWAY_PASSWORD:-}
+      OPENTEAM_OPENCLAW_GATEWAY_TRANSPORT: ${OPENTEAM_OPENCLAW_GATEWAY_TRANSPORT:-direct}
+      OPENTEAM_OPENCLAW_STATE_DIR: ${OPENTEAM_OPENCLAW_STATE_DIR:-/openteam-runtime/state/openclaw-client}
+      OPENTEAM_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENTEAM_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      OPENTEAM_OPENCLAW_PATH_PATTERNS: ${OPENTEAM_OPENCLAW_PATH_PATTERNS:-*}
+      OPENTEAM_OPENCLAW_EVENT_TYPES: ${OPENTEAM_OPENCLAW_EVENT_TYPES:-TEAM_*}
+      OPENTEAM_OPENCLAW_EXCLUDE_EVENT_TYPES: ${OPENTEAM_OPENCLAW_EXCLUDE_EVENT_TYPES:-}
+      OPENTEAM_OPENCLAW_MESSAGE_PREFIX: ${OPENTEAM_OPENCLAW_MESSAGE_PREFIX:-[OpenTeam 上报]}
+      OPENTEAM_OPENCLAW_CONFIG_DIR: ${OPENTEAM_OPENCLAW_CONFIG_DIR:-/root/.openclaw}
+      HTTP_PROXY: ${OPENTEAM_RUNTIME_HTTP_PROXY:-}
+      HTTPS_PROXY: ${OPENTEAM_RUNTIME_HTTPS_PROXY:-}
+      ALL_PROXY: ${OPENTEAM_RUNTIME_ALL_PROXY:-}
+      NO_PROXY: ${OPENTEAM_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com,openrouter.ai,api.openrouter.ai,api.openrouter.com}
+      http_proxy: ${OPENTEAM_RUNTIME_HTTP_PROXY:-}
+      https_proxy: ${OPENTEAM_RUNTIME_HTTPS_PROXY:-}
+      all_proxy: ${OPENTEAM_RUNTIME_ALL_PROXY:-}
+      no_proxy: ${OPENTEAM_RUNTIME_NO_PROXY:-localhost,127.0.0.1,host.docker.internal,postgres,openhands-agent-server,control-plane,chatgpt.com,.chatgpt.com,api.openai.com,.openai.com,openrouter.ai,api.openrouter.ai,api.openrouter.com}
       # GitHub Projects panel sync (view-layer)
-      TEAMOS_PANEL_GH_AUTO_SYNC: ${TEAMOS_PANEL_GH_AUTO_SYNC:-0}
-      TEAMOS_PANEL_GH_WRITE_ENABLED: ${TEAMOS_PANEL_GH_WRITE_ENABLED:-0}
-      TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC: ${TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC:-60}
-      TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC: ${TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC:-30}
-      TEAMOS_CREWAI_DISABLE_TELEMETRY: ${TEAMOS_CREWAI_DISABLE_TELEMETRY:-1}
+      OPENTEAM_PANEL_GH_AUTO_SYNC: ${OPENTEAM_PANEL_GH_AUTO_SYNC:-0}
+      OPENTEAM_PANEL_GH_WRITE_ENABLED: ${OPENTEAM_PANEL_GH_WRITE_ENABLED:-0}
+      OPENTEAM_PANEL_GH_SYNC_INTERVAL_SEC: ${OPENTEAM_PANEL_GH_SYNC_INTERVAL_SEC:-60}
+      OPENTEAM_PANEL_GH_SYNC_DEBOUNCE_SEC: ${OPENTEAM_PANEL_GH_SYNC_DEBOUNCE_SEC:-30}
+      OPENTEAM_CREWAI_DISABLE_TELEMETRY: ${OPENTEAM_CREWAI_DISABLE_TELEMETRY:-1}
       # Runtime DB path (runtime-only; persisted in Docker named volumes).
-      TEAMOS_RUNTIME_DB_PATH: ${TEAMOS_RUNTIME_DB_PATH:-/teamos-runtime/state/runtime.db}
+      OPENTEAM_RUNTIME_DB_PATH: ${OPENTEAM_RUNTIME_DB_PATH:-/openteam-runtime/state/runtime.db}
     ports:
       - "127.0.0.1:${CONTROL_PLANE_PORT:-8787}:8787"
     volumes:
       # Default: read-only repo mount, with minimal writable subpaths layered on top.
-      - ${TEAM_OS_REPO_PATH:-../team-os}:/team-os:ro
-      - repo_overlay_data:/team-os/.team-os:rw
-      - ${TEAM_OS_REPO_PATH:-../team-os}/docs:/team-os/docs
+      - ${OPENTEAM_REPO_PATH:-../openteam}:/openteam:ro
+      - repo_overlay_data:/openteam/.openteam:rw
+      - ${OPENTEAM_REPO_PATH:-../openteam}/docs:/openteam/docs
       # Runtime root persistence now uses Docker named volumes.
-      - runtime_state_data:/teamos-runtime/state:rw
-      - runtime_hub_data:/teamos-runtime/hub:rw
-      - runtime_workspace_data:/teamos-runtime/workspace:rw
-      - runtime_tmp_data:/teamos-runtime/tmp:rw
-      - runtime_cache_data:/teamos-runtime/cache:rw
-      # Workspace: all project truth sources live here (must be OUTSIDE the team-os git repo).
-      - ${HOME}/.teamos/workspace:/teamos-workspace:rw
+      - runtime_state_data:/openteam-runtime/state:rw
+      - runtime_hub_data:/openteam-runtime/hub:rw
+      - runtime_workspace_data:/openteam-runtime/workspace:rw
+      - runtime_tmp_data:/openteam-runtime/tmp:rw
+      - runtime_cache_data:/openteam-runtime/cache:rw
+      # Workspace: all project truth sources live here (must be OUTSIDE the openteam git repo).
+      - ${HOME}/.openteam/workspace:/openteam-workspace:rw
       # OAuth: reuse host Codex login state (do not commit; local-only).
       - ${HOME}/.codex:/root/.codex:rw
       # OpenClaw: reuse local channel/gateway/account configuration (read-only).
@@ -128,16 +128,16 @@ services:
 
 volumes:
   postgres_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_postgres_data
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_postgres_data
   repo_overlay_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_repo_overlay
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_repo_overlay
   runtime_state_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_state
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_state
   runtime_hub_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_hub
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_hub
   runtime_workspace_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_runtime_workspace
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_runtime_workspace
   runtime_tmp_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_tmp
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_tmp
   runtime_cache_data:
-    name: ${TEAMOS_DOCKER_VOLUME_PREFIX:-team-os-runtime}_cache
+    name: ${OPENTEAM_DOCKER_VOLUME_PREFIX:-openteam-runtime}_cache

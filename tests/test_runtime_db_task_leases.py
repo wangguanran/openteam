@@ -25,8 +25,8 @@ class RuntimeDBTaskLeaseTests(unittest.TestCase):
 
             claimed = db.claim_task_lease(
                 lease_scope="repo_improvement_delivery",
-                lease_key="repo_improvement_delivery:teamos:TASK-1",
-                project_id="teamos",
+                lease_key="repo_improvement_delivery:openteam:TASK-1",
+                project_id="openteam",
                 task_id="TASK-1",
                 holder_instance_id="node-a",
                 holder_actor="worker-a",
@@ -39,8 +39,8 @@ class RuntimeDBTaskLeaseTests(unittest.TestCase):
 
             denied = db.claim_task_lease(
                 lease_scope="repo_improvement_delivery",
-                lease_key="repo_improvement_delivery:teamos:TASK-1",
-                project_id="teamos",
+                lease_key="repo_improvement_delivery:openteam:TASK-1",
+                project_id="openteam",
                 task_id="TASK-1",
                 holder_instance_id="node-b",
                 holder_actor="worker-b",
@@ -50,7 +50,7 @@ class RuntimeDBTaskLeaseTests(unittest.TestCase):
             self.assertIsNone(denied)
 
             renewed = db.renew_task_lease(
-                lease_key="repo_improvement_delivery:teamos:TASK-1",
+                lease_key="repo_improvement_delivery:openteam:TASK-1",
                 holder_instance_id="node-a",
                 lease_ttl_sec=180,
             )
@@ -59,16 +59,16 @@ class RuntimeDBTaskLeaseTests(unittest.TestCase):
             self.assertGreaterEqual(renewed.lease_version, 2)
 
             released = db.release_task_lease(
-                lease_key="repo_improvement_delivery:teamos:TASK-1",
+                lease_key="repo_improvement_delivery:openteam:TASK-1",
                 holder_instance_id="node-a",
             )
             self.assertTrue(released)
-            self.assertIsNone(db.get_task_lease(lease_key="repo_improvement_delivery:teamos:TASK-1"))
+            self.assertIsNone(db.get_task_lease(lease_key="repo_improvement_delivery:openteam:TASK-1"))
 
             takeover = db.claim_task_lease(
                 lease_scope="repo_improvement_delivery",
-                lease_key="repo_improvement_delivery:teamos:TASK-1",
-                project_id="teamos",
+                lease_key="repo_improvement_delivery:openteam:TASK-1",
+                project_id="openteam",
                 task_id="TASK-1",
                 holder_instance_id="node-b",
                 holder_actor="worker-b",

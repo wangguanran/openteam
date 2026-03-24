@@ -44,14 +44,14 @@ def local_llm_profile() -> dict[str, str]:
     Resolve local llm_profile deterministically from env vars.
 
     Required for leader qualification in cluster mode:
-    - TEAMOS_LLM_MODEL_ID
+    - OPENTEAM_LLM_MODEL_ID
     Optional:
-    - TEAMOS_LLM_PROVIDER (default: codex)
-    - TEAMOS_LLM_AUTH_MODE (default: oauth)
+    - OPENTEAM_LLM_PROVIDER (default: codex)
+    - OPENTEAM_LLM_AUTH_MODE (default: oauth)
     """
-    provider = str(os.getenv("TEAMOS_LLM_PROVIDER") or "codex").strip() or "codex"
-    model_id = str(os.getenv("TEAMOS_LLM_MODEL_ID") or "").strip()
-    auth_mode = str(os.getenv("TEAMOS_LLM_AUTH_MODE") or "oauth").strip() or "oauth"
+    provider = str(os.getenv("OPENTEAM_LLM_PROVIDER") or "codex").strip() or "codex"
+    model_id = str(os.getenv("OPENTEAM_LLM_MODEL_ID") or "").strip()
+    auth_mode = str(os.getenv("OPENTEAM_LLM_AUTH_MODE") or "oauth").strip() or "oauth"
     return {"provider": provider, "model_id": model_id, "auth_mode": auth_mode}
 
 

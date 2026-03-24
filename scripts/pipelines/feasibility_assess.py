@@ -36,9 +36,9 @@ def _add_runtime_template_to_syspath(repo: Path) -> None:
 def _requirements_dir_for_scope(repo: Path, *, scope: str, workspace_root: Path) -> tuple[str, str, Path]:
     s = str(scope or "").strip()
     if not s:
-        raise PipelineError("missing --scope teamos|project:<id>")
-    if s == "teamos":
-        return ("teamos", "teamos", repo / "docs" / "teamos" / "requirements")
+        raise PipelineError("missing --scope openteam|project:<id>")
+    if s == "openteam":
+        return ("openteam", "openteam", repo / "docs" / "openteam" / "requirements")
     if s.startswith("project:"):
         pid = s.split(":", 1)[1].strip()
         if not pid:
@@ -144,14 +144,14 @@ def main(argv: list[str] | None = None) -> int:
         repo_lock = None
         scope_lock = None
         try:
-            if scope == "teamos":
-                repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("TEAMOS_TASK_ID") or ""))
+            if scope == "openteam":
+                repo_lock = locks.acquire_repo_lock(repo_root=repo, task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""))
             scope_lock = locks.acquire_scope_lock(
                 scope,
                 repo_root=repo,
                 workspace_root=ws_root,
                 req_dir=req_dir,
-                task_id=str(os.getenv("TEAMOS_TASK_ID") or ""),
+                task_id=str(os.getenv("OPENTEAM_TASK_ID") or ""),
             )
             # Write report (stable content).
             write_text(report_path, report_md, dry_run=False)

@@ -33,7 +33,7 @@ def _ensure_runtime_dirs(rt: Path) -> dict[str, str]:
         rt / "state" / "audit",
         rt / "state" / "logs",
         rt / "state" / "runs",
-        rt / "state" / "teamos",
+        rt / "state" / "openteam",
         rt / "state" / "kb" / "sources",
         rt / "workspace" / "projects",
         rt / "workspace" / "shared" / "cache",
@@ -53,14 +53,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     repo = resolve_repo_root(args)
-    override = str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip()
+    override = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
     rt = runtime_root(override=override if override else str(default_runtime_root()))
 
     out = {
         "ok": True,
         "repo_root": str(repo),
         "runtime_root": str(rt),
-        "runtime_root_source": "env" if override else "default_teamos_home",
+        "runtime_root_source": "env" if override else "default_openteam_home",
     }
     if args.ensure:
         out["dirs"] = _ensure_runtime_dirs(rt)

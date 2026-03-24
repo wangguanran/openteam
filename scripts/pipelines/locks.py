@@ -3,7 +3,7 @@
 Deterministic locking (repo lock + scope lock).
 
 Design:
-- Preferred: Postgres advisory lock when TEAMOS_DB_URL is available.
+- Preferred: Postgres advisory lock when OPENTEAM_DB_URL is available.
 - Fallback: file lock with TTL + heartbeat renew (crash recovery).
 
 Notes:
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from team_os_common import utc_now_iso as _utc_now_iso
+from openteam_common import utc_now_iso as _utc_now_iso
 
 from _common import runtime_hub_root, runtime_state_root, runtime_workspace_root
 
@@ -41,7 +41,7 @@ class LockBusy(RuntimeError):
 
 class DbUnavailable(RuntimeError):
     """
-    Raised when TEAMOS_DB_URL is configured but the DB backend cannot be used
+    Raised when OPENTEAM_DB_URL is configured but the DB backend cannot be used
     (missing driver / connection failure). This allows falling back to file
     locks without conflating "lock contention" with "DB unavailable".
     """
@@ -92,19 +92,19 @@ def _default_holder(*, instance_id: str = "", agent_id: str = "", task_id: str =
 
 
 def _db_dsn() -> str:
-    return str(os.getenv("TEAMOS_DB_URL") or "").strip()
+    return str(os.getenv("OPENTEAM_DB_URL") or "").strip()
 
 
 def _runtime_override_for_repo(repo_root: Path) -> str:
     """
     Keep runtime-root contract deterministic per repo unless env override is set.
     """
-    if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip():
+    if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip():
         return ""
-    home = str(os.getenv("TEAMOS_HOME") or "").strip()
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
     if home:
         return str((Path(home).expanduser().resolve() / "runtime" / "default").resolve())
-    return str((Path.home() / ".teamos" / "runtime" / "default").resolve())
+    return str((Path.home() / ".openteam" / "runtime" / "default").resolve())
 
 
 def _can_use_db(dsn: str) -> bool:
@@ -370,7 +370,7 @@ def _acquire_lock_with_preferred_backends(
 ) -> LockHandle:
     """
     Backend order is deterministic:
-    1) Postgres advisory lock when TEAMOS_DB_URL is configured and prefer_db=True.
+    1) Postgres advisory lock when OPENTEAM_DB_URL is configured and prefer_db=True.
        - Lock contention surfaces as LOCK_BUSY (no downgrade to file lock).
        - DB-unavailable falls back to file lock.
     2) File lock fallback.
@@ -412,7 +412,7 @@ def acquire_repo_lock(
 ) -> LockHandle:
     rr = (repo_root or Path.cwd()).resolve()
     # Keep the DB advisory lock key stable across machines (repo path may differ).
-    lock_key = "repo:teamos"
+    lock_key = "repo:openteam"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
     lock_dir = runtime_state_root(override=_runtime_override_for_repo(rr)) / "locks"
@@ -445,7 +445,7 @@ def acquire_scope_lock(
     s = str(scope or "").strip()
     if not s:
         raise ValueError("scope is required")
-    if s != "teamos" and not s.startswith("project:"):
+    if s != "openteam" and not s.startswith("project:"):
         s = f"project:{s}"
 
     rr = (repo_root or Path.cwd()).resolve()
@@ -453,18 +453,18 @@ def acquire_scope_lock(
     if workspace_root is not None:
         ws = workspace_root.expanduser().resolve()
     else:
-        env_ws = str(os.getenv("TEAMOS_WORKSPACE_ROOT") or "").strip()
+        env_ws = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
         ws = Path(env_ws).expanduser().resolve() if env_ws else runtime_workspace_root(override=runtime_override)
 
     lock_key = f"scope:{s}"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
-    # File lock path: teamos -> runtime state; project -> workspace project state;
+    # File lock path: openteam -> runtime state; project -> workspace project state;
     # fallback -> runtime state locks/fallback (keeps transient lock files outside repo/workspace truth-source roots).
     lock_dir: Path
-    if s == "teamos":
+    if s == "openteam":
         lock_dir = runtime_state_root(override=runtime_override) / "locks"
-        lock_name = "scope_teamos.lock"
+        lock_name = "scope_openteam.lock"
     else:
         pid = s.split(":", 1)[1].strip() or "unknown"
         lock_dir = ws / "projects" / pid / "state" / "locks"

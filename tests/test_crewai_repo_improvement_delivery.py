@@ -17,7 +17,7 @@ def _add_template_app_to_syspath() -> None:
 
 
 _add_template_app_to_syspath()
-os.environ.setdefault("TEAMOS_RUNTIME_LOCALIZE_ZH", "0")
+os.environ.setdefault("OPENTEAM_RUNTIME_LOCALIZE_ZH", "0")
 
 from app.domains.team_workflow import task_runtime  # noqa: E402
 from app.skill_library import builtin_skills as workflow_skills  # noqa: E402

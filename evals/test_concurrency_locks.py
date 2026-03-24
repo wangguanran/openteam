@@ -22,10 +22,10 @@ class ConcurrencyLocksTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td).resolve()
             env = os.environ.copy()
-            env["TEAMOS_WORKSPACE_ROOT"] = str(ws)
-            env["TEAMOS_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
+            env["OPENTEAM_WORKSPACE_ROOT"] = str(ws)
+            env["OPENTEAM_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
             # Force file-lock backend for deterministic local tests (avoid depending on an external DB).
-            env["TEAMOS_DB_URL"] = ""
+            env["OPENTEAM_DB_URL"] = ""
 
             cmd1 = [
                 sys.executable,
@@ -92,9 +92,9 @@ class ConcurrencyLocksTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td).resolve()
             env = os.environ.copy()
-            env["TEAMOS_WORKSPACE_ROOT"] = str(ws)
-            env["TEAMOS_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
-            env["TEAMOS_DB_URL"] = ""
+            env["OPENTEAM_WORKSPACE_ROOT"] = str(ws)
+            env["OPENTEAM_REQUIREMENTS_SEMANTIC_CHECK"] = "0"
+            env["OPENTEAM_DB_URL"] = ""
 
             req_dir = ws / "projects" / "demo" / "state" / "requirements"
             req_dir.mkdir(parents=True, exist_ok=True)
@@ -142,10 +142,10 @@ class ConcurrencyLocksTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td).resolve()
             env = os.environ.copy()
-            env["TEAMOS_WORKSPACE_ROOT"] = str(ws)
+            env["OPENTEAM_WORKSPACE_ROOT"] = str(ws)
             # Force file-lock backend for deterministic local tests.
-            old_dsn = os.environ.get("TEAMOS_DB_URL")
-            os.environ["TEAMOS_DB_URL"] = ""
+            old_dsn = os.environ.get("OPENTEAM_DB_URL")
+            os.environ["OPENTEAM_DB_URL"] = ""
 
             locks_dir = ws / "projects" / "demo" / "state" / "locks"
             locks_dir.mkdir(parents=True, exist_ok=True)
@@ -177,16 +177,16 @@ class ConcurrencyLocksTests(unittest.TestCase):
                     locks.release_lock(h)
             finally:
                 if old_dsn is None:
-                    os.environ.pop("TEAMOS_DB_URL", None)
+                    os.environ.pop("OPENTEAM_DB_URL", None)
                 else:
-                    os.environ["TEAMOS_DB_URL"] = old_dsn
+                    os.environ["OPENTEAM_DB_URL"] = old_dsn
 
     def test_lock_busy_returns_holder_diagnostics(self):
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td).resolve()
             (ws / "projects" / "demo" / "state" / "requirements").mkdir(parents=True, exist_ok=True)
-            old_dsn = os.environ.get("TEAMOS_DB_URL")
-            os.environ["TEAMOS_DB_URL"] = ""
+            old_dsn = os.environ.get("OPENTEAM_DB_URL")
+            os.environ["OPENTEAM_DB_URL"] = ""
 
             try:
                 sys.path.insert(0, str(PIPE))
@@ -203,9 +203,9 @@ class ConcurrencyLocksTests(unittest.TestCase):
                     locks.release_lock(h1)
             finally:
                 if old_dsn is None:
-                    os.environ.pop("TEAMOS_DB_URL", None)
+                    os.environ.pop("OPENTEAM_DB_URL", None)
                 else:
-                    os.environ["TEAMOS_DB_URL"] = old_dsn
+                    os.environ["OPENTEAM_DB_URL"] = old_dsn
 
 
 if __name__ == "__main__":

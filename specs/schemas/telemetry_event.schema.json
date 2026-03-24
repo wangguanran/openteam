@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Team OS Telemetry Event (JSONL line)",
+  "title": "OpenTeam Telemetry Event (JSONL line)",
   "type": "object",
   "required": ["ts", "event_type", "actor"],
   "properties": {

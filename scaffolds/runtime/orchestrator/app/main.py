@@ -13,11 +13,11 @@ from agents import Agent  # OpenAI Agents SDK (placeholder; must not call models
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.responses import JSONResponse
-from team_os_common import utc_now_iso as _utc_now_iso
-from team_os_logging import get_logger
+from openteam_common import utc_now_iso as _utc_now_iso
+from openteam_logging import get_logger
 from .pydantic_compat import BaseModel, Field
 
-_log = get_logger("team_os.control_plane")
+_log = get_logger("openteam.control_plane")
 
 from . import codex_llm
 from .demo_seed import seed_mock_data
@@ -25,6 +25,7 @@ from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraph
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
 from .plan_store import list_milestones
+from . import observability
 from . import redis_bus
 from .requirements_store import (
     RequirementsError,
@@ -55,8 +56,8 @@ from .state_store import (
     runtime_root,
     runtime_state_root,
     save_focus,
-    team_os_root,
-    teamos_requirements_dir,
+    openteam_root,
+    openteam_requirements_dir,
 )
 from . import workspace_store
 
@@ -68,36 +69,36 @@ except Exception:  # pragma: no cover
         return None
 
 
-app = FastAPI(title="Team OS Control Plane", version="0.2.0")
+app = FastAPI(title="OpenTeam Control Plane", version="0.2.0")
 
 
 @app.exception_handler(workspace_store.WorkspaceError)
 async def _workspace_error(_req: Request, exc: Exception):
-    # Defensive: never allow project writes to land inside the team-os git repo.
+    # Defensive: never allow project writes to land inside the openteam git repo.
     return JSONResponse(
         status_code=400,
         content={
             "error": str(exc),
-            "hint": "Ensure workspace is initialized and outside the team-os repo: run `teamos workspace init` and set TEAMOS_WORKSPACE_ROOT for the control-plane.",
+            "hint": "Ensure workspace is initialized and outside the openteam repo: run `openteam workspace init` and set OPENTEAM_WORKSPACE_ROOT for the control-plane.",
         },
     )
 
 
 @app.exception_handler(StateError)
 async def _state_error(_req: Request, exc: Exception):
-    return JSONResponse(status_code=400, content={"error": str(exc), "hint": "Check configuration and workspace. Try: teamos workspace doctor"})
+    return JSONResponse(status_code=400, content={"error": str(exc), "hint": "Check configuration and workspace. Try: openteam workspace doctor"})
 
 
 @app.exception_handler(RequirementsError)
 async def _requirements_error(_req: Request, exc: Exception):
-    return JSONResponse(status_code=400, content={"error": str(exc), "hint": "Requirements store error. Try: teamos req list/conflicts"})
+    return JSONResponse(status_code=400, content={"error": str(exc), "hint": "Requirements store error. Try: openteam req list/conflicts"})
 
 
 # Minimal placeholder agent. Never call models on startup.
 CONTROL_PLANE_AGENT = Agent(
-    name="TeamOS-Control-Plane",
+    name="OpenTeam-Control-Plane",
     instructions=(
-        "You are the Team OS control plane. Enforce: no secrets in git; "
+        "You are the OpenTeam control plane. Enforce: no secrets in git; "
         "full traceability for web research; task ledger/logging; approval gates; "
         "prompt-injection defenses; requirements conflict detection."
     ),
@@ -445,7 +446,7 @@ def _hub_env() -> dict[str, str]:
 
 
 def _db_rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+    dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
     if not dsn:
         return []
     try:
@@ -479,8 +480,8 @@ def _tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:
         return False
 
 
-def _team_os_checks(team_os_path: str) -> dict[str, Any]:
-    p = Path(team_os_path)
+def _openteam_checks(openteam_path: str) -> dict[str, Any]:
+    p = Path(openteam_path)
     specs_workflows_dir = p / "specs" / "workflows"
     specs_roles_dir = p / "specs" / "roles"
     state_dir = runtime_state_root()
@@ -502,7 +503,7 @@ def _team_os_checks(team_os_path: str) -> dict[str, Any]:
             }
         )
     return {
-        "team_os_path": str(p),
+        "openteam_path": str(p),
         "exists": p.exists(),
         "specs_workflows_dir_exists": specs_workflows_dir.exists(),
         "specs_roles_dir_exists": specs_roles_dir.exists(),
@@ -520,7 +521,7 @@ def _team_os_checks(team_os_path: str) -> dict[str, Any]:
 
 
 def _db() -> RuntimeDB:
-    db_path = os.getenv("TEAMOS_RUNTIME_DB_PATH")
+    db_path = os.getenv("OPENTEAM_RUNTIME_DB_PATH")
     if not db_path:
         db_path = str(runtime_state_root() / "runtime.db")
     return RuntimeDB(db_path)
@@ -580,8 +581,8 @@ _TEAM_WORKFLOW_LOCKS = _ScopedRunLocks()
 _TEAM_CODING_LOCKS = _ScopedRunLocks()
 
 
-def _is_teamos(project_id: str) -> bool:
-    return str(project_id or "").strip() == "teamos"
+def _is_openteam(project_id: str) -> bool:
+    return str(project_id or "").strip() == "openteam"
 
 
 def _workspace_root() -> Path:
@@ -605,22 +606,22 @@ def _list_workspace_projects() -> list[str]:
 
 
 def _all_project_ids() -> list[str]:
-    # Always include teamos (repo scope), plus any workspace projects.
-    ids = ["teamos"]
+    # Always include openteam (repo scope), plus any workspace projects.
+    ids = ["openteam"]
     for pid in _list_workspace_projects():
-        if pid != "teamos":
+        if pid != "openteam":
             ids.append(pid)
     return ids
 
 
 def _ensure_workspace_safe_for_project_writes() -> None:
-    # Hard gate: any project truth-source artifacts must live OUTSIDE the team-os git repo.
-    workspace_store.assert_project_paths_outside_repo(team_os_root=team_os_root())
+    # Hard gate: any project truth-source artifacts must live OUTSIDE the openteam git repo.
+    workspace_store.assert_project_paths_outside_repo(openteam_root=openteam_root())
 
 
 def _requirements_dir(project_id: str, *, ensure: bool) -> Path:
-    if _is_teamos(project_id):
-        return teamos_requirements_dir()
+    if _is_openteam(project_id):
+        return openteam_requirements_dir()
     _ensure_workspace_safe_for_project_writes()
     if ensure:
         workspace_store.ensure_project_scaffold(project_id)
@@ -630,9 +631,9 @@ def _requirements_dir(project_id: str, *, ensure: bool) -> Path:
 def _parse_scope_to_project_id(scope: str) -> str:
     s = str(scope or "").strip()
     if not s:
-        raise HTTPException(status_code=400, detail={"error": "invalid_scope", "hint": "scope is required: teamos | project:<id>"})
-    if s == "teamos":
-        return "teamos"
+        raise HTTPException(status_code=400, detail={"error": "invalid_scope", "hint": "scope is required: openteam | project:<id>"})
+    if s == "openteam":
+        return "openteam"
     if s.startswith("project:"):
         pid = s.split(":", 1)[1].strip()
         if not pid:
@@ -644,11 +645,11 @@ def _parse_scope_to_project_id(scope: str) -> str:
 
 def _scope_from_project_id(project_id: str) -> str:
     pid = str(project_id or "").strip()
-    return "teamos" if pid == "teamos" else f"project:{pid}"
+    return "openteam" if pid == "openteam" else f"project:{pid}"
 
 
 def _local_base_url() -> str:
-    return str(os.getenv("TEAMOS_BASE_URL") or os.getenv("CONTROL_PLANE_BASE_URL") or "http://127.0.0.1:8787").strip()
+    return str(os.getenv("OPENTEAM_BASE_URL") or os.getenv("CONTROL_PLANE_BASE_URL") or "http://127.0.0.1:8787").strip()
 
 
 def _publish_redis_event(*, event_type: str, actor: str, project_id: str, workstream_id: str, payload: dict[str, Any]) -> None:
@@ -776,7 +777,7 @@ def _is_team_run(run: Any, *, known_run_ids: set[str]) -> bool:
 
 
 def _cleanup_stale_team_activity() -> None:
-    ttl_sec = max(300, int(os.getenv("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", "900") or "900"))
+    ttl_sec = max(300, int(os.getenv("OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", "900") or "900"))
     known_run_ids = _team_run_id_set()
 
     for run in DB.list_runs():
@@ -791,7 +792,7 @@ def _cleanup_stale_team_activity() -> None:
             DB.add_event(
                 event_type="TEAM_WORKFLOW_STALE_RUN_CLEANED",
                 actor="control-plane.cleanup",
-                project_id=str(run.project_id or "teamos"),
+                project_id=str(run.project_id or "openteam"),
                 workstream_id=str(run.workstream_id or _default_workstream_id()),
                 payload={"run_id": str(run.run_id or ""), "objective": str(run.objective or ""), "ttl_sec": ttl_sec},
             )
@@ -819,7 +820,7 @@ def _cleanup_stale_team_activity() -> None:
             DB.add_event(
                 event_type="TEAM_WORKFLOW_STALE_AGENT_CLEANED",
                 actor="control-plane.cleanup",
-                project_id=str(agent.project_id or "teamos"),
+                project_id=str(agent.project_id or "openteam"),
                 workstream_id=str(agent.workstream_id or _default_workstream_id()),
                 payload={"agent_id": str(agent.agent_id or ""), "role_id": role_id, "ttl_sec": ttl_sec},
             )
@@ -828,9 +829,9 @@ def _cleanup_stale_team_activity() -> None:
 
 
 def _plan_dir(project_id: str, *, ensure: bool) -> Path:
-    if _is_teamos(project_id):
-        # teamos plan stays in-repo (scope=teamos).
-        return team_os_root() / "docs" / "plans" / "teamos"
+    if _is_openteam(project_id):
+        # openteam plan stays in-repo (scope=openteam).
+        return openteam_root() / "docs" / "plans" / "openteam"
     _ensure_workspace_safe_for_project_writes()
     if ensure:
         workspace_store.ensure_project_scaffold(project_id)
@@ -838,7 +839,7 @@ def _plan_dir(project_id: str, *, ensure: bool) -> Path:
 
 
 def _ledger_tasks_dir(project_id: str, *, ensure: bool) -> Path:
-    if _is_teamos(project_id):
+    if _is_openteam(project_id):
         return ledger_tasks_dir()
     _ensure_workspace_safe_for_project_writes()
     if ensure:
@@ -847,7 +848,7 @@ def _ledger_tasks_dir(project_id: str, *, ensure: bool) -> Path:
 
 
 def _logs_tasks_dir(project_id: str, *, ensure: bool) -> Path:
-    if _is_teamos(project_id):
+    if _is_openteam(project_id):
         return logs_tasks_dir()
     _ensure_workspace_safe_for_project_writes()
     if ensure:
@@ -856,8 +857,8 @@ def _logs_tasks_dir(project_id: str, *, ensure: bool) -> Path:
 
 
 def _conversations_dir(project_id: str, *, ensure: bool) -> Path:
-    if _is_teamos(project_id):
-        return runtime_state_root() / "ledger" / "conversations" / "teamos"
+    if _is_openteam(project_id):
+        return runtime_state_root() / "ledger" / "conversations" / "openteam"
     _ensure_workspace_safe_for_project_writes()
     if ensure:
         workspace_store.ensure_project_scaffold(project_id)
@@ -865,13 +866,13 @@ def _conversations_dir(project_id: str, *, ensure: bool) -> Path:
 
 
 def _active_projects_summary() -> list[dict[str, Any]]:
-    # Projects are discovered from workspace. Team OS self is always present.
+    # Projects are discovered from workspace. OpenTeam self is always present.
     ws_list = _list_workspace_projects()
     out: list[dict[str, Any]] = []
-    # Team OS self project (repo scope)
-    out.append({"project_id": "teamos", "name": "Team OS Development", "workstreams": [w.get("id") for w in (load_workstreams() or []) if w.get("id")]})
+    # OpenTeam self project (repo scope)
+    out.append({"project_id": "openteam", "name": "OpenTeam Development", "workstreams": [w.get("id") for w in (load_workstreams() or []) if w.get("id")]})
     for pid in ws_list:
-        if pid == "teamos":
+        if pid == "openteam":
             continue
         out.append({"project_id": pid, "name": pid, "workstreams": []})
     return out
@@ -879,7 +880,7 @@ def _active_projects_summary() -> list[dict[str, Any]]:
 
 def _panel_github_writes_enabled() -> bool:
     # Extra safety gate: explicit opt-in for remote writes.
-    return _env_truthy("TEAMOS_PANEL_GH_WRITE_ENABLED", "0")
+    return _env_truthy("OPENTEAM_PANEL_GH_WRITE_ENABLED", "0")
 
 
 def _mark_panel_dirty(project_id: Optional[str] = None) -> None:
@@ -903,7 +904,7 @@ def _target_repo_configured(target: dict[str, Any]) -> bool:
 
 
 def _effective_team_project_id(*, project_id: str, target_id: str = "") -> str:
-    normalized = str(project_id or "teamos").strip() or "teamos"
+    normalized = str(project_id or "openteam").strip() or "openteam"
     tid = str(target_id or "").strip()
     if not tid:
         return normalized
@@ -913,11 +914,11 @@ def _effective_team_project_id(*, project_id: str, target_id: str = "") -> str:
 
 
 def _default_local_improvement_target() -> Optional[dict[str, Any]]:
-    repo_root = Path(os.getenv("TEAM_OS_REPO_PATH") or str(team_os_root())).expanduser().resolve()
+    repo_root = Path(os.getenv("OPENTEAM_REPO_PATH") or str(openteam_root())).expanduser().resolve()
     marker = repo_root / ".git"
     if not repo_root.exists() or not (marker.is_dir() or marker.is_file()):
         return None
-    return improvement_store.ensure_target(project_id="teamos", repo_path=str(repo_root))
+    return improvement_store.ensure_target(project_id="openteam", repo_path=str(repo_root))
 
 
 def _enabled_improvement_targets(*, auto_mode: str) -> list[dict[str, Any]]:
@@ -953,7 +954,7 @@ def _team_run_lock_key(
     normalized_repo_locator = str(repo_locator or "").strip()
     if normalized_repo_locator:
         return f"repo_locator:{normalized_repo_locator}"
-    return f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+    return f"project:{str(project_id or 'openteam').strip() or 'openteam'}"
 
 
 def _team_coding_lock_key(
@@ -968,7 +969,7 @@ def _team_coding_lock_key(
     normalized_target_id = str(target_id or "").strip()
     if normalized_target_id:
         return f"target:{normalized_target_id}"
-    return f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+    return f"project:{str(project_id or 'openteam').strip() or 'openteam'}"
 
 
 def _team_active_run_matches(
@@ -996,10 +997,10 @@ def _team_active_run_matches(
     if existing_key == lock_key:
         return True
     if "team workflow" in run_objective:
-        return existing_key == f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+        return existing_key == f"project:{str(project_id or 'openteam').strip() or 'openteam'}"
     for flow in crew_tools.native_team_flows():
         if flow.lower() in run_objective:
-            return existing_key == f"project:{str(project_id or 'teamos').strip() or 'teamos'}"
+            return existing_key == f"project:{str(project_id or 'openteam').strip() or 'openteam'}"
     return False
 
 
@@ -1019,7 +1020,7 @@ def _run_team_iteration(
     *,
     team_id: str,
     actor: str,
-    project_id: str = "teamos",
+    project_id: str = "openteam",
     workstream_id: str = "general",
     objective: str = "",
     target_id: str = "",
@@ -1056,7 +1057,7 @@ def _run_team_iteration(
         spec = crewai_orchestrator.RunSpec(
             project_id=effective_project_id,
             workstream_id=workstream_id,
-            objective=objective or f"Run Team OS workflow team:{resolved_team_id}",
+            objective=objective or f"Run OpenTeam workflow team:{resolved_team_id}",
             flow=f"team:{resolved_team_id}",
             target_id=target_id,
             repo_path=repo_path,
@@ -1082,7 +1083,7 @@ def _run_team_discussion_sync(*, team_id: str, actor: str, project_id: str = "",
         project_id=project_id,
         target_id=target_id,
     )
-    _mark_panel_dirty(str(project_id or "teamos").strip() or "teamos")
+    _mark_panel_dirty(str(project_id or "openteam").strip() or "openteam")
     return out
 
 
@@ -1090,7 +1091,7 @@ def _run_team_coding_iteration(
     *,
     team_id: str,
     actor: str,
-    project_id: str = "teamos",
+    project_id: str = "openteam",
     target_id: str = "",
     task_id: str = "",
     dry_run: bool = False,
@@ -1100,7 +1101,7 @@ def _run_team_coding_iteration(
     resolved_team_id = str(team_id or "").strip() or crewai_team_registry.default_team_id()
     _cleanup_stale_team_activity()
     current_project_id = _effective_team_project_id(
-        project_id=str(project_id or "teamos").strip() or "teamos",
+        project_id=str(project_id or "openteam").strip() or "openteam",
         target_id=target_id,
     )
     lock_key = _team_coding_lock_key(
@@ -1131,12 +1132,12 @@ def _run_team_coding_iteration(
             pass
         return payload
 
-    run_key = str(task_id or current_project_id or "teamos").strip() or "teamos"
+    run_key = str(task_id or current_project_id or "openteam").strip() or "openteam"
     run_id = f"run-{run_key}::team:{resolved_team_id}:coding"
     objective = (
-        f"Resume Team OS team:{resolved_team_id} coding for task {task_id}"
+        f"Resume OpenTeam team:{resolved_team_id} coding for task {task_id}"
         if str(task_id or "").strip()
-        else f"Run Team OS team:{resolved_team_id} coding sweep for project {current_project_id}"
+        else f"Run OpenTeam team:{resolved_team_id} coding sweep for project {current_project_id}"
     )
     DB.upsert_run(run_id=run_id, project_id=current_project_id, workstream_id=_default_workstream_id(), objective=objective, state="RUNNING")
     try:
@@ -1178,14 +1179,14 @@ def _run_team_coding_iteration(
 
 def _panel_auto_sync_loop() -> None:
     # Auto sync is best-effort; missing config/auth will simply skip.
-    interval_sec = int(os.getenv("TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60")
-    debounce_sec = int(os.getenv("TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC", "30") or "30")
+    interval_sec = int(os.getenv("OPENTEAM_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60")
+    debounce_sec = int(os.getenv("OPENTEAM_PANEL_GH_SYNC_DEBOUNCE_SEC", "30") or "30")
     last_attempt: dict[str, float] = {}
 
     while True:
         try:
             # Safety: default off. Enabling auto-sync implies periodic remote writes to GitHub Projects (view-layer).
-            if not _env_truthy("TEAMOS_PANEL_GH_AUTO_SYNC", "0"):
+            if not _env_truthy("OPENTEAM_PANEL_GH_AUTO_SYNC", "0"):
                 time.sleep(5)
                 continue
             if not _leader_write_allowed():
@@ -1286,7 +1287,7 @@ def _startup_background_threads() -> None:
         _log.warning("startup stale cleanup failed", error=str(exc))
 
     def _team_workflow_cleanup_loop() -> None:
-        interval_sec = max(30, int(os.getenv("TEAMOS_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC", "60") or "60"))
+        interval_sec = max(30, int(os.getenv("OPENTEAM_RUNTIME_TEAM_WORKFLOW_CLEANUP_INTERVAL_SEC", "60") or "60"))
         _set_team_workflow_loop_state(
             _TEAM_WORKFLOW_LOOP_CLEANUP,
             enabled=True,
@@ -1340,12 +1341,12 @@ def _startup_background_threads() -> None:
             time.sleep(1)
             if not _leader_write_allowed():
                 return
-            out = _default_team_runtime().migrate_legacy_worktrees_fn(project_id="teamos")
+            out = _default_team_runtime().migrate_legacy_worktrees_fn(project_id="openteam")
             if int(out.get("updated") or 0) > 0 or int(out.get("moved") or 0) > 0:
                 DB.add_event(
                     event_type="TEAM_WORKFLOW_WORKTREE_MIGRATED",
                     actor="control-plane.startup",
-                    project_id="teamos",
+                    project_id="openteam",
                     workstream_id=_default_workstream_id(),
                     payload={"updated": int(out.get("updated") or 0), "moved": int(out.get("moved") or 0)},
                 )
@@ -1354,7 +1355,7 @@ def _startup_background_threads() -> None:
                 DB.add_event(
                     event_type="TEAM_WORKFLOW_WORKTREE_MIGRATION_FAILED",
                     actor="control-plane.startup",
-                    project_id="teamos",
+                    project_id="openteam",
                     workstream_id=_default_workstream_id(),
                     payload={"error": str(e)[:300]},
                 )
@@ -1371,7 +1372,7 @@ def _startup_background_threads() -> None:
     # Recovery auto-run: on startup, scan unfinished tasks and attempt resume.
     def _recovery_auto_once() -> None:
         # Never crash the server because of recovery.
-        if str(os.getenv("TEAMOS_RECOVERY_AUTO", "1") or "").strip().lower() in ("0", "false", "no", "off"):
+        if str(os.getenv("OPENTEAM_RECOVERY_AUTO", "1") or "").strip().lower() in ("0", "false", "no", "off"):
             return
         try:
             time.sleep(2)
@@ -1384,7 +1385,7 @@ def _startup_background_threads() -> None:
     rt.start()
 
     def _run_workflow_iteration(target: dict[str, Any], *, team_id: str, workflow_id: str, actor_name: str) -> dict[str, Any]:
-        project_id = str(target.get("project_id") or "teamos").strip() or "teamos"
+        project_id = str(target.get("project_id") or "openteam").strip() or "openteam"
         target_id = str(target.get("target_id") or "").strip()
         workflow = team_workflow_registry.workflow_spec(workflow_id, team_id=team_id, project_id=project_id)
         runtime_policy = team_workflow_registry.evaluate_workflow_runtime_policy(
@@ -1423,7 +1424,7 @@ def _startup_background_threads() -> None:
         )
 
     def _workflow_loop(team_id: str, base_workflow_id: str) -> None:
-        base_workflow = team_workflow_registry.workflow_spec(base_workflow_id, team_id=team_id, project_id="teamos")
+        base_workflow = team_workflow_registry.workflow_spec(base_workflow_id, team_id=team_id, project_id="openteam")
         loop_id = _team_workflow_loop_id(team_id, base_workflow.workflow_id)
         interval_sec = max(0, int(base_workflow.loop.interval_sec or 0))
         initial_delay_sec = max(0, int(base_workflow.loop.initial_delay_sec or 0))
@@ -1513,9 +1514,9 @@ def _startup_background_threads() -> None:
                 )
             time.sleep(max(1, interval_sec))
 
-    if _env_truthy("TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED", "1"):
+    if _env_truthy("OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED", "1"):
         for team in crewai_team_registry.list_teams():
-            for workflow in team_workflow_registry.list_workflows(team_id=team.team_id, project_id="teamos"):
+            for workflow in team_workflow_registry.list_workflows(team_id=team.team_id, project_id="openteam"):
                 if not workflow.loop.enabled:
                     continue
                 thread = threading.Thread(
@@ -1527,7 +1528,7 @@ def _startup_background_threads() -> None:
                 thread.start()
     else:
         for team in crewai_team_registry.list_teams():
-            for workflow in team_workflow_registry.list_workflows(team_id=team.team_id, project_id="teamos"):
+            for workflow in team_workflow_registry.list_workflows(team_id=team.team_id, project_id="openteam"):
                 _set_team_workflow_loop_state(
                     _team_workflow_loop_id(team.team_id, workflow.workflow_id),
                     enabled=False,
@@ -1538,10 +1539,10 @@ def _startup_background_threads() -> None:
                 )
 
     def _openclaw_reporting_loop() -> None:
-        if not _env_truthy("TEAMOS_OPENCLAW_AUTO", "0"):
+        if not _env_truthy("OPENTEAM_OPENCLAW_AUTO", "0"):
             return
-        interval_sec = max(15, int(os.getenv("TEAMOS_OPENCLAW_INTERVAL_SEC", "30") or "30"))
-        initial_delay_sec = max(3, int(os.getenv("TEAMOS_OPENCLAW_INITIAL_DELAY_SEC", "10") or "10"))
+        interval_sec = max(15, int(os.getenv("OPENTEAM_OPENCLAW_INTERVAL_SEC", "30") or "30"))
+        initial_delay_sec = max(3, int(os.getenv("OPENTEAM_OPENCLAW_INITIAL_DELAY_SEC", "10") or "10"))
         try:
             time.sleep(initial_delay_sec)
             while True:
@@ -1555,7 +1556,7 @@ def _startup_background_threads() -> None:
                         DB.add_event(
                             event_type="OPENCLAW_REPORTING_LOOP_FAILED",
                             actor="control-plane.openclaw-loop",
-                            project_id="teamos",
+                            project_id="openteam",
                             workstream_id=_default_workstream_id(),
                             payload={"error": str(e)[:300]},
                         )
@@ -1582,9 +1583,9 @@ def _startup_background_threads() -> None:
 
 
 def _seed_if_enabled() -> None:
-    if os.getenv("TEAMOS_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
+    if os.getenv("OPENTEAM_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
         # Seed minimal demo data for each existing workspace project (safe; idempotent per project_id).
-        # This does not create any project truth-source files inside the team-os repo.
+        # This does not create any project truth-source files inside the openteam repo.
         for pid in _list_workspace_projects():
             seed_mock_data(DB, project_id=pid, workstream_id="general")
 
@@ -1621,7 +1622,7 @@ class RequirementIn(BaseModel):
 
 
 class RequirementAddV2In(BaseModel):
-    scope: str = Field(..., min_length=1, description="teamos | project:<project_id>")
+    scope: str = Field(..., min_length=1, description="openteam | project:<project_id>")
     text: str = Field(..., min_length=1)
     workstream_id: Optional[str] = None
     priority: Optional[str] = "P2"  # P0..P3
@@ -1663,7 +1664,7 @@ class TeamRunIn(BaseModel):
     dry_run: bool = False
     force: bool = False
     trigger: str = "api"  # api|cli_auto|manual
-    project_id: str = "teamos"
+    project_id: str = "openteam"
     workstream_id: str = "general"
     target_id: Optional[str] = None
     repo_path: Optional[str] = None
@@ -1674,7 +1675,7 @@ class TeamRunIn(BaseModel):
 class TeamCodingIn(BaseModel):
     dry_run: bool = False
     force: bool = False
-    project_id: str = "teamos"
+    project_id: str = "openteam"
     target_id: Optional[str] = None
     task_id: Optional[str] = None
     concurrency: Optional[int] = Field(default=None, ge=1, le=50)
@@ -1720,7 +1721,7 @@ class OpenClawSweepIn(BaseModel):
 
 
 class RunStartIn(BaseModel):
-    project_id: str = "teamos"
+    project_id: str = "openteam"
     workstream_id: str = "general"
     objective: str = Field(..., min_length=1)
     flow: Optional[str] = None
@@ -1739,7 +1740,7 @@ class RunStartIn(BaseModel):
 
 class ImprovementTargetIn(BaseModel):
     target_id: Optional[str] = None
-    project_id: str = "teamos"
+    project_id: str = "openteam"
     display_name: Optional[str] = None
     repo_path: Optional[str] = None
     repo_url: Optional[str] = None
@@ -1786,8 +1787,8 @@ class RecoveryResumeIn(BaseModel):
 
 @app.get("/healthz")
 def healthz(response: Response):
-    team_os_path = os.getenv("TEAM_OS_REPO_PATH", "/team-os")
-    checks = _team_os_checks(team_os_path)
+    openteam_path = os.getenv("OPENTEAM_REPO_PATH", "/openteam")
+    checks = _openteam_checks(openteam_path)
     crewai_info = crewai_runtime.probe_crewai()
     ok = (
         checks["exists"]
@@ -1798,7 +1799,7 @@ def healthz(response: Response):
         and checks["crewai_orchestrator_exists"]
         and bool(crewai_info.get("importable"))
     )
-    db = {"backend": ("postgres" if (os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
+    db = {"backend": ("postgres" if (os.getenv("OPENTEAM_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
     try:
         # Minimal DB probe (no side effects).
         _ = DB.list_events(after_id=0, limit=1)
@@ -1821,7 +1822,7 @@ def v1_status():
     default_team_runtime = _team_runtime(default_team_id)
     default_target = _default_local_improvement_target()
     default_target_id = str((default_target or {}).get("target_id") or "")
-    default_target_project_id = str((default_target or {}).get("project_id") or "teamos").strip() or "teamos"
+    default_target_project_id = str((default_target or {}).get("project_id") or "openteam").strip() or "openteam"
 
     runs = [r.__dict__ for r in DB.list_runs()]
     agents = [a.__dict__ for a in DB.list_agents()]
@@ -1829,7 +1830,7 @@ def v1_status():
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = crewai_runtime.probe_crewai()
-    milestones = [m.__dict__ for m in list_milestones("teamos")]
+    milestones = [m.__dict__ for m in list_milestones("openteam")]
     target_summaries: list[dict[str, Any]] = []
     for target in targets:
         tid = str(target.get("target_id") or "").strip()
@@ -2077,7 +2078,7 @@ def v1_run_stream(
 @app.post("/v1/runs/start")
 def v1_run_start(payload: RunStartIn):
     _require_leader_write()
-    project_id = str(payload.project_id or "teamos").strip() or "teamos"
+    project_id = str(payload.project_id or "openteam").strip() or "openteam"
     workstream_id = str(payload.workstream_id or "general").strip() or "general"
     task_id = str(payload.task_id or "").strip()
     if task_id:
@@ -2188,15 +2189,15 @@ def v1_panel_github_health(project_id: Optional[str] = None, include_github_rate
         "last_sync": last,
         "summary": summary,
         "auto_sync": {
-            "enabled": _env_truthy("TEAMOS_PANEL_GH_AUTO_SYNC", "0"),
-            "interval_sec": int(os.getenv("TEAMOS_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60"),
-            "debounce_sec": int(os.getenv("TEAMOS_PANEL_GH_SYNC_DEBOUNCE_SEC", "30") or "30"),
+            "enabled": _env_truthy("OPENTEAM_PANEL_GH_AUTO_SYNC", "0"),
+            "interval_sec": int(os.getenv("OPENTEAM_PANEL_GH_SYNC_INTERVAL_SEC", "60") or "60"),
+            "debounce_sec": int(os.getenv("OPENTEAM_PANEL_GH_SYNC_DEBOUNCE_SEC", "30") or "30"),
         },
         "writes_enabled": _panel_github_writes_enabled(),
         "needs_full_resync": needs_full_resync,
         "notes": [
             "GitHub Projects is a view-layer; truth source is local files + runtime DB.",
-            "Use POST /v1/panel/github/sync for manual sync; enable auto-sync via env TEAMOS_PANEL_GH_AUTO_SYNC=1 (remote writes).",
+            "Use POST /v1/panel/github/sync for manual sync; enable auto-sync via env OPENTEAM_PANEL_GH_AUTO_SYNC=1 (remote writes).",
         ],
     }
 
@@ -2224,7 +2225,7 @@ def v1_panel_github_health(project_id: Optional[str] = None, include_github_rate
 @app.post("/v1/panel/github/sync")
 def v1_panel_github_sync(payload: PanelSyncIn):
     """
-    Sync TeamOS truth -> GitHub Projects v2.
+    Sync OpenTeam truth -> GitHub Projects v2.
     """
     if not bool(payload.dry_run):
         _require_leader_write()
@@ -2236,7 +2237,7 @@ def v1_panel_github_sync(payload: PanelSyncIn):
             workstream_id=_default_workstream_id(),
             payload={"panel": "github_projects", "mode": payload.mode},
         )
-        raise HTTPException(status_code=403, detail="GitHub panel writes are disabled. Set TEAMOS_PANEL_GH_WRITE_ENABLED=1 to allow remote writes.")
+        raise HTTPException(status_code=403, detail="GitHub panel writes are disabled. Set OPENTEAM_PANEL_GH_WRITE_ENABLED=1 to allow remote writes.")
 
     svc = GitHubProjectsPanelSync(db=DB)
     ts_start = _utc_now_iso()
@@ -2702,10 +2703,10 @@ def v1_cluster_elect_attempt():
     base_url = os.getenv("CONTROL_PLANE_BASE_URL", "").strip()
     try:
         out = cluster_manager.attempt_elect(cfg, instance_id=instance_id, base_url=base_url)
-        DB.add_event(event_type="CLUSTER_ELECT_ATTEMPT", actor="control-plane", project_id="teamos", workstream_id=_default_workstream_id(), payload=out)
+        DB.add_event(event_type="CLUSTER_ELECT_ATTEMPT", actor="control-plane", project_id="openteam", workstream_id=_default_workstream_id(), payload=out)
         return out
     except Exception as e:
-        DB.add_event(event_type="CLUSTER_ELECT_FAILED", actor="control-plane", project_id="teamos", workstream_id=_default_workstream_id(), payload={"error": str(e)[:300]})
+        DB.add_event(event_type="CLUSTER_ELECT_FAILED", actor="control-plane", project_id="openteam", workstream_id=_default_workstream_id(), payload={"error": str(e)[:300]})
         return {"success": False, "reason": str(e)[:300], "leader": {"leader_instance_id": instance_id, "backend": "local"}}
 
 
@@ -2727,10 +2728,10 @@ def v1_tasks_new(payload: TaskNewIn):
 
     workstreams = [str(x).strip() for x in (payload.workstreams or ["general"]) if str(x).strip()] or ["general"]
     wsid = str(workstreams[0])
-    scope = _scope_from_project_id(str(payload.project_id or "teamos"))
+    scope = _scope_from_project_id(str(payload.project_id or "openteam"))
     try:
         delegated = crew_tools.run_task_create_pipeline(
-            repo_root=team_os_root(),
+            repo_root=openteam_root(),
             workspace_root=_workspace_root(),
             scope=scope,
             title=str(payload.title),
@@ -2779,7 +2780,7 @@ def v1_tasks_new(payload: TaskNewIn):
                 "type": "REPO_UNDERSTANDING_GATE",
                 "project_id": payload.project_id,
                 "task_id": task_id,
-                "message": "mode=upgrade requires docs/product/teamos/REPO_UNDERSTANDING.md before any code changes.",
+                "message": "mode=upgrade requires docs/product/openteam/REPO_UNDERSTANDING.md before any code changes.",
                 "artifact_template": "templates/content/repo_understanding.md",
             }
         )
@@ -2797,7 +2798,7 @@ def v1_recovery_scan():
     _require_leader_write()
 
     def _pending_approvals(task_id: str) -> list[dict[str, Any]]:
-        dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+        dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
         if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
             return []
         try:
@@ -2877,7 +2878,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
     _require_leader_write()
 
     def _pending_approvals(task_id: str) -> list[dict[str, Any]]:
-        dsn = str(os.getenv("TEAMOS_DB_URL") or "").strip()
+        dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
         if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
             return []
         try:
@@ -2961,7 +2962,7 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
             delivery = _run_team_coding_iteration(
                 team_id=resolved_team_id,
                 actor="control-plane.recovery",
-                project_id=str(t.get("project_id") or "teamos"),
+                project_id=str(t.get("project_id") or "openteam"),
                 task_id=str(t.get("task_id") or ""),
                 dry_run=False,
                 force=True,
@@ -3018,14 +3019,14 @@ def v1_teams():
 @app.post("/v1/teams/{team_id}/run")
 def v1_team_run(team_id: str, payload: TeamRunIn):
     _require_leader_write()
-    project_id = str(payload.project_id or "teamos").strip() or "teamos"
+    project_id = str(payload.project_id or "openteam").strip() or "openteam"
     workstream_id = str(payload.workstream_id or "general").strip() or "general"
     return _run_team_iteration(
         team_id=team_id,
         actor="team_api",
         project_id=project_id,
         workstream_id=workstream_id,
-        objective=str(payload.objective or f"Run Team OS workflow team:{team_id}").strip(),
+        objective=str(payload.objective or f"Run OpenTeam workflow team:{team_id}").strip(),
         target_id=str(payload.target_id or "").strip(),
         repo_path=str(payload.repo_path or "").strip(),
         repo_url=str(payload.repo_url or "").strip(),
@@ -3049,7 +3050,7 @@ def v1_improvement_targets_upsert(payload: ImprovementTargetIn):
     DB.add_event(
         event_type="IMPROVEMENT_TARGET_UPSERTED",
         actor="improvement_target_api",
-        project_id=str(target.get("project_id") or "teamos").strip() or "teamos",
+        project_id=str(target.get("project_id") or "openteam").strip() or "openteam",
         workstream_id=str(target.get("workstream_id") or "general").strip() or "general",
         payload={"target": target},
     )
@@ -3081,7 +3082,7 @@ def v1_team_proposals_decide(team_id: str, payload: TeamProposalDecisionIn):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": "team_proposal_decision_failed", "message": str(e), "team_id": team_id})
-    project_id = str(proposal.get("project_id") or "teamos").strip() or "teamos"
+    project_id = str(proposal.get("project_id") or "openteam").strip() or "openteam"
     workstream_id = str(proposal.get("workstream_id") or "general").strip() or "general"
     DB.add_event(
         event_type="TEAM_PROPOSAL_DECIDED",
@@ -3109,12 +3110,12 @@ def v1_team_discussions_sync(team_id: str):
 @app.get("/v1/teams/{team_id}/milestones")
 def v1_team_milestones(
     team_id: str,
-    project_id: str = Query(default="teamos"),
+    project_id: str = Query(default="openteam"),
     target_id: str = Query(default=""),
     state: str = Query(default=""),
 ):
     _ = team_id
-    items = [m.__dict__ for m in list_milestones(str(project_id or "teamos").strip() or "teamos")]
+    items = [m.__dict__ for m in list_milestones(str(project_id or "openteam").strip() or "openteam")]
     if target_id:
         items = [m for m in items if str(m.get("target_id") or "").strip() == str(target_id).strip()]
     state_filter = str(state or "").strip().lower()
@@ -3143,7 +3144,7 @@ def v1_openclaw_config_update(payload: OpenClawConfigIn):
     DB.add_event(
         event_type="OPENCLAW_CONFIG_UPDATED",
         actor="openclaw_api",
-        project_id="teamos",
+        project_id="openteam",
         workstream_id=_default_workstream_id(),
         payload={"config": config},
     )
@@ -3154,7 +3155,7 @@ def v1_openclaw_config_update(payload: OpenClawConfigIn):
 def v1_openclaw_report_test(payload: OpenClawReportTestIn):
     _require_leader_write()
     out = openclaw_reporter.report_manual(
-        message=str(payload.message or "").strip() or "Team OS OpenClaw test message",
+        message=str(payload.message or "").strip() or "OpenTeam OpenClaw test message",
         channel=str(payload.channel or "").strip(),
         target=str(payload.target or "").strip(),
         path=str(payload.path or "").strip(),
@@ -3192,7 +3193,7 @@ def v1_team_coding_run(team_id: str, payload: TeamCodingIn):
         out = _run_team_coding_iteration(
             team_id=team_id,
             actor="team_coding_api",
-            project_id=str(payload.project_id or "teamos").strip() or "teamos",
+            project_id=str(payload.project_id or "openteam").strip() or "openteam",
             target_id=str(payload.target_id or "").strip(),
             task_id=str(payload.task_id or "").strip(),
             dry_run=bool(payload.dry_run),
@@ -3235,7 +3236,7 @@ def v1_events_stream(after_id: int = 0):
 
 
 def _default_project_id() -> str:
-    return "teamos"
+    return "openteam"
 
 
 def _default_workstream_id() -> str:
@@ -3400,10 +3401,10 @@ def _handle_new_requirement(
 
 
 def _load_tasks_summary() -> list[dict[str, Any]]:
-    # Team OS self tasks live in-repo. All other project tasks must live in Workspace.
-    scan: list[tuple[str, Path]] = [("teamos", ledger_tasks_dir())]
+    # OpenTeam self tasks live in-repo. All other project tasks must live in Workspace.
+    scan: list[tuple[str, Path]] = [("openteam", ledger_tasks_dir())]
     for pid in _list_workspace_projects():
-        if pid == "teamos":
+        if pid == "openteam":
             continue
         scan.append((pid, workspace_store.ledger_tasks_dir(pid)))
 
@@ -3490,7 +3491,7 @@ def _pending_decisions() -> list[dict[str, Any]]:
                     {
                         "type": "TEAM_PROPOSAL_DECISION",
                         "team_id": team.team_id,
-                        "project_id": str(p.get("project_id") or "teamos"),
+                        "project_id": str(p.get("project_id") or "openteam"),
                         "proposal_id": p.get("proposal_id"),
                         "title": p.get("title"),
                         "lane": lane,
@@ -3503,3 +3504,43 @@ def _pending_decisions() -> list[dict[str, Any]]:
             continue
 
     return decisions
+
+
+# ---------------------------------------------------------------------------
+# Observability endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/observability/metrics")
+def v1_observability_metrics():
+    """Real-time metrics summary: run counts, latency percentiles, cost tracking."""
+    return observability.get_metrics_summary()
+
+
+@app.get("/v1/observability/health")
+def v1_observability_health():
+    """Comprehensive health report combining DB state with in-memory metrics."""
+    return observability.get_health_report(
+        db_runs=DB.list_runs(),
+        db_agents=DB.list_agents(),
+        db_events=DB.list_events(after_id=0, limit=200),
+    )
+
+
+@app.get("/v1/observability/active-runs")
+def v1_observability_active_runs():
+    """Currently active runs with elapsed time and token usage."""
+    return {"active_runs": observability.get_active_runs()}
+
+
+@app.get("/v1/observability/alerts")
+def v1_observability_alerts(limit: int = Query(default=50, ge=1, le=500)):
+    """Recent alerts (newest first)."""
+    return {"alerts": observability.get_recent_alerts(limit=limit)}
+
+
+@app.post("/v1/observability/alerts/check")
+def v1_observability_check_alerts():
+    """Trigger alert threshold checks and return any new alerts."""
+    new_alerts = observability.check_alerts()
+    return {"new_alerts": new_alerts, "total_alerts": len(observability.get_recent_alerts())}

@@ -3,7 +3,7 @@ role_id: "Developer-AI"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "agents/tools orchestration 与评测（evals）"
   - "提示词/冲突检测/可观测性落盘"
@@ -33,7 +33,7 @@ metrics_required:
   - "model_auth_gate_checked"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Developer-AI/index.md"
+    - ".openteam/memory/roles/Developer-AI/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -85,4 +85,4 @@ permissions:
 ## 记忆写入规则
 
 - 将“可复用的 agent 模式/工具契约/评测套路”写入：
-  - `.team-os/memory/roles/Developer-AI/index.md`
+  - `.openteam/memory/roles/Developer-AI/index.md`

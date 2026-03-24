@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-from team_os_common import utc_now_iso
+from openteam_common import utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -1158,7 +1158,7 @@ class PostgresRuntimeDB:
     Postgres backend for RuntimeDB.
 
     Enabled by env:
-      TEAMOS_DB_URL=postgresql://...
+      OPENTEAM_DB_URL=postgresql://...
     """
 
     def __init__(self, dsn: str):
@@ -2152,12 +2152,12 @@ class RuntimeDB:
     """
     RuntimeDB facade.
 
-    - Default: sqlite (db_path from TEAMOS_RUNTIME_DB_PATH or .team-os/state/runtime.db)
-    - Optional: Postgres when TEAMOS_DB_URL is set to a postgres DSN.
+    - Default: sqlite (db_path from OPENTEAM_RUNTIME_DB_PATH or .openteam/state/runtime.db)
+    - Optional: Postgres when OPENTEAM_DB_URL is set to a postgres DSN.
     """
 
     def __init__(self, db_path_or_url: str):
-        dsn = (os.getenv("TEAMOS_DB_URL") or "").strip() or str(db_path_or_url)
+        dsn = (os.getenv("OPENTEAM_DB_URL") or "").strip() or str(db_path_or_url)
         if _is_postgres_dsn(dsn):
             self._impl = PostgresRuntimeDB(dsn)
         else:

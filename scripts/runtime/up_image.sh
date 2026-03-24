@@ -10,21 +10,21 @@ Usage:
   ./scripts/runtime_up_image.sh [--db-url <postgres-dsn>] [--path <dir>] [--image <ref>] [--port <port>] [--force] [--skip-pull]
 
 Purpose:
-  Initialize an image-based TeamOS runtime config directory, write the required .env values,
+  Initialize an image-based OpenTeam runtime config directory, write the required .env values,
   pull the published control-plane image created by GitHub CI, and start the runtime.
 
 Defaults:
-  --path  ~/.teamos/runtime-config/default
-  --image ghcr.io/wangguanran/teamos-control-plane:main
+  --path  ~/.openteam/runtime-config/default
+  --image ghcr.io/openteam-dev/openteam-control-plane:main
   --port  8787
   --db-url unset (control-plane uses local postgres)
 EOF
 }
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 target="$(default_runtime_config_dir)"
 db_url=""
-image="ghcr.io/wangguanran/teamos-control-plane:main"
+image="ghcr.io/openteam-dev/openteam-control-plane:main"
 port="8787"
 force=0
 skip_pull=0
@@ -86,23 +86,23 @@ upsert_env() {
   upsert_kv_file "$env_file" "$key" "$value"
 }
 
-upsert_env "TEAMOS_DB_URL" "$db_url"
-upsert_env "TEAMOS_CONTROL_PLANE_IMAGE" "$image"
+upsert_env "OPENTEAM_DB_URL" "$db_url"
+upsert_env "OPENTEAM_CONTROL_PLANE_IMAGE" "$image"
 upsert_env "CONTROL_PLANE_PORT" "$port"
-upsert_env "TEAMOS_RUNTIME_FILE_MIRROR" "1"
-upsert_env "TEAM_OS_REPO_PATH" "$ROOT"
+upsert_env "OPENTEAM_RUNTIME_FILE_MIRROR" "1"
+upsert_env "OPENTEAM_REPO_PATH" "$ROOT"
 
 base_name="$(basename "$target")"
 if [[ "$base_name" == "default" ]]; then
-  project_name="team-os-runtime"
+  project_name="openteam-runtime"
 else
-  project_name="teamos-$(slugify "$base_name")"
-  if [[ -z "$project_name" || "$project_name" == "teamos-" ]]; then
-    project_name="team-os-runtime"
+  project_name="openteam-$(slugify "$base_name")"
+  if [[ -z "$project_name" || "$project_name" == "openteam-" ]]; then
+    project_name="openteam-runtime"
   fi
 fi
-upsert_env "TEAMOS_DOCKER_PROJECT_NAME" "$project_name"
-upsert_env "TEAMOS_DOCKER_VOLUME_PREFIX" "$project_name"
+upsert_env "OPENTEAM_DOCKER_PROJECT_NAME" "$project_name"
+upsert_env "OPENTEAM_DOCKER_VOLUME_PREFIX" "$project_name"
 
 (
   cd "$target"

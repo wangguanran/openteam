@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         if not str(pw or "").strip():
             raise PipelineError("--password-stdin set but stdin password is empty")
         stdin_data = str(pw).rstrip("\r\n") + "\n"
-        env["TEAMOS_SSH_PASSWORD"] = str(pw).rstrip("\r\n")
+        env["OPENTEAM_SSH_PASSWORD"] = str(pw).rstrip("\r\n")
 
     p = subprocess.run(cmd, cwd=str(repo), input=stdin_data, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
     out = {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": (p.stdout or "")[-2000:], "stderr": (p.stderr or "")[-2000:], "cmd": cmd}

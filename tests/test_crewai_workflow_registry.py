@@ -139,7 +139,7 @@ class CrewAIWorkflowRegistryTests(unittest.TestCase):
         self.assertEqual(spec.max_continuous_runtime_minutes(), 60)
 
     def test_list_workflows_loads_agents_tasks_and_loop_config(self):
-        workflows = crewai_workflow_registry.list_workflows(project_id="teamos")
+        workflows = crewai_workflow_registry.list_workflows(project_id="openteam")
         ids = {spec.workflow_id for spec in workflows}
 
         self.assertIn("bug-finding", ids)

@@ -31,7 +31,7 @@ def _http_json(url: str, *, timeout_sec: int = 5) -> dict[str, Any]:
 
 
 def _load_base_url(*, profile: str = "") -> str:
-    cfg = Path.home() / ".teamos" / "config.toml"
+    cfg = Path.home() / ".openteam" / "config.toml"
     if not cfg.exists():
         return "http://127.0.0.1:8787"
     try:
@@ -78,12 +78,12 @@ def _gh_status() -> tuple[bool, str]:
 def _db_check(repo_root: Path) -> dict[str, Any]:
     """
     Postgres connectivity + migrations check.
-    - When TEAMOS_DB_URL is unset: SKIP (ok=true)
+    - When OPENTEAM_DB_URL is unset: SKIP (ok=true)
     - When set: require psycopg + connection + schema_migrations present.
     """
     dsn = get_db_url()
     if not dsn:
-        return {"ok": True, "status": "SKIP", "reason": "TEAMOS_DB_URL not set"}
+        return {"ok": True, "status": "SKIP", "reason": "OPENTEAM_DB_URL not set"}
 
     try:
         conn = connect(dsn)
@@ -95,7 +95,7 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
             try:
                 rows = cur.execute("SELECT version, applied_at FROM schema_migrations ORDER BY version ASC").fetchall()
             except Exception as e:
-                return {"ok": False, "status": "FAIL", "reason": "migrations_missing", "error": str(e)[:200], "hint": "Run: teamos db migrate"}
+                return {"ok": False, "status": "FAIL", "reason": "migrations_missing", "error": str(e)[:200], "hint": "Run: openteam db migrate"}
         vers = []
         for r in rows or []:
             try:
@@ -116,22 +116,22 @@ def _default_team_check(repo_root: Path) -> dict[str, Any]:
     Best-effort runtime-state check for the default configured team.
     Persistent state now lives in the runtime DB / control-plane status, not local JSON files.
     """
-    runtime_override = "" if str(os.getenv("TEAMOS_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
+    runtime_override = "" if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
     state_root = runtime_state_root(override=runtime_override)
     return {
         "ok": True,
         "runtime_state_root": str(state_root),
-        "state_backend": "postgres" if str(os.getenv("TEAMOS_DB_URL") or "").strip() else "sqlite_or_runtime_db",
+        "state_backend": "postgres" if str(os.getenv("OPENTEAM_DB_URL") or "").strip() else "sqlite_or_runtime_db",
         "last_run": {},
     }
 
 
 def _llm_config_check() -> dict[str, Any]:
     base = str(
-        os.getenv("TEAMOS_LLM_BASE_URL")
+        os.getenv("OPENTEAM_LLM_BASE_URL")
         or ""
     ).strip()
-    key = str(os.getenv("TEAMOS_LLM_API_KEY") or "").strip()
+    key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
     ok = bool(base and key)
     masked = ""
     if key:
@@ -142,17 +142,17 @@ def _llm_config_check() -> dict[str, Any]:
         "api_key_set": bool(key),
         "base_url": base,
         "api_key_masked": masked,
-        "required": ["TEAMOS_LLM_BASE_URL", "TEAMOS_LLM_API_KEY"],
+        "required": ["OPENTEAM_LLM_BASE_URL", "OPENTEAM_LLM_API_KEY"],
     }
     if not ok:
-        out["hint"] = "export TEAMOS_LLM_BASE_URL=... and TEAMOS_LLM_API_KEY=..."
+        out["hint"] = "export OPENTEAM_LLM_BASE_URL=... and OPENTEAM_LLM_API_KEY=..."
     return out
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Team OS doctor (deterministic local checks)")
+    ap = argparse.ArgumentParser(description="OpenTeam doctor (deterministic local checks)")
     add_default_args(ap)
-    ap.add_argument("--profile", default="", help="profile name (from ~/.teamos/config.toml)")
+    ap.add_argument("--profile", default="", help="profile name (from ~/.openteam/config.toml)")
     ap.add_argument("--base-url", default="", help="override control plane base url")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     if not bool(llm.get("ok")):
         ok = False
 
-    # Postgres DB (shared hub). Optional unless TEAMOS_DB_URL is set.
+    # Postgres DB (shared hub). Optional unless OPENTEAM_DB_URL is set.
     db = _db_check(repo)
     report["postgres_db"] = db
     if not bool(db.get("ok")):

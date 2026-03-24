@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Team OS Prompt Manifest",
+  "title": "OpenTeam Prompt Manifest",
   "type": "object",
   "additionalProperties": true,
   "required": ["schema_version", "project_id", "generated_at", "inputs", "outputs", "content_sha256"],

@@ -22,27 +22,41 @@ def _api_url() -> str:
     return "https://api.github.com"
 
 
-def _request(method: str, url: str, *, payload: Optional[dict[str, Any]] = None, timeout_sec: int = 20) -> Any:
+_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _request(method: str, url: str, *, payload: Optional[dict[str, Any]] = None, timeout_sec: int = 20, max_retries: int = 3) -> Any:
     tok = resolve_github_token()
     data = None
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {tok}",
-        "User-Agent": "teamos-control-plane",
+        "User-Agent": "openteam-control-plane",
     }
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, method=method, data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise GitHubIssuesBusError(f"GitHub REST HTTP {e.code}: {body[:800]}") from e
-    except urllib.error.URLError as e:
-        raise GitHubIssuesBusError(f"GitHub REST request failed: {e}") from e
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries):
+        req = urllib.request.Request(url, method=method, data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                return json.loads(body) if body else {}
+        except urllib.error.HTTPError as e:
+            if e.code in _RETRY_STATUS_CODES and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                last_err = e
+                continue
+            body = e.read().decode("utf-8", errors="replace")
+            raise GitHubIssuesBusError(f"GitHub REST HTTP {e.code}: {body[:800]}") from e
+        except urllib.error.URLError as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                last_err = e
+                continue
+            raise GitHubIssuesBusError(f"GitHub REST request failed: {e}") from e
+    raise GitHubIssuesBusError(f"GitHub REST request failed after {max_retries} retries: {last_err}")
 
 
 def _parse_repo(repo: str) -> tuple[str, str]:
@@ -56,7 +70,7 @@ def _parse_repo(repo: str) -> tuple[str, str]:
 _UNSET = object()
 
 _LABEL_DEFAULTS: dict[str, tuple[str, str]] = {
-    "teamos": ("1d76db", "Team OS managed issue"),
+    "openteam": ("1d76db", "OpenTeam managed issue"),
     "type:feature": ("1d76db", "Feature work item"),
     "type:bug": ("d73a4a", "Bug fix work item"),
     "type:process": ("6f42c1", "Process improvement item"),
@@ -144,7 +158,7 @@ def _label_spec(name: str) -> tuple[str, str]:
     if lbl in _LABEL_DEFAULTS:
         return _LABEL_DEFAULTS[lbl]
     if lbl.startswith("source:"):
-        return ("0e8a16", f"Created or updated by Team OS {lbl.split(':', 1)[1]}")
+        return ("0e8a16", f"Created or updated by OpenTeam {lbl.split(':', 1)[1]}")
     if lbl.startswith("module:"):
         return ("bfd4f2", f"Module scope: {lbl.split(':', 1)[1]}")
     if lbl.startswith("milestone:"):
@@ -304,23 +318,33 @@ class CommentRef:
 
 def list_issue_comments(repo: str, number: int, *, per_page: int = 100) -> list[CommentRef]:
     owner, name = _parse_repo(repo)
-    url = _api_url() + f"/repos/{owner}/{name}/issues/{int(number)}/comments?per_page={int(per_page)}"
-    data = _request("GET", url, payload=None, timeout_sec=20)
     out: list[CommentRef] = []
-    if isinstance(data, list):
+    page = 1
+    while True:
+        url = (
+            _api_url()
+            + f"/repos/{owner}/{name}/issues/{int(number)}/comments?"
+            + urllib.parse.urlencode({"per_page": int(per_page), "page": page})
+        )
+        data = _request("GET", url, payload=None, timeout_sec=20)
+        if not isinstance(data, list):
+            break
         for it in data:
             user = it.get("user") or {}
-            out.append(
-                CommentRef(
-                    id=int(it.get("id") or 0),
-                    url=str(it.get("html_url") or ""),
-                    body=str(it.get("body") or ""),
-                    user_login=str(user.get("login") or ""),
-                    created_at=str(it.get("created_at") or ""),
-                    updated_at=str(it.get("updated_at") or ""),
-                )
+            c = CommentRef(
+                id=int(it.get("id") or 0),
+                url=str(it.get("html_url") or ""),
+                body=str(it.get("body") or ""),
+                user_login=str(user.get("login") or ""),
+                created_at=str(it.get("created_at") or ""),
+                updated_at=str(it.get("updated_at") or ""),
             )
-    return [c for c in out if c.id > 0]
+            if c.id > 0:
+                out.append(c)
+        if len(data) < per_page:
+            break
+        page += 1
+    return out
 
 
 def create_issue_comment(repo: str, number: int, *, body: str) -> CommentRef:

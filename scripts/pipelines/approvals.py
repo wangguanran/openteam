@@ -99,7 +99,7 @@ def risk_classify(*, action_kind: str, action_summary: str, payload: dict[str, A
 
 
 def _role_auto() -> str:
-    v = str(os.getenv("TEAMOS_CLUSTER_ROLE") or "").strip().lower()
+    v = str(os.getenv("OPENTEAM_CLUSTER_ROLE") or "").strip().lower()
     if v in ("leader", "assistant"):
         return v
     return "single"
@@ -517,7 +517,7 @@ def cmd_record_execution(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Approvals engine (DB-backed; deterministic)")
     add_default_args(ap)
-    ap.add_argument("--db-url", default="", help="override TEAMOS_DB_URL")
+    ap.add_argument("--db-url", default="", help="override OPENTEAM_DB_URL")
     ap.add_argument("--json", action="store_true", help="emit JSON")
     sp = ap.add_subparsers(dest="cmd", required=True)
 

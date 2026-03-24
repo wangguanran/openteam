@@ -32,7 +32,7 @@ def _dump(payload: object) -> str:
 def _resolve_target(*, target_id: str, project_id: str) -> dict:
     existing = improvement_store.get_target(target_id)
     if existing:
-        project_id = str(existing.get("project_id") or project_id or "teamos").strip() or "teamos"
+        project_id = str(existing.get("project_id") or project_id or "openteam").strip() or "openteam"
         return team_workflow_runtime.resolve_target(
             target_id=target_id,
             repo_path=str(existing.get("repo_root") or "").strip(),
@@ -60,7 +60,7 @@ def main() -> int:
     team_id = str(args.team_id or "").strip()
     if not team_id:
         raise RuntimeError("team_id is required")
-    project_id = str(args.project_id or "teamos").strip() or "teamos"
+    project_id = str(args.project_id or "openteam").strip() or "openteam"
     workflow = crewai_workflow_registry.workflow_for_lane_phase(
         "bug",
         crewai_workflow_registry.PHASE_FINDING,

@@ -7,20 +7,20 @@ source "$SCRIPT_DIR/../_common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/teamos.sh runtime-init [--path <dir>] [--force]
+  ./scripts/openteam.sh runtime-init [--path <dir>] [--force]
 
 Default:
-  --path ~/.teamos/runtime-config/default
+  --path ~/.openteam/runtime-config/default
 
 Behavior:
   - Copies only runtime deployment config files into the runtime config directory
   - By default, does NOT overwrite existing files
   - With --force, overwrites existing files with a .bak.<timestamp> backup
-  - Seeds TEAM_OS_REPO_PATH and docker project defaults in .env.example
+  - Seeds OPENTEAM_REPO_PATH and docker project defaults in .env.example
 EOF
 }
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 TEMPLATE_DIR="$ROOT/scaffolds/runtime"
 
 target=""
@@ -105,16 +105,16 @@ env_example="$target/.env.example"
 if [[ -f "$env_example" ]]; then
   base_name="$(basename "$target")"
   if [[ "$base_name" == "default" ]]; then
-    project_name="team-os-runtime"
+    project_name="openteam-runtime"
   else
-    project_name="teamos-$(slugify "$base_name")"
-    if [[ -z "$project_name" || "$project_name" == "teamos-" ]]; then
-      project_name="team-os-runtime"
+    project_name="openteam-$(slugify "$base_name")"
+    if [[ -z "$project_name" || "$project_name" == "openteam-" ]]; then
+      project_name="openteam-runtime"
     fi
   fi
-  upsert_kv_file "$env_example" "TEAM_OS_REPO_PATH" "$ROOT"
-  upsert_kv_file "$env_example" "TEAMOS_DOCKER_PROJECT_NAME" "$project_name"
-  upsert_kv_file "$env_example" "TEAMOS_DOCKER_VOLUME_PREFIX" "$project_name"
+  upsert_kv_file "$env_example" "OPENTEAM_REPO_PATH" "$ROOT"
+  upsert_kv_file "$env_example" "OPENTEAM_DOCKER_PROJECT_NAME" "$project_name"
+  upsert_kv_file "$env_example" "OPENTEAM_DOCKER_VOLUME_PREFIX" "$project_name"
 fi
 
 echo
@@ -127,7 +127,7 @@ echo "next:"
 echo "  cd \"$target\""
 echo "  cp .env.example .env"
 echo "  # optional: generate local secrets (no output):"
-echo "  #   cd \"$ROOT\" && ./scripts/teamos.sh runtime-secrets --path \"$target\""
+echo "  #   cd \"$ROOT\" && ./scripts/openteam.sh runtime-secrets --path \"$target\""
 echo "  # runtime state/tmp/cache will live in Docker named volumes"
 echo "  make up"
 echo "  make ps"

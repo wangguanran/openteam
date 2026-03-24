@@ -20,8 +20,8 @@ check_cmd() {
   fi
 }
 
-echo "== Team OS Doctor =="
-echo "repo_root: $(teamos_root)"
+echo "== OpenTeam Doctor =="
+echo "repo_root: $(openteam_root)"
 echo
 
 for c in "${need_cmds[@]}"; do
@@ -63,7 +63,7 @@ fi
 if python3 "$ROOT/scripts/governance/check_repo_purity.py" --quiet >/dev/null 2>&1; then
   echo "repo_purity: OK"
 else
-  echo "repo_purity: FAIL (run: teamos workspace migrate --from-repo)" >&2
+  echo "repo_purity: FAIL (run: openteam workspace migrate --from-repo)" >&2
   missing=1
 fi
 
@@ -71,17 +71,17 @@ fi
 if python3 "$ROOT/scripts/policy_check.py" --quiet >/dev/null 2>&1; then
   echo "policy: OK"
 else
-  echo "policy: FAIL (run: ./scripts/teamos.sh policy-check)" >&2
+  echo "policy: FAIL (run: ./scripts/openteam.sh policy-check)" >&2
   missing=1
 fi
 
 # Workspace checks (project truth sources must live OUTSIDE this repo).
-root="$(teamos_root)"
-if [[ -x "$root/teamos" ]]; then
-  if "$root/teamos" workspace doctor >/dev/null 2>&1; then
+root="$(openteam_root)"
+if [[ -x "$root/openteam" ]]; then
+  if "$root/openteam" workspace doctor >/dev/null 2>&1; then
     echo "workspace: OK"
   else
-    echo "workspace: FAIL (run: teamos workspace init)" >&2
+    echo "workspace: FAIL (run: openteam workspace init)" >&2
     missing=1
   fi
 fi

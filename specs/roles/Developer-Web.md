@@ -3,7 +3,7 @@ role_id: "Developer-Web"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "Web 前端/控制台/可视化实现"
   - "前端构建/测试/发布路径可回归"
@@ -29,7 +29,7 @@ metrics_required:
   - "frontend_tests_run"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Developer-Web/index.md"
+    - ".openteam/memory/roles/Developer-Web/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -78,4 +78,4 @@ permissions:
 ## 记忆写入规则
 
 - 常用脚手架/构建坑写入：
-  - `.team-os/memory/roles/Developer-Web/index.md`
+  - `.openteam/memory/roles/Developer-Web/index.md`

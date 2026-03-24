@@ -23,7 +23,7 @@ class RuntimeAutoUpdateTests(unittest.TestCase):
         self.assertFalse(settings["enabled"])
         self.assertEqual(settings["interval_sec"], 300)
         self.assertFalse(settings["only_if_idle"])
-        self.assertEqual(settings["image"], "ghcr.io/wangguanran/teamos-control-plane:main")
+        self.assertEqual(settings["image"], "ghcr.io/openteam-dev/openteam-control-plane:main")
         self.assertEqual(settings["port"], 8787)
 
     def test_load_runtime_settings_reads_env(self) -> None:
@@ -32,10 +32,10 @@ class RuntimeAutoUpdateTests(unittest.TestCase):
             (runtime_dir / ".env").write_text(
                 "\n".join(
                     [
-                        "TEAMOS_CONTROL_PLANE_AUTO_UPDATE=1",
-                        "TEAMOS_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC=120",
-                        "TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1",
-                        "TEAMOS_CONTROL_PLANE_IMAGE=ghcr.io/example/custom:sha-123",
+                        "OPENTEAM_CONTROL_PLANE_AUTO_UPDATE=1",
+                        "OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC=120",
+                        "OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1",
+                        "OPENTEAM_CONTROL_PLANE_IMAGE=ghcr.io/example/custom:sha-123",
                         "CONTROL_PLANE_PORT=9999",
                     ]
                 ),

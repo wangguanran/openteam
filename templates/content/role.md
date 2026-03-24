@@ -24,7 +24,7 @@ metrics_required:
   - "<metric_name>"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/<ROLE_ID>/index.md"
+    - ".openteam/memory/roles/<ROLE_ID>/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -45,8 +45,8 @@ permissions:
 
 ## 输入 (Inputs)
 
-- 任务台账：`.team-os/ledger/tasks/<TASK_ID>.yaml`
-- 任务日志：`.team-os/logs/tasks/<TASK_ID>/*`
+- 任务台账：`.openteam/ledger/tasks/<TASK_ID>.yaml`
+- 任务日志：`.openteam/logs/tasks/<TASK_ID>/*`
 - 相关工作流：`specs/workflows/*.yaml`
 
 ## 输出 (Outputs)
@@ -84,12 +84,12 @@ permissions:
 
 Skill Boot 必产物：
 
-- 来源摘要：`.team-os/kb/sources/`
-- Skill Card：`.team-os/kb/roles/<ROLE_ID>/skill_cards/` 或 `.team-os/kb/platforms/<Platform>/skill_cards/`
-- 角色记忆索引：`.team-os/memory/roles/<ROLE_ID>/index.md`
+- 来源摘要：`.openteam/kb/sources/`
+- Skill Card：`.openteam/kb/roles/<ROLE_ID>/skill_cards/` 或 `.openteam/kb/platforms/<Platform>/skill_cards/`
+- 角色记忆索引：`.openteam/memory/roles/<ROLE_ID>/index.md`
 
 ## 记忆写入规则
 
 - 任何可复用的经验/坑/决策模板，必须写入：
-  - `.team-os/memory/roles/<ROLE_ID>/index.md`
+  - `.openteam/memory/roles/<ROLE_ID>/index.md`
   - 并链接到对应 Skill Card 与来源摘要

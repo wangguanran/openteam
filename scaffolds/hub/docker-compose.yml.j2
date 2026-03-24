@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16
-    container_name: teamos-hub-postgres
+    container_name: openteam-hub-postgres
     restart: unless-stopped
     env_file:
       - ../env/.env
@@ -21,7 +21,7 @@ services:
       retries: 10
   redis:
     image: redis:7
-    container_name: teamos-hub-redis
+    container_name: openteam-hub-redis
     restart: unless-stopped
     env_file:
       - ../env/.env

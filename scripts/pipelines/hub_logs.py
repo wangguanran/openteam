@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_hub_compose_required(hub)
         enforce_hub_env_config_security(hub)
     except PipelineError as e:
-        print(f"ERROR: {e}\nnext: teamos hub init")
+        print(f"ERROR: {e}\nnext: openteam hub init")
         return 2
 
     cmd = ["logs", "--tail", str(int(args.tail))]

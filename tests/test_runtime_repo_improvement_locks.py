@@ -38,42 +38,42 @@ else:  # pragma: no cover
 class RepoImprovementLockTests(unittest.TestCase):
     def test_repo_improvement_lock_key_prefers_target_id(self) -> None:
         key = app_main._repo_improvement_lock_key(
-            project_id="teamos",
-            target_id="wangguanran-projectmanager",
+            project_id="openteam",
+            target_id="openteam-dev-projectmanager",
             repo_path="/tmp/repo",
-            repo_url="https://github.com/wangguanran/ProjectManager.git",
-            repo_locator="wangguanran/ProjectManager",
+            repo_url="https://github.com/openteam-dev/ProjectManager.git",
+            repo_locator="openteam-dev/ProjectManager",
         )
-        self.assertEqual(key, "target:wangguanran-projectmanager")
+        self.assertEqual(key, "target:openteam-dev-projectmanager")
 
     def test_repo_improvement_lock_key_falls_back_to_repo_path(self) -> None:
         key = app_main._repo_improvement_lock_key(
-            project_id="teamos",
+            project_id="openteam",
             repo_path="/tmp/repo",
         )
         self.assertEqual(key, "repo_path:/tmp/repo")
 
     def test_scoped_run_locks_allow_parallel_different_keys(self) -> None:
         locks = app_main._ScopedRunLocks()
-        self.assertTrue(locks.acquire("target:teamos"))
+        self.assertTrue(locks.acquire("target:openteam"))
         self.assertTrue(locks.acquire("target:projectmanager"))
-        self.assertFalse(locks.acquire("target:teamos"))
-        locks.release("target:teamos")
-        self.assertTrue(locks.acquire("target:teamos"))
+        self.assertFalse(locks.acquire("target:openteam"))
+        locks.release("target:openteam")
+        self.assertTrue(locks.acquire("target:openteam"))
 
     def test_delivery_lock_key_prefers_task_then_target(self) -> None:
         task_key = app_main._repo_improvement_delivery_lock_key(
-            project_id="teamos",
-            target_id="wangguanran-projectmanager",
+            project_id="openteam",
+            target_id="openteam-dev-projectmanager",
             task_id="TASK-123",
         )
         target_key = app_main._repo_improvement_delivery_lock_key(
-            project_id="teamos",
-            target_id="wangguanran-projectmanager",
+            project_id="openteam",
+            target_id="openteam-dev-projectmanager",
             task_id="",
         )
         self.assertEqual(task_key, "task:TASK-123")
-        self.assertEqual(target_key, "target:wangguanran-projectmanager")
+        self.assertEqual(target_key, "target:openteam-dev-projectmanager")
 
     def test_repo_improvement_run_id_set_reads_run_started_flow(self) -> None:
         fake_db = SimpleNamespace(
@@ -99,11 +99,11 @@ class RepoImprovementLockTests(unittest.TestCase):
         with mock.patch.object(
             app_main.improvement_store,
             "get_target",
-            return_value={"target_id": "wangguanran-projectmanager", "project_id": "projectmanager"},
+            return_value={"target_id": "openteam-dev-projectmanager", "project_id": "projectmanager"},
         ):
             project_id = app_main._effective_repo_improvement_project_id(
-                project_id="teamos",
-                target_id="wangguanran-projectmanager",
+                project_id="openteam",
+                target_id="openteam-dev-projectmanager",
             )
         self.assertEqual(project_id, "projectmanager")
 
@@ -111,7 +111,7 @@ class RepoImprovementLockTests(unittest.TestCase):
         with mock.patch.object(
             app_main.improvement_store,
             "get_target",
-            return_value={"target_id": "wangguanran-projectmanager", "project_id": "projectmanager"},
+            return_value={"target_id": "openteam-dev-projectmanager", "project_id": "projectmanager"},
         ), mock.patch.object(
             app_main,
             "_cleanup_stale_repo_improvement_activity",
@@ -129,8 +129,8 @@ class RepoImprovementLockTests(unittest.TestCase):
         ) as sweep_mock:
             out = app_main._run_repo_improvement_delivery_iteration(
                 actor="test",
-                project_id="teamos",
-                target_id="wangguanran-projectmanager",
+                project_id="openteam",
+                target_id="openteam-dev-projectmanager",
                 task_id="PROJECTMANAGER-0003",
                 force=True,
             )
@@ -145,7 +145,7 @@ class RepoImprovementLockTests(unittest.TestCase):
             run_id="run-projectmanager-1",
             project_id="projectmanager",
             workstream_id="general",
-            objective="Continuous improvement sweep for target wangguanran/ProjectManager",
+            objective="Continuous improvement sweep for target openteam-dev/ProjectManager",
             state="RUNNING",
         )
         fake_db = SimpleNamespace(list_runs=lambda project_id=None, workstream_id=None: [active_run])
@@ -168,7 +168,7 @@ class RepoImprovementLockTests(unittest.TestCase):
             run_id="run-projectmanager-1",
             project_id="projectmanager",
             workstream_id="general",
-            objective="Continuous improvement sweep for target wangguanran/ProjectManager",
+            objective="Continuous improvement sweep for target openteam-dev/ProjectManager",
             state="RUNNING",
         )
         fake_db = SimpleNamespace(
@@ -197,7 +197,7 @@ class RepoImprovementLockTests(unittest.TestCase):
                     actor="test",
                     project_id="projectmanager",
                     workstream_id="general",
-                    objective="Continuous improvement sweep for target wangguanran/ProjectManager",
+                    objective="Continuous improvement sweep for target openteam-dev/ProjectManager",
                     trigger="continuous_loop",
                 )
 
@@ -245,19 +245,19 @@ class RepoImprovementLockTests(unittest.TestCase):
         fake_db.add_event = _add_event
 
         original_db = app_main.DB
-        original_ttl = os.environ.get("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC")
+        original_ttl = os.environ.get("OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC")
         try:
             app_main.DB = fake_db
-            os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = "300"
+            os.environ["OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = "300"
             app_main._cleanup_stale_repo_improvement_activity()
             self.assertEqual(fake_db.update_run_state_calls, [("run-123", "FAILED")])
             self.assertTrue(any(call[0] == "TEAM_WORKFLOW_STALE_RUN_CLEANED" for call in fake_db.event_calls))
         finally:
             app_main.DB = original_db
             if original_ttl is None:
-                os.environ.pop("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", None)
+                os.environ.pop("OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", None)
             else:
-                os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = original_ttl
+                os.environ["OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = original_ttl
 
     def test_cleanup_stale_repo_improvement_run_cleans_gap_and_milestone_agents(self) -> None:
         stale_agents = [
@@ -299,10 +299,10 @@ class RepoImprovementLockTests(unittest.TestCase):
         fake_db.add_event = _add_event
 
         original_db = app_main.DB
-        original_ttl = os.environ.get("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC")
+        original_ttl = os.environ.get("OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC")
         try:
             app_main.DB = fake_db
-            os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = "300"
+            os.environ["OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = "300"
             app_main._cleanup_stale_repo_improvement_activity()
             cleaned_ids = {str(call.get("agent_id") or "") for call in fake_db.update_calls}
             self.assertEqual(cleaned_ids, {"agent-gap", "agent-ms"})
@@ -313,9 +313,9 @@ class RepoImprovementLockTests(unittest.TestCase):
         finally:
             app_main.DB = original_db
             if original_ttl is None:
-                os.environ.pop("TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", None)
+                os.environ.pop("OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC", None)
             else:
-                os.environ["TEAMOS_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = original_ttl
+                os.environ["OPENTEAM_RUNTIME_TEAM_WORKFLOW_STALE_TTL_SEC"] = original_ttl
 
 
 if __name__ == "__main__":

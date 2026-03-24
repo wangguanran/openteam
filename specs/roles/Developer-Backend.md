@@ -3,7 +3,7 @@ role_id: "Developer-Backend"
 version: "0.2"
 last_updated: "2026-02-16"
 owners:
-  - "Team OS"
+  - "OpenTeam"
 scope:
   - "后端 API/服务/集成实现"
   - "单元测试/集成测试与可回归证据"
@@ -33,7 +33,7 @@ metrics_required:
   - "artifact_paths_recorded"
 memory_policy:
   write_paths:
-    - ".team-os/memory/roles/Developer-Backend/index.md"
+    - ".openteam/memory/roles/Developer-Backend/index.md"
   indexing_required: true
 risk_policy:
   default_risk_level: "R1"
@@ -84,4 +84,4 @@ permissions:
 ## 记忆写入规则
 
 - 高价值实现经验与踩坑写入：
-  - `.team-os/memory/roles/Developer-Backend/index.md`
+  - `.openteam/memory/roles/Developer-Backend/index.md`

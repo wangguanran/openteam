@@ -4,11 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../_common.sh"
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 ROLE="${1:-}"
 TOPIC="${2:-}"
 if [[ -z "$ROLE" || -z "$TOPIC" ]]; then
-  echo "Usage: ./scripts/teamos.sh skill-boot \"<role>\" \"<topic_or_platform>\"" >&2
+  echo "Usage: ./scripts/openteam.sh skill-boot \"<role>\" \"<topic_or_platform>\"" >&2
   exit 2
 fi
 
@@ -18,19 +18,19 @@ if [[ -z "$slug" ]]; then
   slug="topic"
 fi
 
-ensure_dir "$ROOT/.team-os/kb/sources"
-ensure_dir "$ROOT/.team-os/kb/roles/$ROLE/skill_cards"
-ensure_dir "$ROOT/.team-os/memory/roles/$ROLE"
+ensure_dir "$ROOT/.openteam/kb/sources"
+ensure_dir "$ROOT/.openteam/kb/roles/$ROLE/skill_cards"
+ensure_dir "$ROOT/.openteam/memory/roles/$ROLE"
 
-src_path="$ROOT/.team-os/kb/sources/$(date +%Y%m%d)_${slug}.md"
-skill_path="$ROOT/.team-os/kb/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}.md"
-mem_index="$ROOT/.team-os/memory/roles/$ROLE/index.md"
+src_path="$ROOT/.openteam/kb/sources/$(date +%Y%m%d)_${slug}.md"
+skill_path="$ROOT/.openteam/kb/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}.md"
+mem_index="$ROOT/.openteam/memory/roles/$ROLE/index.md"
 
 if [[ -e "$src_path" || -e "$skill_path" ]]; then
   # Avoid overwrite by suffixing timestamp.
   suffix="$(ts_compact_utc)"
-  src_path="$ROOT/.team-os/kb/sources/$(date +%Y%m%d)_${slug}_${suffix}.md"
-  skill_path="$ROOT/.team-os/kb/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}_${suffix}.md"
+  src_path="$ROOT/.openteam/kb/sources/$(date +%Y%m%d)_${slug}_${suffix}.md"
+  skill_path="$ROOT/.openteam/kb/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}_${suffix}.md"
 fi
 
 if ! safe_create_file "$src_path"; then

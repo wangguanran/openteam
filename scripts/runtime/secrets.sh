@@ -7,10 +7,10 @@ source "$SCRIPT_DIR/../_common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/teamos.sh runtime-secrets [--path <dir>]
+  ./scripts/openteam.sh runtime-secrets [--path <dir>]
 
 Default:
-  --path ~/.teamos/runtime-config/default
+  --path ~/.openteam/runtime-config/default
 
 Behavior:
   - Ensures <dir>/.env exists (creates from .env.example if missing)
@@ -23,7 +23,7 @@ Behavior:
 EOF
 }
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 
 target=""
 while [[ $# -gt 0 ]]; do
@@ -53,7 +53,7 @@ env_file="$target/.env"
 
 if [[ ! -f "$env_example" ]]; then
   echo "Missing: $env_example" >&2
-  echo "hint: run: cd \"$ROOT\" && ./scripts/teamos.sh runtime-init --path \"$target\"" >&2
+  echo "hint: run: cd \"$ROOT\" && ./scripts/openteam.sh runtime-init --path \"$target\"" >&2
   exit 1
 fi
 

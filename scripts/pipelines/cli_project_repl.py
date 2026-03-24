@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     repo = resolve_repo_root(args)
-    cli = repo / "teamos"
+    cli = repo / "openteam"
     if not cli.exists():
         print(json.dumps({"ok": False, "error": f"missing cli: {cli}"}, ensure_ascii=False, indent=2))
         return 2

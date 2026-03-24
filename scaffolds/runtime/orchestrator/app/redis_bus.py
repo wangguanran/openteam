@@ -5,11 +5,11 @@ import os
 from typing import Any, Optional
 
 
-_DEFAULT_EVENTS_CHANNEL = "teamos.events"
+_DEFAULT_EVENTS_CHANNEL = "openteam.events"
 
 
 def _redis_url() -> str:
-    return str(os.getenv("TEAMOS_REDIS_URL") or "").strip()
+    return str(os.getenv("OPENTEAM_REDIS_URL") or "").strip()
 
 
 def _import_redis_module():
@@ -66,7 +66,7 @@ def _event_channel(channel: str) -> str:
     ch = str(channel or "").strip()
     if ch:
         return ch
-    env_ch = str(os.getenv("TEAMOS_REDIS_EVENTS_CHANNEL") or "").strip()
+    env_ch = str(os.getenv("OPENTEAM_REDIS_EVENTS_CHANNEL") or "").strip()
     return env_ch or _DEFAULT_EVENTS_CHANNEL
 
 

@@ -18,7 +18,7 @@ def _team_id_from_context(context: Any) -> str:
 
 
 def _safe_target_from_context(context: Any) -> dict[str, Any]:
-    project_id = team_workflow_runtime.safe_project_id(str(context.project_id or "teamos"))
+    project_id = team_workflow_runtime.safe_project_id(str(context.project_id or "openteam"))
     return team_workflow_runtime.resolve_target(
         target_id=str(context.target_id or "").strip(),
         repo_path=str((context.extra or {}).get("repo_path") or "").strip(),
@@ -29,9 +29,9 @@ def _safe_target_from_context(context: Any) -> dict[str, Any]:
 
 
 def _repo_context_outputs(*, target: dict[str, Any], workflow: Any, force: bool) -> dict[str, Any]:
-    project_id = team_workflow_runtime.safe_project_id(str(target.get("project_id") or "teamos"))
-    target_id = str(target.get("target_id") or "").strip() or "teamos"
-    repo_root = Path(str(target.get("repo_root") or team_workflow_runtime.team_os_root())).expanduser().resolve()
+    project_id = team_workflow_runtime.safe_project_id(str(target.get("project_id") or "openteam"))
+    target_id = str(target.get("target_id") or "").strip() or "openteam"
+    repo_root = Path(str(target.get("repo_root") or team_workflow_runtime.openteam_root())).expanduser().resolve()
     scan_repo_root = team_workflow_runtime.prepare_discovery_repo(source_repo_root=repo_root, target=target)
     repo_context = team_workflow_runtime.collect_repo_context(
         repo_root=repo_root,
@@ -93,9 +93,9 @@ def materialize_findings_skill(*, context: Any, inputs: dict[str, Any], state: d
     raw_plan = inputs.get("plan") or inputs.get("plan_json") or {}
     plan = UpgradePlan.model_validate(raw_plan)
     workflow = context.workflow
-    project_id = team_workflow_runtime.safe_project_id(str(inputs.get("project_id") or context.project_id or "teamos"))
-    target_id = str(inputs.get("target_id") or context.target_id or "").strip() or "teamos"
-    repo_root = Path(str(inputs.get("repo_root") or team_workflow_runtime.team_os_root())).expanduser().resolve()
+    project_id = team_workflow_runtime.safe_project_id(str(inputs.get("project_id") or context.project_id or "openteam"))
+    target_id = str(inputs.get("target_id") or context.target_id or "").strip() or "openteam"
+    repo_root = Path(str(inputs.get("repo_root") or team_workflow_runtime.openteam_root())).expanduser().resolve()
     repo_locator = str(inputs.get("repo_locator") or "").strip()
     current_version = str(inputs.get("current_version") or plan.current_version or "0.1.0").strip() or "0.1.0"
     dry_run = bool(context.dry_run)
@@ -300,7 +300,7 @@ def apply_issue_discussion_skill(*, context: Any, inputs: dict[str, Any], state:
             extra={"status": "PENDING_CONFIRMATION", "module": str(response.module or "").strip()},
         )
     proposal = team_workflow_runtime.ensure_proposal_discussion_issue(proposal)
-    marker = f"<!-- teamos:proposal-reply:{str(proposal.get('proposal_id') or '').strip()}:{latest_comment_id} -->"
+    marker = f"<!-- openteam:proposal-reply:{str(proposal.get('proposal_id') or '').strip()}:{latest_comment_id} -->"
     issue_number = team_workflow_runtime.discussion_issue_number(proposal)
     repo_locator = str(proposal.get("repo_locator") or "").strip()
     if issue_number > 0 and repo_locator:

@@ -1,4 +1,4 @@
-# TeamOS Runtime Config
+# OpenTeam Runtime Config
 
 单机运行时环境（Docker Compose），用于 24/7 跑：
 
@@ -14,38 +14,38 @@
 
 ## Repo vs Workspace（硬隔离）
 
-Team OS 有两个层级的“真相源”：
+OpenTeam 有两个层级的“真相源”：
 
-- **Team OS 自身**（scope=`teamos`）：业务真相源可落盘在 `team-os/` git 仓库（例如 `docs/product/teamos/requirements`）。
-- **运行态文件**（runtime state/db/ledger/logs/cluster）：统一保存在 Docker named volumes（不再写入 `team-os/.team-os`，也不要求单独的 `team-os-runtime/` 目录）。
-- **任何项目**（scope=`project:<id>`）：必须落盘在 **Workspace**（不在 `team-os/` 目录树内）。
+- **OpenTeam 自身**（scope=`openteam`）：业务真相源可落盘在 `openteam/` git 仓库（例如 `docs/product/openteam/requirements`）。
+- **运行态文件**（runtime state/db/ledger/logs/cluster）：统一保存在 Docker named volumes（不再写入 `openteam/.openteam`，也不要求单独的 `openteam-runtime/` 目录）。
+- **任何项目**（scope=`project:<id>`）：必须落盘在 **Workspace**（不在 `openteam/` 目录树内）。
 
 默认 Workspace 路径：
 
-- `~/.teamos/workspace`
+- `~/.openteam/workspace`
 
 Runtime 会挂载宿主机 Workspace 到容器内：
 
-- host: `${HOME}/.teamos/workspace`
-- container: `/teamos-workspace`
-- env: `TEAMOS_WORKSPACE_ROOT=/teamos-workspace`
+- host: `${HOME}/.openteam/workspace`
+- container: `/openteam-workspace`
+- env: `OPENTEAM_WORKSPACE_ROOT=/openteam-workspace`
 
 在启动 runtime 前，建议先初始化 Workspace：
 
 ```bash
-cd ../team-os
-./teamos workspace init
-./teamos workspace doctor
+cd ../openteam
+./openteam workspace init
+./openteam workspace doctor
 ```
 
 ## 启动/停止
 
 ```bash
-cd ~/.teamos/runtime-config/default
+cd ~/.openteam/runtime-config/default
 cp .env.example .env
-# 外部数据库：填写 TEAMOS_DB_URL
-# 本地数据库：保持 TEAMOS_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
-# 按需填写 TEAMOS_LLM_API_KEY
+# 外部数据库：填写 OPENTEAM_DB_URL
+# 本地数据库：保持 OPENTEAM_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
+# 按需填写 OPENTEAM_LLM_API_KEY
 make up
 make ps
 ```
@@ -53,21 +53,21 @@ make ps
 如需把 CrewAI 的思考强度拉满，设置：
 
 ```bash
-export TEAMOS_CREWAI_REASONING_EFFORT=xhigh
+export OPENTEAM_CREWAI_REASONING_EFFORT=xhigh
 ```
 
-当前 runtime 默认使用 `openrouter/openai/gpt-5.4`，并将 `TEAMOS_LLM_MODEL` 设为该值，同时将 `TEAMOS_CREWAI_REASONING_EFFORT` 设为 `xhigh`。
+当前 runtime 默认使用 `openrouter/openai/gpt-5.4`，并将 `OPENTEAM_LLM_MODEL` 设为该值，同时将 `OPENTEAM_CREWAI_REASONING_EFFORT` 设为 `xhigh`。
 
-Repo-improvement 的 background workflow loop 不再由 `TEAMOS_TEAM_WORKFLOW_*` 环境变量控制；具体的 `bug-finding`、`feature-discussion`、`coding` 等 workflow 配置都定义在 `scaffolds/runtime/orchestrator/app/teams/repo_improvement/specs/workflows/*.yaml`。Runtime 侧只保留全局开关 `TEAMOS_RUNTIME_WORKFLOW_LOOPS_ENABLED`。
+Repo-improvement 的 background workflow loop 不再由 `OPENTEAM_TEAM_WORKFLOW_*` 环境变量控制；具体的 `bug-finding`、`feature-discussion`、`coding` 等 workflow 配置都定义在 `scaffolds/runtime/orchestrator/app/teams/repo_improvement/specs/workflows/*.yaml`。Runtime 侧只保留全局开关 `OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED`。
 
 Team 目录现在只保留配置；workflow 里的 `kind: skill` 节点会通过 `scaffolds/runtime/orchestrator/app/skill_library/specs/*.yaml` 描述的技能库执行，具体实现位于通用 runtime skill/domain 模块，而不是 team 目录脚本。
 
 如需让本地 runtime 自动跟随 GHCR 上的新 `control-plane` 镜像，设置：
 
 ```bash
-TEAMOS_CONTROL_PLANE_AUTO_UPDATE=1
-TEAMOS_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC=300
-TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
+OPENTEAM_CONTROL_PLANE_AUTO_UPDATE=1
+OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC=300
+OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
 ```
 
 启用后：
@@ -75,7 +75,7 @@ TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
 - `make up` 会自动拉起本地镜像 watcher
 - watcher 会周期性执行 `docker compose pull control-plane`
 - 检测到本地镜像更新后，会自动重建 `control-plane`
-- 如需只在空闲时更新，可设置 `TEAMOS_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1`
+- 如需只在空闲时更新，可设置 `OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1`
 - 日志落在 `auto_update/watcher.log`
 
 手动查看/控制：
@@ -90,63 +90,63 @@ make auto-update-start
 停止：
 
 ```bash
-cd ~/.teamos/runtime-config/default
+cd ~/.openteam/runtime-config/default
 make down
 ```
 
 说明：
 
-- `make up`：只使用 GitHub CI 发布的 `TEAMOS_CONTROL_PLANE_IMAGE` 镜像启动；本地不允许构建 control-plane 镜像
-- `control-plane` 会以 `/team-os/scaffolds/runtime/orchestrator` 作为工作目录运行，因此优先执行当前挂载的 TeamOS 仓库源码，而不是镜像内打包的旧 `/app/app`
+- `make up`：只使用 GitHub CI 发布的 `OPENTEAM_CONTROL_PLANE_IMAGE` 镜像启动；本地不允许构建 control-plane 镜像
+- `control-plane` 会以 `/openteam/scaffolds/runtime/orchestrator` 作为工作目录运行，因此优先执行当前挂载的 OpenTeam 仓库源码，而不是镜像内打包的旧 `/app/app`
 - `docker-compose.yml` 默认总会启动本地 `postgres` 容器
-- 当 `TEAMOS_DB_URL` 为空时，control-plane 连接本地 `postgres`
-- 当 `TEAMOS_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
+- 当 `OPENTEAM_DB_URL` 为空时，control-plane 连接本地 `postgres`
+- 当 `OPENTEAM_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
 - runtime state/hub/cache/tmp/worktrees 默认持久化在 Docker named volumes
-- 宿主机默认只保留 runtime 配置目录：`~/.teamos/runtime-config/default`
+- 宿主机默认只保留 runtime 配置目录：`~/.openteam/runtime-config/default`
 
 ## 镜像化启动（推荐给新机器）
 
 如果只想直接拉镜像启动，不需要本地构建：
 
 ```bash
-cd ../team-os
+cd ../openteam
 ./scripts/runtime_up_image.sh
 # 或者指定外部数据库：
-./scripts/runtime_up_image.sh --db-url 'postgresql://user:password@host:5432/team_os'
+./scripts/runtime_up_image.sh --db-url 'postgresql://user:password@host:5432/openteam'
 ```
 
 默认会：
 
-- 初始化 `~/.teamos/runtime-config/default`
+- 初始化 `~/.openteam/runtime-config/default`
 - 生成/更新 `.env`
-- 拉取 `ghcr.io/wangguanran/teamos-control-plane:main`
+- 拉取 `ghcr.io/openteam-dev/openteam-control-plane:main`
 - 启动统一的 `docker-compose.yml`
-- 若 `.env` 中启用了 `TEAMOS_CONTROL_PLANE_AUTO_UPDATE=1`，同步拉起本地镜像 watcher
+- 若 `.env` 中启用了 `OPENTEAM_CONTROL_PLANE_AUTO_UPDATE=1`，同步拉起本地镜像 watcher
 
 数据库模式：
 
-- 传入 `--db-url`：写入 `TEAMOS_DB_URL`，control-plane 直连外部数据库
-- 不传 `--db-url`：保持 `TEAMOS_DB_URL` 为空，control-plane 使用本地 `postgres`
+- 传入 `--db-url`：写入 `OPENTEAM_DB_URL`，control-plane 直连外部数据库
+- 不传 `--db-url`：保持 `OPENTEAM_DB_URL` 为空，control-plane 使用本地 `postgres`
 
 构建期和运行期网络是分离的：
 
 - 镜像构建默认不走代理
 - Node/npm/PyPI/apt 构建源默认指向国内镜像
-- runtime 容器联网单独由 `TEAMOS_RUNTIME_HTTP_PROXY` 等变量控制
-- 若使用 `oauth_codex` + `openai-codex/*`，请确保 `TEAMOS_RUNTIME_NO_PROXY` 包含 `chatgpt.com,.chatgpt.com,api.openai.com,.openai.com`，否则模型调用可能被代理链路上的 Cloudflare challenge 挡住
-- 默认会在 `oauth_codex` 调用期临时撤掉 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY`，由 `TEAMOS_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX=1` 控制
+- runtime 容器联网单独由 `OPENTEAM_RUNTIME_HTTP_PROXY` 等变量控制
+- 若使用 `oauth_codex` + `openai-codex/*`，请确保 `OPENTEAM_RUNTIME_NO_PROXY` 包含 `chatgpt.com,.chatgpt.com,api.openai.com,.openai.com`，否则模型调用可能被代理链路上的 Cloudflare challenge 挡住
+- 默认会在 `oauth_codex` 调用期临时撤掉 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY`，由 `OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX=1` 控制
 
 镜像化 runtime 默认：
 
-- 持久真相源使用 `TEAMOS_DB_URL`
-- 本地只保留 Docker volume 中的 runtime 临时状态；项目真相源继续在 `~/.teamos/workspace`
+- 持久真相源使用 `OPENTEAM_DB_URL`
+- 本地只保留 Docker volume 中的 runtime 临时状态；项目真相源继续在 `~/.openteam/workspace`
 - 继续复用宿主机 `${HOME}/.codex` 和 `${HOME}/.openclaw`
-- 不会隐式把镜像内 `/team-os` 快照当作默认 target 扫描；新部署会先空转等待 target 注册
+- 不会隐式把镜像内 `/openteam` 快照当作默认 target 扫描；新部署会先空转等待 target 注册
 
 ## 日志与健康检查
 
 ```bash
-cd ~/.teamos/runtime-config/default
+cd ~/.openteam/runtime-config/default
 make logs
 ```
 
@@ -164,10 +164,10 @@ curl -fsS -X POST http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/improvement/ta
   -H 'content-type: application/json' \
   -d '{
     "project_id": "demo",
-    "target_id": "demo-team-os",
-    "display_name": "Demo Team OS",
-    "repo_url": "https://github.com/wangguanran/team-os.git",
-    "repo_locator": "wangguanran/team-os",
+    "target_id": "demo-openteam",
+    "display_name": "Demo OpenTeam",
+    "repo_url": "https://github.com/openteam-dev/openteam.git",
+    "repo_locator": "openteam-dev/openteam",
     "workstream_id": "general"
   }'
 ```
@@ -187,15 +187,15 @@ curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
 - `make logs`
 - `make doctor`
 
-## teamos CLI（在 team-os 仓库）
+## openteam CLI（在 openteam 仓库）
 
 ```bash
-cd ../team-os
-./teamos config init
-./teamos status
-./teamos chat --project teamos
-./teamos panel show --project demo
-./teamos panel sync --project demo --dry-run --full
+cd ../openteam
+./openteam config init
+./openteam status
+./openteam chat --project openteam
+./openteam panel show --project demo
+./openteam panel sync --project demo --dry-run --full
 ```
 
 ## GitHub Projects 面板（可选）
@@ -213,11 +213,11 @@ export GITHUB_TOKEN="$(gh auth token -h github.com)"
 
 3) 启用后台同步（会对 GitHub Projects 写入 item/字段，属于“视图层变更”）：
 
-在 `~/.teamos/runtime-config/default/.env` 中设置：
+在 `~/.openteam/runtime-config/default/.env` 中设置：
 
 ```bash
-TEAMOS_PANEL_GH_WRITE_ENABLED=1
-TEAMOS_PANEL_GH_AUTO_SYNC=1
+OPENTEAM_PANEL_GH_WRITE_ENABLED=1
+OPENTEAM_PANEL_GH_AUTO_SYNC=1
 ```
 
 ## Hub APIs
@@ -236,10 +236,10 @@ Control Plane now exposes hub APIs for presentation/orchestration layers:
 
 Default behavior:
 
-- `control-plane` startup triggers one CrewAI repo-improvement run for the current `team-os` repo.
+- `control-plane` startup triggers one CrewAI repo-improvement run for the current `openteam` repo.
 - `control-plane` also keeps a continuous repo-improvement loop running for the current repo.
 - The repo-improvement run can also target another local repo via `repo_path`.
 - Bug findings are materialized immediately.
 - Feature findings become proposals, wait for user confirmation, and respect a 1 hour cooldown before materialization.
 - Process optimizations collect telemetry for 24 hours before materialization.
-- Findings are recorded into Team OS task ledgers and, when GitHub auth is available, mirrored to GitHub issues plus the configured GitHub Project panel.
+- Findings are recorded into OpenTeam task ledgers and, when GitHub auth is available, mirrored to GitHub issues plus the configured GitHub Project panel.

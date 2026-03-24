@@ -32,10 +32,10 @@ _PIPELINE_SCRIPTS: dict[str, str] = {
 
 
 def workspace_root() -> Path:
-    env_ws = str((os.getenv("TEAMOS_WORKSPACE_ROOT") or "")).strip()
+    env_ws = str((os.getenv("OPENTEAM_WORKSPACE_ROOT") or "")).strip()
     if env_ws:
         return Path(env_ws).expanduser().resolve()
-    return (Path.home() / ".teamos" / "workspace").resolve()
+    return (Path.home() / ".openteam" / "workspace").resolve()
 
 
 def normalize_flow(raw: Optional[str]) -> str:

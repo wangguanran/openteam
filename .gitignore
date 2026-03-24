@@ -27,18 +27,18 @@ yarn-error.log*
 .vscode/
 
 # Runtime/control-plane state (instance-specific; not a source of truth)
-.team-os/state/instance_id
-.team-os/state/*.db
-.team-os/state/*.db-*
-.team-os/state/*.jsonl
-.team-os/state/_trash/
+.openteam/state/instance_id
+.openteam/state/*.db
+.openteam/state/*.db-*
+.openteam/state/*.jsonl
+.openteam/state/_trash/
 
 # Cluster runtime snapshots (not a source of truth; keep config tracked)
-.team-os/cluster/state/*
-!.team-os/cluster/state/.gitkeep
+.openteam/cluster/state/*
+!.openteam/cluster/state/.gitkeep
 
 # Conversations can contain sensitive free-form content; keep local by default
-.team-os/ledger/conversations/
+.openteam/ledger/conversations/
 
 # --- Secrets / credentials (must never be committed) ---
 *_token*
@@ -67,18 +67,18 @@ known_hosts
 sshpass*
 
 # Self-improve runtime state (debounce checkpoints; not a source of truth)
-.team-os/state/self_improve_last_run.*
-.team-os/state/self_improve_state.json
-.team-os/state/self_improve_daemon.*
+.openteam/state/self_improve_last_run.*
+.openteam/state/self_improve_state.json
+.openteam/state/self_improve_daemon.*
 
 # Common scratch dirs
 .tmp/
 tmp/
 
-# Backup files created by Team OS scripts/migrations (keep local)
+# Backup files created by OpenTeam scripts/migrations (keep local)
 *.bak.*
 
-# Local safety snapshots (should not exist for scope=teamos; keep local if present)
-docs/product/teamos/requirements/history/
-docs/product/teamos/REPO_UNDERSTANDING_*.md
-docs/product/teamos/repo_inspect.md
+# Local safety snapshots (should not exist for scope=openteam; keep local if present)
+docs/product/openteam/requirements/history/
+docs/product/openteam/REPO_UNDERSTANDING_*.md
+docs/product/openteam/repo_inspect.md

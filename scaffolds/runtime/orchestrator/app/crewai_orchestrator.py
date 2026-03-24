@@ -7,7 +7,7 @@ from . import crewai_runtime
 from . import crew_tools
 from . import improvement_store
 from . import team_runtime_registry
-from .state_store import team_os_root
+from .state_store import openteam_root
 from . import redis_bus
 
 
@@ -240,7 +240,7 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         }
 
     run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="RUNNING")
-    repo = team_os_root()
+    repo = openteam_root()
     ws_root = crew_tools.workspace_root()
     write_delegate = crew_tools.run_write_evidence(pipelines=pipelines, repo_root=repo)
     db.add_event(

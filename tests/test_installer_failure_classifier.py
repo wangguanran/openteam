@@ -43,8 +43,8 @@ class InstallerFailureClassifierTests(unittest.TestCase):
             repo = self._repo_root()
             runtime_root = Path(td) / "runtime"
             env = dict(os.environ)
-            env["TEAMOS_RUNTIME_ROOT"] = str(runtime_root)
-            env.pop("TEAMOS_DB_URL", None)
+            env["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
+            env.pop("OPENTEAM_DB_URL", None)
 
             payload = {
                 "component": "node_add.push_hub_config",

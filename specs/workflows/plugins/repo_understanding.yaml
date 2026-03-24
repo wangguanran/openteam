@@ -20,13 +20,13 @@ roles:
   supporting: ["Developer-Backend", "Developer-Web", "Developer-AI", "Reviewer"]
 
 required_artifacts:
-  - "docs/product/teamos/REPO_UNDERSTANDING.md"
+  - "docs/product/openteam/REPO_UNDERSTANDING.md"
 
 gates:
   - id: "no_code_change_before_understanding"
     policy: "BLOCK"
     condition: "artifact_missing"
-    message: "Repo is non-empty and mode=upgrade; must create docs/product/teamos/REPO_UNDERSTANDING.md before any modifications."
+    message: "Repo is non-empty and mode=upgrade; must create docs/product/openteam/REPO_UNDERSTANDING.md before any modifications."
 
 acceptance:
   must_include_sections:

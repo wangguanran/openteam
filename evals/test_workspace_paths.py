@@ -26,12 +26,12 @@ class WorkspacePathsEvals(unittest.TestCase):
 
             # Ensure "outside repo" enforcement is real.
             with self.assertRaises(workspace_store.WorkspaceError):
-                workspace_store.assert_project_paths_outside_repo(team_os_root=repo_root, workspace_root_path=repo_root / "ws")
+                workspace_store.assert_project_paths_outside_repo(openteam_root=repo_root, workspace_root_path=repo_root / "ws")
 
             # Normal case: workspace outside repo root.
-            workspace_store.assert_project_paths_outside_repo(team_os_root=repo_root, workspace_root_path=ws_root)
+            workspace_store.assert_project_paths_outside_repo(openteam_root=repo_root, workspace_root_path=ws_root)
 
-            os.environ["TEAMOS_WORKSPACE_ROOT"] = str(ws_root)
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(ws_root)
             workspace_store.ensure_workspace_scaffold()
 
             meta = workspace_store.ensure_project_scaffold("demo")

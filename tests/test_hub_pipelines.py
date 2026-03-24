@@ -13,8 +13,8 @@ class HubPipelinesTests(unittest.TestCase):
     def _env(self, td: str) -> tuple[dict[str, str], Path]:
         env = dict(os.environ)
         env["HOME"] = td
-        runtime_root = Path(td) / "team-os-runtime"
-        env["TEAMOS_RUNTIME_ROOT"] = str(runtime_root)
+        runtime_root = Path(td) / "openteam-runtime"
+        env["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
         return env, runtime_root
 
     def _run(self, script: str, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -132,12 +132,12 @@ class HubPipelinesTests(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, p.stderr)
             out = json.loads(p.stdout)
-            self.assertEqual(out.get("remote_policy_dir"), "~/.teamos/policies")
-            self.assertEqual(out.get("remote_allowlist_path"), "~/.teamos/policies/central_model_allowlist.yaml")
-            self.assertEqual(out.get("remote_approvals_path"), "~/.teamos/policies/approvals.yaml")
+            self.assertEqual(out.get("remote_policy_dir"), "~/.openteam/policies")
+            self.assertEqual(out.get("remote_allowlist_path"), "~/.openteam/policies/central_model_allowlist.yaml")
+            self.assertEqual(out.get("remote_approvals_path"), "~/.openteam/policies/approvals.yaml")
             env_vars = out.get("remote_env_vars") or {}
-            self.assertEqual(env_vars.get("TEAMOS_CENTRAL_MODEL_ALLOWLIST_PATH"), "~/.teamos/policies/central_model_allowlist.yaml")
-            self.assertEqual(env_vars.get("TEAMOS_APPROVALS_POLICY_PATH"), "~/.teamos/policies/approvals.yaml")
+            self.assertEqual(env_vars.get("OPENTEAM_CENTRAL_MODEL_ALLOWLIST_PATH"), "~/.openteam/policies/central_model_allowlist.yaml")
+            self.assertEqual(env_vars.get("OPENTEAM_APPROVALS_POLICY_PATH"), "~/.openteam/policies/approvals.yaml")
 
 
 if __name__ == "__main__":

@@ -18,13 +18,13 @@ def _run(cmd: list[str]) -> str:
 
 def repo_root() -> Path:
     """
-    Best-effort Team OS repo root detection for local scripts.
+    Best-effort OpenTeam repo root detection for local scripts.
     Priority:
-    1) env TEAM_OS_REPO_PATH
+    1) env OPENTEAM_REPO_PATH
     2) relative to this file location
     3) git rev-parse --show-toplevel
     """
-    env = str(os.getenv("TEAM_OS_REPO_PATH") or "").strip()
+    env = str(os.getenv("OPENTEAM_REPO_PATH") or "").strip()
     def looks_like_repo(root: Path) -> bool:
         return (root / "AGENTS.md").exists() and (root / "scripts" / "pipelines").exists()
 
@@ -50,13 +50,13 @@ def repo_root() -> Path:
     except Exception:
         pass
 
-    raise ReqScriptError("Cannot locate Team OS repo root (set TEAM_OS_REPO_PATH or run from within the repo)")
+    raise ReqScriptError("Cannot locate OpenTeam repo root (set OPENTEAM_REPO_PATH or run from within the repo)")
 
 
 def workspace_root() -> Path:
-    v = str(os.getenv("TEAMOS_WORKSPACE_ROOT") or "").strip()
+    v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if not v:
-        v = str(Path.home() / ".teamos" / "workspace")
+        v = str(Path.home() / ".openteam" / "workspace")
     return Path(v).expanduser().resolve()
 
 
@@ -71,9 +71,9 @@ def _is_within(child: Path, parent: Path) -> bool:
 def parse_scope(scope: str) -> Tuple[str, str]:
     s = str(scope or "").strip()
     if not s:
-        raise ReqScriptError("scope is required: teamos | project:<id>")
-    if s == "teamos":
-        return ("teamos", "teamos")
+        raise ReqScriptError("scope is required: openteam | project:<id>")
+    if s == "openteam":
+        return ("openteam", "openteam")
     if s.startswith("project:"):
         pid = s.split(":", 1)[1].strip()
         if not pid:
@@ -86,8 +86,8 @@ def parse_scope(scope: str) -> Tuple[str, str]:
 def requirements_dir(scope: str, *, ensure: bool) -> Path:
     s, pid = parse_scope(scope)
     rr = repo_root()
-    if s == "teamos":
-        d = rr / "docs" / "teamos" / "requirements"
+    if s == "openteam":
+        d = rr / "docs" / "openteam" / "requirements"
         if ensure:
             (d / "baseline").mkdir(parents=True, exist_ok=True)
             (d / "conflicts").mkdir(parents=True, exist_ok=True)
@@ -95,7 +95,7 @@ def requirements_dir(scope: str, *, ensure: bool) -> Path:
 
     ws = workspace_root()
     if _is_within(ws, rr):
-        raise ReqScriptError(f"invalid workspace_root={ws} (must be outside team-os repo={rr})")
+        raise ReqScriptError(f"invalid workspace_root={ws} (must be outside openteam repo={rr})")
     d = ws / "projects" / pid / "state" / "requirements"
     if ensure:
         (d / "baseline").mkdir(parents=True, exist_ok=True)

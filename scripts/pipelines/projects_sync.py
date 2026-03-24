@@ -28,7 +28,7 @@ def _http_json(method: str, url: str, payload: dict[str, Any] | None = None, *, 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Sync truth sources to GitHub Projects (wrapper over control plane panel sync)")
     ap.add_argument("--base-url", required=True, help="control plane base url, e.g. http://127.0.0.1:8787")
-    ap.add_argument("--project-id", required=True, help="panel project_id (usually teamos or a workspace project id)")
+    ap.add_argument("--project-id", required=True, help="panel project_id (usually openteam or a workspace project id)")
     ap.add_argument("--mode", default="incremental", help="incremental|full")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)

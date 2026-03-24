@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../_common.sh"
 
-ROOT="$(teamos_root)"
+ROOT="$(openteam_root)"
 ENTRY_PATH="${1:-}"
 
 if [[ -z "$ENTRY_PATH" ]]; then
@@ -19,10 +19,10 @@ fi
 
 title="$(head -n 1 "$ENTRY_PATH" | sed -e 's/^# *//')"
 if [[ -z "$title" ]]; then
-  title="Team OS Team Workflow"
+  title="OpenTeam Team Workflow"
 fi
 
-pending_dir="$ROOT/.team-os/ledger/team_os_issues_pending"
+pending_dir="$ROOT/.openteam/ledger/openteam_issues_pending"
 ensure_dir "$pending_dir"
 
 fallback() {
