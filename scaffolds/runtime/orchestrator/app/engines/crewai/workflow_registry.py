@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
+import re as _re
 from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
@@ -143,6 +145,10 @@ class WorkflowAgentSpec:
     agent_id: str
     role_id: str
     tool_profile: str = ""
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    max_tokens: int = 0
     allow_delegation: bool = False
     template_role_id: str = ""
     goal: str = ""
@@ -339,11 +345,20 @@ def _process_spec_from_doc(doc: dict[str, Any]) -> WorkflowProcessSpec:
     )
 
 
+def _expand_env(value: str) -> str:
+    """Expand ${ENV_VAR} references. Unresolved vars become empty string."""
+    return _re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), str(value or ""))
+
+
 def _agent_spec_from_doc(raw: dict[str, Any]) -> WorkflowAgentSpec:
     return WorkflowAgentSpec(
         agent_id=str(raw.get("agent_id") or raw.get("id") or "").strip(),
         role_id=str(raw.get("role_id") or raw.get("role") or "").strip(),
         tool_profile=str(raw.get("tool_profile") or "").strip(),
+        model=str(raw.get("model") or "").strip(),
+        base_url=_expand_env(str(raw.get("base_url") or "").strip()),
+        api_key=_expand_env(str(raw.get("api_key") or "").strip()),
+        max_tokens=_to_int(raw.get("max_tokens"), 0, minimum=0),
         allow_delegation=_to_bool(raw.get("allow_delegation"), False),
         template_role_id=str(raw.get("template_role_id") or "").strip(),
         goal=str(raw.get("goal") or "").strip(),
