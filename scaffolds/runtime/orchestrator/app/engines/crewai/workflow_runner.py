@@ -5,13 +5,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app import crewai_agent_factory
-from app import crewai_llm_factory
-from app import crewai_runtime
-from app import crewai_task_registry
-from app import crewai_workflow_registry as workflow_registry
+from app import agent_factory
+from app import llm_factory
+from app import engine_runtime
+from app import task_registry
+from app import workflow_registry as workflow_registry
 from app.pydantic_compat import BaseModel
-from app.crewai_task_models import (
+from app.task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
     DeliveryBugTestCaseResult,
@@ -142,8 +142,8 @@ def _resolve_output_model(name: str) -> type[BaseModel] | None:
     wanted = str(name or "").strip()
     if not wanted:
         return None
-    if wanted in crewai_task_registry.TASK_OUTPUT_MODEL_MAP:
-        return crewai_task_registry.TASK_OUTPUT_MODEL_MAP[wanted]
+    if wanted in task_registry.TASK_OUTPUT_MODEL_MAP:
+        return task_registry.TASK_OUTPUT_MODEL_MAP[wanted]
     runtime_models = {
         "UpgradePlan": UpgradePlan,
         "StructuredBugScanResult": StructuredBugScanResult,
@@ -210,13 +210,13 @@ def _execute_skill(task: workflow_registry.WorkflowTaskSpec, *, context: Workflo
 
 
 def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: WorkflowRunContext, inputs: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
     from crewai import Crew, Process, Task
 
     model_cls = _resolve_output_model(task.output_model)
     template_spec = None
     if task.task_template:
-        template_spec = crewai_task_registry.get_task_spec(task.task_template, team_id=context.workflow.team_id)
+        template_spec = task_registry.get_task_spec(task.task_template, team_id=context.workflow.team_id)
         if model_cls is None:
             model_cls = template_spec.output_model
 
@@ -240,9 +240,9 @@ def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
     elif template_spec is not None:
         expected_output = template_spec.expected_output
 
-    llm = crewai_llm_factory.build_crewai_llm(workflow=context.workflow)
+    llm = llm_factory.build_crewai_llm(workflow=context.workflow)
     tools_by_profile = task_inputs.get("tools_by_profile") if isinstance(task_inputs.get("tools_by_profile"), dict) else None
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=str(task_inputs.get("role_id") or agent_spec.role_id or "").strip(),
         team_id=context.workflow.team_id,
         template_role_id=str(task_inputs.get("template_role_id") or agent_spec.template_role_id or "").strip(),
@@ -266,7 +266,7 @@ def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
         task_kwargs["markdown"] = True
     crew_task = Task(**task_kwargs)
     crew = Crew(agents=[agent], tasks=[crew_task], process=Process.sequential, verbose=bool(context.workflow.process.verbose))
-    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+    with engine_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
         output = crew.kickoff()
     raw_text, parsed_payload = _coerce_output(output, model_cls)
     task_payload: dict[str, Any] = {
@@ -280,6 +280,79 @@ def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
     if parsed_payload is not None:
         task_payload["outputs"]["json"] = parsed_payload
     return task_payload
+
+
+def _execute_engine_task(task: workflow_registry.WorkflowTaskSpec, *, context: WorkflowRunContext, inputs: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Execute a task via the pluggable engine interface (crewai / claude / openai_agents)."""
+    from app.engines.registry import get_engine
+    from app.engines.base import EngineAgentSpec, EngineTaskSpec
+    from app.engines.llm_config import build_llm_config
+
+    engine_id = str(task.engine or "").strip() or str(context.workflow.engine or "").strip()
+    engine = get_engine(engine_id)
+
+    model_cls = _resolve_output_model(task.output_model)
+    template_spec = None
+    if task.task_template:
+        template_spec = task_registry.get_task_spec(task.task_template, team_id=context.workflow.team_id)
+        if model_cls is None:
+            model_cls = template_spec.output_model
+
+    task_inputs = dict(inputs)
+    agent_lookup = {agent.agent_id: agent for agent in context.workflow.agents}
+    agent_spec_raw = agent_lookup.get(task.agent_id)
+    if agent_spec_raw is None:
+        raise KeyError(f"unknown agent_id={task.agent_id!r} for workflow={context.workflow.workflow_id}")
+
+    role_spec = agent_factory.get_role_spec_for_engine(
+        role_id=str(task_inputs.get("role_id") or agent_spec_raw.role_id or "").strip(),
+        team_id=context.workflow.team_id,
+        template_role_id=str(task_inputs.get("template_role_id") or agent_spec_raw.template_role_id or "").strip(),
+    )
+
+    description = str(task.description or "")
+    if task.description_ref:
+        description = str(_resolve_value(task.description_ref, state) or "")
+    elif task.description_template:
+        description = _format_from_template(task.description_template, task_inputs)
+    elif template_spec is not None:
+        description = template_spec.render_description(payload=str(task_inputs.get("payload") or ""))
+
+    expected_output = str(task.expected_output or "")
+    if task.expected_output_ref:
+        expected_output = str(_resolve_value(task.expected_output_ref, state) or "")
+    elif template_spec is not None:
+        expected_output = template_spec.expected_output
+
+    agent_spec = EngineAgentSpec(
+        role_id=role_spec.role_id,
+        goal=str(task_inputs.get("goal") or agent_spec_raw.goal or role_spec.goal or "").strip(),
+        backstory=str(task_inputs.get("backstory") or agent_spec_raw.backstory or role_spec.backstory or "").strip(),
+        tool_profile=str(task_inputs.get("tool_profile") or agent_spec_raw.tool_profile or role_spec.tool_profile or "").strip(),
+        allow_delegation=bool(task_inputs.get("allow_delegation", agent_spec_raw.allow_delegation)),
+    )
+
+    llm_config = build_llm_config(workflow=context.workflow)
+    llm = engine.build_llm(llm_config)
+
+    raw_defs = task_inputs.get("generic_tool_defs") or []
+    tools = engine.build_tools(profile=agent_spec.tool_profile, defs=raw_defs)
+
+    agent = engine.build_agent(
+        spec=agent_spec, llm=llm, tools=tools, verbose=bool(context.workflow.process.verbose),
+    )
+
+    engine_task = EngineTaskSpec(
+        name=task.task_id,
+        description=description,
+        expected_output=expected_output,
+        agent_spec=agent_spec,
+        output_model=model_cls,
+    )
+    result = engine.execute_task(
+        task=engine_task, agent=agent, llm=llm, verbose=bool(context.workflow.process.verbose),
+    )
+    return result.to_workflow_payload()
 
 
 def run_workflow(*, context: WorkflowRunContext, initial_inputs: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -321,6 +394,8 @@ def run_workflow(*, context: WorkflowRunContext, initial_inputs: Optional[dict[s
                 result = _execute_skill(task, context=context, inputs=inputs, state=state)
             elif task.kind == "crewai_task":
                 result = _execute_crewai_task(task, context=context, inputs=inputs, state=state)
+            elif task.kind == "engine_task":
+                result = _execute_engine_task(task, context=context, inputs=inputs, state=state)
             else:
                 raise KeyError(f"unsupported workflow task kind: {task.kind}")
         except Exception as exc:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app import crewai_spec_loader
+from app import spec_loader
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ def _team_spec_from_doc(doc: dict[str, object]) -> TeamSpec:
 
 
 def list_teams() -> tuple[TeamSpec, ...]:
-    docs = crewai_spec_loader.list_spec_docs("teams")
+    docs = spec_loader.list_spec_docs("teams")
     specs: list[TeamSpec] = []
     for doc in docs:
         spec = _team_spec_from_doc(dict(doc))
@@ -46,7 +46,7 @@ def list_teams() -> tuple[TeamSpec, ...]:
 
 
 def team_spec(team_id: str) -> TeamSpec:
-    doc = crewai_spec_loader.team_doc(str(team_id or "").strip())
+    doc = spec_loader.team_doc(str(team_id or "").strip())
     if not doc:
         raise KeyError(f"unknown team spec: {team_id}")
     spec = _team_spec_from_doc(doc)

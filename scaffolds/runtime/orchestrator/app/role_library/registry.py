@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
-from app import crewai_spec_loader
+from app import spec_loader
 from app.engines.crewai import team_registry
 
 
@@ -36,16 +37,20 @@ STAGE_PLANNING = "planning"
 STAGE_PROPOSAL_CONFIRMATION = "proposal-confirmation"
 STAGE_DELIVERY = "delivery"
 
-WORKFLOW_BUG_FINDING = "bug-finding"
-WORKFLOW_CODING = "coding"
+WORKFLOW_REPO_REVIEW = "repo-review"
+WORKFLOW_REPO_REVIEW_DISCUSSION = "repo-review-discussion"
+WORKFLOW_CODING = "repo-coding"
+
+# Legacy aliases (kept for backward compatibility with proposal_runtime paths)
+WORKFLOW_BUG_FINDING = "repo-review"
 WORKFLOW_BUG_CODING = "bug-coding"
-WORKFLOW_FEATURE_FINDING = "feature-finding"
-WORKFLOW_FEATURE_DISCUSSION = "feature-discussion"
+WORKFLOW_FEATURE_FINDING = "repo-review"
+WORKFLOW_FEATURE_DISCUSSION = "repo-review-discussion"
 WORKFLOW_FEATURE_CODING = "feature-coding"
-WORKFLOW_QUALITY_FINDING = "quality-finding"
-WORKFLOW_QUALITY_DISCUSSION = "quality-discussion"
+WORKFLOW_QUALITY_FINDING = "repo-review"
+WORKFLOW_QUALITY_DISCUSSION = "repo-review-discussion"
 WORKFLOW_QUALITY_CODING = "quality-coding"
-WORKFLOW_PROCESS_FINDING = "process-finding"
+WORKFLOW_PROCESS_FINDING = "repo-review"
 WORKFLOW_PROCESS_CODING = "process-coding"
 
 ROLE_DISPLAY_ZH = {
@@ -273,35 +278,87 @@ def _default_team_id() -> str:
 
 def role_display_zh(role_id: str, *, team_id: str = "") -> str:
     rid = str(role_id or "").strip()
-    loaded = crewai_spec_loader.role_doc(rid, team_id=str(team_id or "").strip())
+    loaded = spec_loader.role_doc(rid, team_id=str(team_id or "").strip())
     label = str(loaded.get("display_name_zh") or "").strip()
     if label:
         return label
     return ROLE_DISPLAY_ZH.get(rid, rid or "未命名角色")
 
 
+def _agency_prompt_as_role_spec(role_id: str) -> Optional[CrewRoleSpec]:
+    """Try to enrich a role spec with agency-agents prompt content."""
+    try:
+        from app.agency_prompts.loader import get_prompt
+        import yaml as _yaml
+        mapping_path = Path(__file__).resolve().parent.parent / "agency_prompts" / "mapping.yaml"
+        if not mapping_path.exists():
+            return None
+        mapping = _yaml.safe_load(mapping_path.read_text(encoding="utf-8")) or {}
+        file_key = mapping.get(role_id)
+        if not file_key:
+            return None
+        prompt = get_prompt(str(file_key))
+        if prompt is None:
+            return None
+        return CrewRoleSpec(
+            role_id=role_id,
+            goal=prompt.description or prompt.name or "",
+            backstory=prompt.body,
+            tool_profile="",
+        )
+    except Exception:
+        return None
+
+
 def get_role_spec(role_id: str, *, fallback_role_id: str = "", team_id: str = "") -> CrewRoleSpec:
     rid = str(role_id or "").strip()
     resolved_team_id = str(team_id or "").strip()
-    loaded = crewai_spec_loader.role_doc(rid, team_id=resolved_team_id)
+    loaded = spec_loader.role_doc(rid, team_id=resolved_team_id)
     if loaded:
-        return _role_spec_from_doc(loaded)
+        base = _role_spec_from_doc(loaded)
+        # Enrich with agency-agents backstory if the existing backstory is short
+        if len(base.backstory) < 200:
+            agency = _agency_prompt_as_role_spec(rid)
+            if agency and agency.backstory:
+                return CrewRoleSpec(
+                    role_id=base.role_id,
+                    display_name_zh=base.display_name_zh,
+                    goal=base.goal or agency.goal,
+                    backstory=agency.backstory,
+                    tool_profile=base.tool_profile,
+                )
+        return base
     if rid in ROLE_SPECS:
-        return ROLE_SPECS[rid]
+        base = ROLE_SPECS[rid]
+        # Enrich hardcoded specs with agency-agents prompt
+        agency = _agency_prompt_as_role_spec(rid)
+        if agency and agency.backstory:
+            return CrewRoleSpec(
+                role_id=base.role_id,
+                display_name_zh=base.display_name_zh,
+                goal=base.goal or agency.goal,
+                backstory=agency.backstory,
+                tool_profile=base.tool_profile,
+            )
+        return base
     fallback = str(fallback_role_id or "").strip()
-    loaded_fallback = crewai_spec_loader.role_doc(fallback, team_id=resolved_team_id)
+    loaded_fallback = spec_loader.role_doc(fallback, team_id=resolved_team_id)
     if loaded_fallback:
         spec = _role_spec_from_doc(loaded_fallback)
         return CrewRoleSpec(role_id=rid or spec.role_id, display_name_zh=spec.display_name_zh, goal=spec.goal, backstory=spec.backstory, tool_profile=spec.tool_profile)
     if fallback in ROLE_SPECS:
         spec = ROLE_SPECS[fallback]
         return CrewRoleSpec(role_id=rid or spec.role_id, display_name_zh=spec.display_name_zh, goal=spec.goal, backstory=spec.backstory, tool_profile=spec.tool_profile)
+    # Final fallback: try agency-agents directly
+    agency = _agency_prompt_as_role_spec(rid)
+    if agency:
+        return agency
     return CrewRoleSpec(role_id=rid)
 
 
 def planning_team_blueprint(*, team_id: str = "") -> TeamBlueprint:
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
-    loaded = crewai_spec_loader.team_stage_doc(resolved_team_id, STAGE_PLANNING)
+    loaded = spec_loader.team_stage_doc(resolved_team_id, STAGE_PLANNING)
     if loaded:
         return _team_blueprint_from_doc(loaded)
     return TeamBlueprint(
@@ -322,7 +379,7 @@ def planning_team_blueprint(*, team_id: str = "") -> TeamBlueprint:
 
 def discussion_team_blueprint(*, team_id: str = "") -> TeamBlueprint:
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
-    loaded = crewai_spec_loader.team_stage_doc(resolved_team_id, STAGE_PROPOSAL_CONFIRMATION)
+    loaded = spec_loader.team_stage_doc(resolved_team_id, STAGE_PROPOSAL_CONFIRMATION)
     if loaded:
         return _team_blueprint_from_doc(loaded)
     return TeamBlueprint(
@@ -333,7 +390,7 @@ def discussion_team_blueprint(*, team_id: str = "") -> TeamBlueprint:
 
 def delivery_team_blueprint(*, owner_role: str, review_role: str, qa_role: str, documentation_role: str, team_id: str = "") -> TeamBlueprint:
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
-    loaded = crewai_spec_loader.team_stage_doc(resolved_team_id, STAGE_DELIVERY)
+    loaded = spec_loader.team_stage_doc(resolved_team_id, STAGE_DELIVERY)
     if loaded:
         return _team_blueprint_from_doc(
             loaded,

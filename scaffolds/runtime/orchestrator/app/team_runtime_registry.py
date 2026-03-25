@@ -4,7 +4,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from app import crewai_team_registry
+from app import team_registry
 from app import improvement_store
 from app import team_workflow_runtime
 
@@ -137,7 +137,7 @@ def team_runtime_adapter(team_id: str) -> TeamRuntimeAdapter:
 
 
 def default_team_runtime_adapter() -> TeamRuntimeAdapter:
-    return team_runtime_adapter(crewai_team_registry.default_team_id())
+    return team_runtime_adapter(team_registry.default_team_id())
 
 
 def _generic_team_run_once(*, db: Any, spec: Any, actor: str, run_id: str, crewai_info: dict[str, Any]) -> dict[str, Any]:

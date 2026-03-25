@@ -478,7 +478,7 @@ def _start_control_plane(
     env["OPENTEAM_PIPELINE_PYTHON"] = str(sys.executable)
     env["OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED"] = "0"
     env.setdefault("CREWAI_TRACING_ENABLED", "false")
-    py_path = str(orch_dir)
+    py_path = str(orch_dir) + os.pathsep + str(repo)
     if str(env.get("PYTHONPATH") or "").strip():
         py_path = py_path + os.pathsep + str(env.get("PYTHONPATH"))
     env["PYTHONPATH"] = py_path

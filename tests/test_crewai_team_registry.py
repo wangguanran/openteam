@@ -12,24 +12,24 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
-from app import crewai_team_registry  # noqa: E402
+from app import team_registry  # noqa: E402
 
 
 class CrewAITeamRegistryTests(unittest.TestCase):
     def test_default_team_is_loaded_from_team_specs(self) -> None:
-        self.assertEqual(crewai_team_registry.default_team_id(), "repo-improvement")
+        self.assertEqual(team_registry.default_team_id(), "repo-improvement")
 
     def test_team_spec_exposes_team_metadata_from_yaml(self) -> None:
-        spec = crewai_team_registry.team_spec("repo-improvement")
+        spec = team_registry.team_spec("repo-improvement")
 
         self.assertEqual(spec.team_id, "repo-improvement")
-        self.assertIn("bug-finding", spec.workflow_ids)
-        self.assertIn("coding", spec.workflow_ids)
+        self.assertIn("repo-review", spec.workflow_ids)
+        self.assertIn("repo-coding", spec.workflow_ids)
         self.assertIn("planning", spec.stage_ids)
         self.assertIn("Test-Manager", spec.role_pool)
 
     def test_list_teams_reads_team_specs_from_config_tree(self) -> None:
-        team_ids = {spec.team_id for spec in crewai_team_registry.list_teams()}
+        team_ids = {spec.team_id for spec in team_registry.list_teams()}
 
         self.assertIn("repo-improvement", team_ids)
 

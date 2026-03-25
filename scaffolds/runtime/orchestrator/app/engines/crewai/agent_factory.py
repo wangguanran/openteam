@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from app import crewai_role_registry
+from app import role_registry
 
 
 def build_crewai_agent(
@@ -20,7 +20,7 @@ def build_crewai_agent(
 ) -> Any:
     from crewai import Agent
 
-    spec = crewai_role_registry.get_role_spec(role_id, fallback_role_id=template_role_id, team_id=team_id)
+    spec = role_registry.get_role_spec(role_id, fallback_role_id=template_role_id, team_id=team_id)
     resolved_goal = str(goal or spec.goal or "").strip()
     resolved_backstory = str(backstory or spec.backstory or "").strip()
     resolved_profile = str(tool_profile or spec.tool_profile or "").strip()
@@ -35,3 +35,8 @@ def build_crewai_agent(
     if tools_by_profile is not None and resolved_profile:
         kwargs["tools"] = list(tools_by_profile.get(resolved_profile) or [])
     return Agent(**kwargs)
+
+
+def get_role_spec_for_engine(*, role_id: str, team_id: str = "", template_role_id: str = "") -> Any:
+    """Resolve a CrewRoleSpec for use by any engine (not just CrewAI)."""
+    return role_registry.get_role_spec(role_id, fallback_role_id=template_role_id, team_id=team_id)

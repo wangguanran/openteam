@@ -53,8 +53,8 @@ class RuntimeHealthzTests(unittest.TestCase):
         self.assertTrue(checks["specs_workflows_dir_exists"])
         self.assertTrue(checks["specs_roles_dir_exists"])
         self.assertTrue(checks["runtime_role_library_exists"])
-        self.assertTrue(checks["repo_improvement_team_spec_exists"])
-        self.assertTrue(checks["crewai_orchestrator_exists"])
+        self.assertTrue(checks["team_specs_exist"])
+        self.assertTrue(checks["orchestrator_exists"])
         self.assertIn("trunk.yaml", checks["workflow_files"])
         self.assertIn("Architect.md", checks["role_files"])
 
@@ -62,7 +62,7 @@ class RuntimeHealthzTests(unittest.TestCase):
         os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)
         response = app_main.Response()
         with (
-            mock.patch.object(app_main.crewai_runtime, "probe_crewai", return_value={"importable": True, "version": "test"}),
+            mock.patch.object(app_main.engine_runtime, "probe_crewai", return_value={"importable": True, "version": "test"}),
             mock.patch.object(app_main.DB, "list_events", return_value=[]),
         ):
             payload = app_main.healthz(response)

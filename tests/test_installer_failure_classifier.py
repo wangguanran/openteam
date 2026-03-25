@@ -69,9 +69,9 @@ class InstallerFailureClassifierTests(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr)
             out = json.loads(p.stdout)
             self.assertFalse(bool((out.get("db") or {}).get("enabled")))
-            fallback_path = Path(str(out.get("fallback_path") or ""))
+            fallback_path = Path(str(out.get("fallback_path") or "")).resolve()
             self.assertTrue(fallback_path.exists())
-            self.assertEqual(fallback_path, runtime_root / "state" / "audit" / "installer_runs.jsonl")
+            self.assertEqual(fallback_path, (runtime_root / "state" / "audit" / "installer_runs.jsonl").resolve())
 
             lines = fallback_path.read_text(encoding="utf-8").splitlines()
             self.assertTrue(lines)

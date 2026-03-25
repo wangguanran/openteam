@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from . import crewai_team_registry
+from . import team_registry
 
 
 class CrewToolsError(ValueError):
@@ -43,7 +43,7 @@ def normalize_flow(raw: Optional[str]) -> str:
 
 
 def native_team_flows() -> list[str]:
-    return sorted([f"team:{spec.team_id}" for spec in crewai_team_registry.list_teams()])
+    return sorted([f"team:{spec.team_id}" for spec in team_registry.list_teams()])
 
 
 def native_team_id(flow: Optional[str]) -> str:
@@ -69,7 +69,7 @@ def is_native_crewai_flow(flow: str) -> bool:
     team_id = native_team_id(flow)
     if not team_id:
         return False
-    return any(spec.team_id == team_id for spec in crewai_team_registry.list_teams())
+    return any(spec.team_id == team_id for spec in team_registry.list_teams())
 
 
 def resolve_run_request_flow(*, flow: Optional[str], pipeline: Optional[str]) -> str:

@@ -13,8 +13,8 @@ ORCHESTRATOR_ROOT = REPO_ROOT / "scaffolds" / "runtime" / "orchestrator"
 if str(ORCHESTRATOR_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_ROOT))
 
-from app import crewai_llm_factory  # noqa: E402
-from app import crewai_workflow_registry  # noqa: E402
+from app import llm_factory  # noqa: E402
+from app import workflow_registry  # noqa: E402
 from app import improvement_store  # noqa: E402
 from app import team_workflow_runtime  # noqa: E402
 
@@ -61,9 +61,9 @@ def main() -> int:
     if not team_id:
         raise RuntimeError("team_id is required")
     project_id = str(args.project_id or "openteam").strip() or "openteam"
-    workflow = crewai_workflow_registry.workflow_for_lane_phase(
+    workflow = workflow_registry.workflow_for_lane_phase(
         "bug",
-        crewai_workflow_registry.PHASE_FINDING,
+        workflow_registry.PHASE_FINDING,
         team_id=team_id,
         project_id=project_id,
     )
@@ -77,7 +77,7 @@ def main() -> int:
         target_id=str(target.get("target_id") or ""),
     )
     bug_scan_limit = team_workflow_runtime.scan_limit(0, workflow.max_candidates())
-    llm = crewai_llm_factory.build_crewai_llm(workflow=workflow)
+    llm = llm_factory.build_crewai_llm(workflow=workflow)
 
     if not args.json:
         _print_section("Team Bug Scan Live")

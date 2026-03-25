@@ -16,16 +16,17 @@ import yaml
 from openteam_common import utc_now_iso as _utc_now_iso
 
 from app import cluster_manager
-from app import crewai_agent_factory
-from app import crewai_role_registry
-from app import crewai_runtime
-from app import crewai_team_registry
-from app import crewai_task_registry
-from app import crewai_workflow_registry
+from app import agent_factory
+from app.engines.base import parse_structured_output
+from app import role_registry
+from app import engine_runtime
+from app import team_registry
+from app import task_registry
+from app import workflow_registry
 from app import improvement_store
 from app import workspace_store
 from app.domains.team_workflow import proposal_runtime as planning
-from app.crewai_task_models import (
+from app.task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
     DeliveryBugTestCaseResult,
@@ -76,7 +77,7 @@ def _env_truthy(name: str, default: str = "0") -> bool:
 
 
 def _default_team_id() -> str:
-    return str(crewai_team_registry.default_team_id() or "").strip()
+    return str(team_registry.default_team_id() or "").strip()
 
 
 def _normalize_team_id(team_id: Any = "") -> str:
@@ -1554,13 +1555,117 @@ def _kickoff_task_output(*, agent: Any, name: str, description: str, expected_ou
         output_json=model_cls,
     )
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose)
-    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(getattr(agent, "llm", None), "model", "") or "")):
+    with engine_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(getattr(agent, "llm", None), "model", "") or "")):
         out = crew.kickoff()
     return _coerce_model_output(out, model_cls, error_text=f"CrewAI returned no structured output for task={name}")
 
 
+def _resolve_delivery_engine_id(task_doc: dict[str, Any]) -> str:
+    """Determine which engine to use for a delivery stage.
+
+    Checks: task_doc.execution_policy.engine -> env OPENTEAM_ENGINE -> "" (default crewai).
+    """
+    execution_policy = task_doc.get("execution_policy") or {}
+    if not isinstance(execution_policy, dict):
+        execution_policy = {}
+    return str(execution_policy.get("engine") or os.getenv("OPENTEAM_ENGINE") or "").strip()
+
+
+def _kickoff_via_engine(
+    *,
+    engine_id: str,
+    role_id: str,
+    team_id: str,
+    template_role_id: str,
+    task_name: str,
+    payload: str,
+    repo_root: Path,
+    allowed_paths: list[str],
+    tests_allowlist: list[str],
+    tool_profile: str,
+    model_cls: type[BaseModel],
+    verbose: bool,
+) -> BaseModel:
+    """Execute a delivery stage task via the pluggable engine interface."""
+    from app.engines.registry import get_engine
+    from app.engines.base import EngineAgentSpec, EngineTaskSpec
+    from app.engines.llm_config import build_llm_config
+    from app.engines.tool_defs import build_generic_repo_tools
+
+    engine = get_engine(engine_id)
+    llm_config = build_llm_config()
+    llm = engine.build_llm(llm_config)
+
+    role_spec = agent_factory.get_role_spec_for_engine(
+        role_id=role_id, team_id=team_id, template_role_id=template_role_id,
+    )
+    agent_spec = EngineAgentSpec(
+        role_id=role_spec.role_id,
+        goal=role_spec.goal,
+        backstory=role_spec.backstory,
+        tool_profile=tool_profile or role_spec.tool_profile or "",
+    )
+
+    generic_tools = build_generic_repo_tools(
+        repo_root=repo_root, allowed_paths=allowed_paths, tests_allowlist=tests_allowlist,
+    )
+    profile = agent_spec.tool_profile or "write"
+    tool_defs = generic_tools.get(profile, generic_tools.get("write", []))
+    tools = engine.build_tools(profile=profile, defs=tool_defs)
+
+    agent = engine.build_agent(spec=agent_spec, llm=llm, tools=tools, verbose=verbose)
+    # Attach generic defs for Claude engine's tool_use loop
+    if isinstance(agent, dict):
+        agent["_generic_defs"] = tool_defs
+
+    task_spec_obj = task_registry.get_task_spec(task_name, team_id=team_id)
+    description = task_spec_obj.render_description(payload=payload)
+
+    engine_task = EngineTaskSpec(
+        name=task_name,
+        description=description,
+        expected_output=task_spec_obj.expected_output,
+        agent_spec=agent_spec,
+        output_model=model_cls,
+    )
+    result = engine.execute_task(task=engine_task, agent=agent, llm=llm, verbose=verbose)
+
+    if result.parsed:
+        return model_cls.model_validate(result.parsed)
+    return model_cls.model_validate(
+        parse_structured_output(result.raw, model_cls) or {}
+    )
+
+
 def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback: list[str], verbose: bool) -> DeliveryImplementationResult:
-    crewai_runtime.require_crewai_importable()
+    engine_id = _resolve_delivery_engine_id(task_doc)
+    if engine_id and engine_id != "crewai":
+        return DeliveryImplementationResult.model_validate(
+            _kickoff_via_engine(
+                engine_id=engine_id,
+                role_id=str((task_doc.get("execution_policy") or {}).get("owner_role") or planning.ROLE_CODING_AGENT),
+                team_id=_task_team_id(task_doc),
+                template_role_id=planning.ROLE_CODING_AGENT,
+                task_name="implement_team_task",
+                payload=json.dumps({
+                    "task_id": str(task_doc.get("id") or ""),
+                    "title": task_doc.get("title") or "",
+                    "summary": ((task_doc.get("team_workflow") or {}) if isinstance(task_doc.get("team_workflow"), dict) else {}).get("summary") or "",
+                    "allowed_paths": _allowed_paths(task_doc),
+                    "tests": _tests_allowlist(task_doc),
+                    "acceptance": _acceptance_items(task_doc),
+                    "feedback": feedback,
+                }, ensure_ascii=False, indent=2),
+                repo_root=worktree_root,
+                allowed_paths=_allowed_paths(task_doc),
+                tests_allowlist=_tests_allowlist(task_doc),
+                tool_profile="write",
+                model_cls=DeliveryImplementationResult,
+                verbose=verbose,
+            ).model_dump()
+        )
+
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     task_id = str(task_doc.get("id") or "").strip()
@@ -1593,7 +1698,7 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
     if not isinstance(execution_policy, dict):
         execution_policy = {}
     owner_role = str(task_doc.get("owner_role") or execution_policy.get("owner_role") or planning.ROLE_CODING_AGENT).strip() or planning.ROLE_CODING_AGENT
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=owner_role,
         team_id=team_id,
         template_role_id=planning.ROLE_CODING_AGENT,
@@ -1601,10 +1706,10 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("implement_team_task", team_id=team_id),
+        spec=task_registry.get_task_spec("implement_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1612,7 +1717,31 @@ def _run_coding_stage(*, task_doc: dict[str, Any], worktree_root: Path, feedback
 
 
 def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryReviewResult:
-    crewai_runtime.require_crewai_importable()
+    engine_id = _resolve_delivery_engine_id(task_doc)
+    if engine_id and engine_id != "crewai":
+        raw = _kickoff_via_engine(
+            engine_id=engine_id,
+            role_id=str((task_doc.get("execution_policy") or {}).get("review_role") or planning.ROLE_REVIEW_AGENT),
+            team_id=_task_team_id(task_doc),
+            template_role_id=planning.ROLE_REVIEW_AGENT,
+            task_name="review_team_task",
+            payload=json.dumps({
+                "task_id": task_doc.get("id") or "",
+                "title": task_doc.get("title") or "",
+                "allowed_paths": _review_allowed_paths(task_doc),
+                "acceptance": _acceptance_items(task_doc),
+                "git_status": _git_status_text(worktree_root),
+            }, ensure_ascii=False, indent=2),
+            repo_root=worktree_root,
+            allowed_paths=_review_allowed_paths(task_doc),
+            tests_allowlist=_tests_allowlist(task_doc),
+            tool_profile="read",
+            model_cls=DeliveryReviewResult,
+            verbose=verbose,
+        )
+        return _normalize_review_result(task_doc=task_doc, result=DeliveryReviewResult.model_validate(raw.model_dump()))
+
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     allowed_paths = _review_allowed_paths(task_doc)
@@ -1636,7 +1765,7 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
         indent=2,
     )
     review_role = str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("review_role")) or planning.ROLE_REVIEW_AGENT)
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=review_role,
         team_id=team_id,
         template_role_id=planning.ROLE_REVIEW_AGENT,
@@ -1644,10 +1773,10 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("review_team_task", team_id=team_id),
+        spec=task_registry.get_task_spec("review_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1655,7 +1784,32 @@ def _run_review_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose:
 
 
 def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryQAResult:
-    crewai_runtime.require_crewai_importable()
+    engine_id = _resolve_delivery_engine_id(task_doc)
+    if engine_id and engine_id != "crewai":
+        return DeliveryQAResult.model_validate(
+            _kickoff_via_engine(
+                engine_id=engine_id,
+                role_id=str((task_doc.get("execution_policy") or {}).get("qa_role") or planning.ROLE_QA_AGENT),
+                team_id=_task_team_id(task_doc),
+                template_role_id=planning.ROLE_QA_AGENT,
+                task_name="qa_team_task",
+                payload=json.dumps({
+                    "task_id": task_doc.get("id") or "",
+                    "title": task_doc.get("title") or "",
+                    "tests": _tests_allowlist(task_doc),
+                    "acceptance": _acceptance_items(task_doc),
+                    "git_status": _git_status_text(worktree_root),
+                }, ensure_ascii=False, indent=2),
+                repo_root=worktree_root,
+                allowed_paths=_allowed_paths(task_doc),
+                tests_allowlist=_tests_allowlist(task_doc),
+                tool_profile="qa",
+                model_cls=DeliveryQAResult,
+                verbose=verbose,
+            ).model_dump()
+        )
+
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     allowed_paths = _allowed_paths(task_doc)
@@ -1675,7 +1829,7 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
         indent=2,
     )
     qa_role = str((((task_doc.get("execution_policy") or {}) if isinstance(task_doc.get("execution_policy"), dict) else {}).get("qa_role")) or planning.ROLE_QA_AGENT)
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=qa_role,
         team_id=team_id,
         template_role_id=planning.ROLE_QA_AGENT,
@@ -1683,10 +1837,10 @@ def _run_qa_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: boo
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("qa_team_task", team_id=team_id),
+        spec=task_registry.get_task_spec("qa_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1891,7 +2045,7 @@ def _normalize_review_result(*, task_doc: dict[str, Any], result: DeliveryReview
 
 
 def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryAuditResult:
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     allowed_paths = _allowed_paths(task_doc)
@@ -1919,17 +2073,17 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
         ensure_ascii=False,
         indent=2,
     )
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=planning.ROLE_ISSUE_AUDIT_AGENT,
         team_id=team_id,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("audit_team_issue", team_id=team_id),
+        spec=task_registry.get_task_spec("audit_team_issue", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1951,7 +2105,7 @@ def _run_issue_audit_stage(*, task_doc: dict[str, Any], worktree_root: Path, ver
 
 
 def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryBugTestCaseResult:
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     allowed_paths = _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root)
@@ -1971,17 +2125,17 @@ def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, ve
         ensure_ascii=False,
         indent=2,
     )
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=planning.ROLE_BUG_TESTCASE_AGENT,
         team_id=team_id,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("bootstrap_bug_testcase", team_id=team_id),
+        spec=task_registry.get_task_spec("bootstrap_bug_testcase", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -1993,7 +2147,7 @@ def _run_bug_testcase_stage(*, task_doc: dict[str, Any], worktree_root: Path, ve
 
 
 def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryBugReproResult:
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     allowed_paths = _merge_allowed_paths(_allowed_paths(task_doc), _bug_testcase_allowed_paths(task_doc, worktree_root=worktree_root))
@@ -2012,17 +2166,17 @@ def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbo
         ensure_ascii=False,
         indent=2,
     )
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=planning.ROLE_BUG_REPRO_AGENT,
         team_id=team_id,
         llm=llm,
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("reproduce_bug_before_fix", team_id=team_id),
+        spec=task_registry.get_task_spec("reproduce_bug_before_fix", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -2041,7 +2195,7 @@ def _run_bug_repro_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbo
 
 
 def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, verbose: bool) -> DeliveryDocumentationResult:
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
 
     team_id = _task_team_id(task_doc)
     policy = _documentation_policy(task_doc)
@@ -2063,7 +2217,7 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
         indent=2,
     )
     documentation_role = str(policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT)
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=documentation_role,
         team_id=team_id,
         template_role_id=planning.ROLE_DOCUMENTATION_AGENT,
@@ -2071,10 +2225,10 @@ def _run_documentation_stage(*, task_doc: dict[str, Any], worktree_root: Path, v
         verbose=verbose,
         tools_by_profile=tools,
     )
-    out = crewai_task_registry.kickoff_registered_task(
+    out = task_registry.kickoff_registered_task(
         kickoff_fn=_kickoff_task_output,
         agent=agent,
-        spec=crewai_task_registry.get_task_spec("document_team_task", team_id=team_id),
+        spec=task_registry.get_task_spec("document_team_task", team_id=team_id),
         payload=blob,
         verbose=verbose,
     )
@@ -2176,9 +2330,9 @@ def _register_delivery_agents(*, db: Any, task_doc: dict[str, Any]) -> dict[str,
     review_role = str(execution_policy.get("review_role") or planning.ROLE_REVIEW_AGENT).strip() or planning.ROLE_REVIEW_AGENT
     qa_role = str(execution_policy.get("qa_role") or planning.ROLE_QA_AGENT).strip() or planning.ROLE_QA_AGENT
     documentation_role = str(execution_policy.get("documentation_role") or planning.ROLE_DOCUMENTATION_AGENT).strip() or planning.ROLE_DOCUMENTATION_AGENT
-    return crewai_role_registry.register_team_blueprint(
+    return role_registry.register_team_blueprint(
         db=db,
-        blueprint=crewai_role_registry.delivery_team_blueprint(
+        blueprint=role_registry.delivery_team_blueprint(
             owner_role=owner_role,
             review_role=review_role,
             qa_role=qa_role,
@@ -3337,17 +3491,17 @@ def run_delivery_sweep(*, db: Any, actor: str, team_id: str = "", project_id: st
             scanned += 1
             task_project_id = str(task.get("project_id") or project_id or "openteam").strip() or "openteam"
             task_target_id = str(task.get("target_id") or target_id or "").strip()
-            workflow = crewai_workflow_registry.workflow_for_phase(
-                crewai_workflow_registry.PHASE_CODING,
+            workflow = workflow_registry.workflow_for_phase(
+                workflow_registry.PHASE_CODING,
                 team_id=normalized_team_id,
                 project_id=task_project_id,
             )
-            runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+            runtime_policy = workflow_registry.evaluate_workflow_runtime_policy(
                 workflow=workflow,
                 target_id=task_target_id,
                 force=force,
             )
-            _ = crewai_workflow_registry.update_workflow_runtime_state(task_target_id, workflow.workflow_id, runtime_policy)
+            _ = workflow_registry.update_workflow_runtime_state(task_target_id, workflow.workflow_id, runtime_policy)
             if not runtime_policy.allowed:
                 out.append(
                     {

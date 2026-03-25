@@ -1,0 +1,29 @@
+# OpenTeam role_id -> agency-agents file key mapping.
+# File key format: "{category}/{filename-without-extension}"
+# agency-agents body is loaded as backstory (full, no truncation).
+# tool_profile is NOT read from agency-agents -- it stays under OpenTeam control.
+
+Product-Manager: product/product-manager
+Test-Manager: testing/testing-test-results-analyzer
+Coding-Agent: engineering/engineering-senior-developer
+Feature-Coding-Agent: engineering/engineering-senior-developer
+Bugfix-Coding-Agent: engineering/engineering-senior-developer
+Review-Agent: engineering/engineering-code-reviewer
+QA-Agent: testing/testing-reality-checker
+Code-Quality-Analyst: engineering/engineering-code-reviewer
+Process-Optimization-Analyst: specialized/specialized-workflow-architect
+Documentation-Agent: engineering/engineering-technical-writer
+Issue-Drafter: null
+Plan-Review-Agent: null
+Plan-QA-Agent: null
+Scheduler-Agent: null
+Release-Agent: engineering/engineering-devops-automator
+Process-Optimization-Agent: specialized/specialized-workflow-architect
+Code-Quality-Agent: engineering/engineering-code-reviewer
+Issue-Discussion-Agent: null
+Test-Case-Gap-Agent: testing/testing-api-tester
+Issue-Audit-Agent: null
+Bug-Repro-Agent: testing/testing-evidence-collector
+Bug-TestCase-Agent: testing/testing-evidence-collector
+Milestone-Manager-Agent: project-management/project-manager-senior
+Process-Metrics-Agent: null

@@ -80,9 +80,9 @@ def _reserved_team_users(repo: Path) -> set[str]:
     _add_runtime_template_to_syspath(repo)
     reserved: set[str] = set()
     try:
-        from app import crewai_team_registry  # type: ignore
+        from app import team_registry  # type: ignore
 
-        for spec in crewai_team_registry.list_teams():
+        for spec in team_registry.list_teams():
             team_id = str(spec.team_id or "").strip().lower()
             if not team_id:
                 continue

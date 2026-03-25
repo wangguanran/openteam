@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app import crewai_workflow_registry
+from app import workflow_registry
 from app import improvement_store
 
 
@@ -341,8 +341,8 @@ def run_team_iteration(*, team_id: str, db: Any, spec: Any, actor: str, run_id: 
 
     workflows = [
         workflow
-        for workflow in crewai_workflow_registry.list_workflows(team_id=normalized_team_id, project_id=project_id)
-        if workflow.phase == crewai_workflow_registry.PHASE_FINDING and workflow.enabled
+        for workflow in workflow_registry.list_workflows(team_id=normalized_team_id, project_id=project_id)
+        if workflow.phase == workflow_registry.PHASE_FINDING and workflow.enabled
     ]
     if not workflows:
         payload = {
@@ -410,12 +410,12 @@ def run_team_iteration(*, team_id: str, db: Any, spec: Any, actor: str, run_id: 
     bug_scan_policy: dict[str, Any] = {}
 
     for workflow in workflows:
-        runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+        runtime_policy = workflow_registry.evaluate_workflow_runtime_policy(
             workflow=workflow,
             target_id=target_id,
             force=force,
         )
-        _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
+        _ = workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
         if not runtime_policy.allowed:
             workflow_results.append(
                 {

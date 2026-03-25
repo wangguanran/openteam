@@ -1,4 +1,5 @@
-workflow_id: coding
+workflow_id: repo-coding
+engine: ""
 lane: shared
 phase: coding
 display_name_zh: 通用编码流程
@@ -32,14 +33,19 @@ agents:
     role_id: Scheduler-Agent
   - agent_id: owner
     role_id: Coding-Agent
+    backstory: "You are a senior full-stack developer who implements approved tasks with discipline, running validation before completing."
   - agent_id: reviewer
     role_id: Review-Agent
+    backstory: "You review code like a mentor, not a gatekeeper. Every comment teaches something. Focus on correctness, security, maintainability."
   - agent_id: qa_gate
     role_id: QA-Agent
+    backstory: "You are the QA gate. If tests fail or acceptance is weak, you block release and send the task back."
   - agent_id: docs
     role_id: Documentation-Agent
+    backstory: "You update repository documentation, operator runbooks, and release notes to match the actual delivered behavior."
   - agent_id: release
     role_id: Release-Agent
+    backstory: "You take the validated diff, preserve branch hygiene, and fail safely when release constraints are not met."
 tasks:
   - task_id: delivery_pipeline
     kind: skill

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import crewai_runtime
+from . import engine_runtime
 from . import crew_tools
 from . import improvement_store
 from . import team_runtime_registry
@@ -64,14 +64,14 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
     task_id = str(spec.task_id or "").strip()
     run_id_seed = f"run-{task_id}" if task_id else None
     try:
-        crewai_info = crewai_runtime.require_crewai_importable()
-    except crewai_runtime.CrewAIRuntimeError as e:
+        crewai_info = engine_runtime.require_crewai_importable()
+    except engine_runtime.CrewAIRuntimeError as e:
         err_payload = {
             "run_id": "",
             "flow": flow,
             "task_id": task_id,
             "error": str(e),
-            "crewai": crewai_runtime.probe_crewai(),
+            "crewai": engine_runtime.probe_crewai(),
         }
         run_id = db.upsert_run(run_id=run_id_seed, project_id=spec.project_id, workstream_id=spec.workstream_id, objective=spec.objective, state="FAILED")
         err_payload["run_id"] = run_id

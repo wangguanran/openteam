@@ -15,21 +15,21 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
-from app import crewai_spec_loader  # noqa: E402
-from app import crewai_task_registry  # noqa: E402
-from app.crewai_task_models import DeliveryBugReproResult, DeliveryBugTestCaseResult, DeliveryReviewResult  # noqa: E402
+from app import spec_loader  # noqa: E402
+from app import task_registry  # noqa: E402
+from app.task_models import DeliveryBugReproResult, DeliveryBugTestCaseResult, DeliveryReviewResult  # noqa: E402
 
 
 class CrewAITaskRegistryTests(unittest.TestCase):
     def test_delivery_review_task_spec_uses_review_model(self):
-        spec = crewai_task_registry.DELIVERY_REVIEW_TASK_SPEC
+        spec = task_registry.DELIVERY_REVIEW_TASK_SPEC
 
         self.assertEqual(spec.output_model, DeliveryReviewResult)
         self.assertIn("code_approved", spec.render_description(payload="{}"))
         self.assertEqual(spec.task_name, "review_team_task")
 
     def test_registered_task_renders_payload(self):
-        spec = crewai_task_registry.DELIVERY_AUDIT_TASK_SPEC
+        spec = task_registry.DELIVERY_AUDIT_TASK_SPEC
 
         text = spec.render_description(payload='{"task_id":"T-1"}')
 
@@ -40,14 +40,14 @@ class CrewAITaskRegistryTests(unittest.TestCase):
         self.assertIn("verification_steps", text)
 
     def test_get_task_spec_loads_yaml_backed_model_mapping(self):
-        spec = crewai_task_registry.get_task_spec("document_team_task")
+        spec = task_registry.get_task_spec("document_team_task")
 
         self.assertEqual(spec.output_model.__name__, "DeliveryDocumentationResult")
         self.assertIn("documentation_policy.allowed_paths", spec.render_description(payload="{}"))
 
     def test_bug_validation_task_specs_load(self):
-        repro = crewai_task_registry.get_task_spec("reproduce_bug_before_fix")
-        testcase = crewai_task_registry.get_task_spec("bootstrap_bug_testcase")
+        repro = task_registry.get_task_spec("reproduce_bug_before_fix")
+        testcase = task_registry.get_task_spec("bootstrap_bug_testcase")
 
         self.assertEqual(repro.output_model, DeliveryBugReproResult)
         self.assertEqual(testcase.output_model, DeliveryBugTestCaseResult)
@@ -83,14 +83,14 @@ class CrewAITaskRegistryTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with mock.patch.object(crewai_spec_loader, "teams_root", return_value=root / "teams"):
-                crewai_spec_loader.clear_spec_caches()
-                team_spec = crewai_task_registry.get_task_spec("shared_task", team_id="demo-team")
-                global_spec = crewai_task_registry.get_task_spec("shared_task")
+            with mock.patch.object(spec_loader, "teams_root", return_value=root / "teams"):
+                spec_loader.clear_spec_caches()
+                team_spec = task_registry.get_task_spec("shared_task", team_id="demo-team")
+                global_spec = task_registry.get_task_spec("shared_task")
 
             self.assertIn("Team {}", team_spec.render_description(payload="{}"))
             self.assertIn("Global {}", global_spec.render_description(payload="{}"))
-        crewai_spec_loader.clear_spec_caches()
+        spec_loader.clear_spec_caches()
 
 
 if __name__ == "__main__":

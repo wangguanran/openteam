@@ -1,14 +1,20 @@
-workflow_id: quality-discussion
-lane: quality
+workflow_id: repo-review-discussion
+engine: ""
+lane: review
 phase: discussion
-display_name_zh: 质量确认流程
+display_name_zh: 审查提案确认流程
 enabled: true
-description: Collect user confirmation and align quality proposals before coding starts.
+description: >
+  Unified proposal discussion: collect user confirmation and refine
+  any pending proposal (feature, quality, process) before coding starts.
 task_source: proposal
 requires_user_confirmation: true
 materialize_requires_approval: true
 default_version_bump: none
-baseline_action_default: quality_improvement
+baseline_action_default: repo_review
+baseline_action_by_bump:
+  major: new_baseline
+  minor: new_baseline
 stages:
   - proposal-confirmation
 runtime_policy:
@@ -28,22 +34,28 @@ loop:
 process:
   mode: sequential
   verbose: false
+
 agents:
   - agent_id: responder
     role_id: Issue-Discussion-Agent
+    backstory: >
+      You own the proposal discussion. You answer questions, tighten
+      the proposal, and only approve when the user is explicit.
+
 tasks:
   - task_id: claim_discussion
     kind: skill
     skill_id: team.claim-discussion
+
   - task_id: reply_discussion
-    kind: crewai_task
+    kind: engine_task
     agent_id: responder
     output_model: ProposalDiscussionResponse
     inputs:
       proposal: $tasks.claim_discussion.outputs.proposal
       comments: $tasks.claim_discussion.outputs.comments
     description_template: |
-      Read the quality proposal and the latest user comments and return JSON matching ProposalDiscussionResponse.
+      Read the proposal and the latest user comments and return JSON matching ProposalDiscussionResponse.
       Rules:
       - If the user is only asking questions or suggesting changes, keep action=pending or hold.
       - Only set action=approve when the user explicitly confirms the proposal should proceed.
@@ -57,6 +69,7 @@ tasks:
       Latest comments:
       {comments}
     expected_output: Structured discussion reply JSON.
+
   - task_id: apply_discussion
     kind: skill
     skill_id: team.apply-discussion

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app import crewai_spec_loader
+from app import spec_loader
 
 
 @dataclass(frozen=True)
@@ -47,13 +47,13 @@ def _skill_spec_from_doc(doc: dict[str, Any]) -> SkillSpec:
 
 def list_skill_specs(*, team_id: str = "") -> tuple[SkillSpec, ...]:
     specs: list[SkillSpec] = []
-    for doc in crewai_spec_loader.list_skill_docs(team_id=str(team_id or "").strip()):
+    for doc in spec_loader.list_skill_docs(team_id=str(team_id or "").strip()):
         specs.append(_skill_spec_from_doc(doc))
     return tuple(specs)
 
 
 def skill_spec(skill_id: str, *, team_id: str = "") -> SkillSpec:
-    loaded = crewai_spec_loader.skill_doc(skill_id, team_id=str(team_id or "").strip())
+    loaded = spec_loader.skill_doc(skill_id, team_id=str(team_id or "").strip())
     if not loaded:
         raise KeyError(f"unknown skill spec: {skill_id}")
     return _skill_spec_from_doc(loaded)

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
 
-from app import crewai_spec_loader
+from app import spec_loader
 from app import improvement_store
 from app import project_config_store
 from app.engines.crewai import team_registry
@@ -80,7 +80,7 @@ def _workflow_override_keys(workflow_id: str, lane: str = "") -> tuple[str, ...]
 
 
 def _team_workflow_override(team_id: str, workflow_id: str, *, lane: str = "") -> dict[str, Any]:
-    team = crewai_spec_loader.team_doc(team_id)
+    team = spec_loader.team_doc(team_id)
     raw = team.get("workflow_settings") or {}
     if not isinstance(raw, dict):
         return {}
@@ -153,6 +153,7 @@ class WorkflowAgentSpec:
 class WorkflowTaskSpec:
     task_id: str
     kind: str
+    engine: str = ""  # "crewai" | "claude" | "openai_agents" | "" (inherit from workflow)
     skill_id: str = ""
     agent_id: str = ""
     task_template: str = ""
@@ -172,6 +173,7 @@ class WorkflowSpec:
     team_id: str
     workflow_id: str
     lane: str
+    engine: str = ""  # default engine for all tasks; "" = env OPENTEAM_ENGINE or "crewai"
     phase: str = ""
     display_name_zh: str = ""
     description: str = ""
@@ -357,6 +359,7 @@ def _task_spec_from_doc(raw: dict[str, Any]) -> WorkflowTaskSpec:
     return WorkflowTaskSpec(
         task_id=str(raw.get("task_id") or raw.get("id") or "").strip(),
         kind=str(raw.get("kind") or "skill").strip() or "skill",
+        engine=str(raw.get("engine") or "").strip(),
         skill_id=str(raw.get("skill_id") or raw.get("action_id") or "").strip(),
         agent_id=str(raw.get("agent_id") or "").strip(),
         task_template=str(raw.get("task_template") or "").strip(),
@@ -398,6 +401,7 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
         team_id=str(doc.get("team_id") or "").strip() or _default_team_id(),
         workflow_id=str(doc.get("workflow_id") or "").strip(),
         lane=str(doc.get("lane") or "").strip().lower(),
+        engine=str(doc.get("engine") or "").strip(),
         phase=str(doc.get("phase") or "").strip().lower(),
         display_name_zh=str(doc.get("display_name_zh") or "").strip(),
         description=str(doc.get("description") or "").strip(),
@@ -429,11 +433,11 @@ def _workflow_spec_from_doc(doc: dict[str, Any]) -> WorkflowSpec:
 
 def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: str = "openteam") -> dict[str, Any]:
     canonical = _canonical_workflow_id(workflow_id)
-    loaded = crewai_spec_loader.team_workflow_doc(team_id, canonical)
+    loaded = spec_loader.team_workflow_doc(team_id, canonical)
     if not loaded:
         raise KeyError(f"unknown workflow spec: {workflow_id}")
     lane = str(loaded.get("lane") or "").strip().lower()
-    team = crewai_spec_loader.team_doc(team_id)
+    team = spec_loader.team_doc(team_id)
     workflow_ids = {str(item).strip() for item in list(team.get("workflow_ids") or []) if str(item).strip()}
     base_doc = dict(loaded)
     if workflow_ids and not any(key in workflow_ids for key in _workflow_override_keys(canonical, lane=lane)):
@@ -449,7 +453,7 @@ def _workflow_doc_with_overrides(team_id: str, workflow_id: str, *, project_id: 
 def list_workflows(*, team_id: str = "", project_id: str = "openteam") -> tuple[WorkflowSpec, ...]:
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
     out: list[WorkflowSpec] = []
-    for doc in crewai_spec_loader.list_team_workflow_docs(resolved_team_id):
+    for doc in spec_loader.list_team_workflow_docs(resolved_team_id):
         workflow_id = str(doc.get("workflow_id") or "").strip()
         if not workflow_id:
             continue

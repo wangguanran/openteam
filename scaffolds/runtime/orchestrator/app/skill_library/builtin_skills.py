@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app import crewai_team_registry
+from app import team_registry
 from app import team_workflow_runtime
 from app.github_issues_bus import list_issue_comments, upsert_comment_with_marker
 from app.panel_github_sync import GitHubProjectsPanelSync
@@ -14,7 +14,7 @@ from app.skill_library.executor import register_skill
 def _team_id_from_context(context: Any) -> str:
     workflow = getattr(context, "workflow", None)
     team_id = str(getattr(workflow, "team_id", "") or "").strip()
-    return team_id or crewai_team_registry.default_team_id()
+    return team_id or team_registry.default_team_id()
 
 
 def _safe_target_from_context(context: Any) -> dict[str, Any]:

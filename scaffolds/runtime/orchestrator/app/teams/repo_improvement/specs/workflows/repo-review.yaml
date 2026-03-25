@@ -1,0 +1,310 @@
+workflow_id: repo-review
+engine: ""
+lane: review
+phase: finding
+display_name_zh: 仓库全面审查流程
+enabled: true
+description: >
+  Unified repository review: scan for bugs, discover feature opportunities,
+  assess code quality and test coverage, and suggest process improvements —
+  all in a single pass. Produces a combined UpgradePlan covering all lanes.
+task_source: proposal
+requires_user_confirmation: true
+materialize_requires_approval: false
+default_version_bump: none
+baseline_action_default: repo_review
+stages:
+  - planning
+runtime_policy:
+  max_candidates: 10
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+  dormant_after_zero_scans: 5
+  cooldown_hours: 1
+loop:
+  enabled: true
+  run_on_startup: true
+  interval_sec: 300
+  initial_delay_sec: 60
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+
+agents:
+  # --- Bug 扫描 ---
+  - agent_id: bug_scanner
+    role_id: Test-Manager
+    tool_profile: qa
+    backstory: >
+      You reason like a QA/test lead. Focus on reproducible defects,
+      failing behavior, and operational risk. Pure coverage gaps belong
+      to a dedicated role.
+
+  # --- Feature 扫描 ---
+  - agent_id: feature_scanner
+    role_id: Product-Manager
+    backstory: >
+      You think like a product manager with 10+ years shipping products.
+      Prioritize user-visible value, not just technical improvements.
+
+  # --- Quality 扫描（测试缺口 + 代码质量）---
+  - agent_id: test_gap_scanner
+    role_id: Test-Case-Gap-Agent
+    backstory: >
+      You think like a test architecture lead. Map behavior paths
+      to existing tests and flag uncovered branches.
+
+  - agent_id: quality_scanner
+    role_id: Code-Quality-Analyst
+    backstory: >
+      You think like a staff engineer doing code health stewardship.
+      Look for dead code, cleanup opportunities, and safer deletions.
+
+  # --- Process 扫描 ---
+  - agent_id: process_scanner
+    role_id: Process-Optimization-Analyst
+    backstory: >
+      You optimize the team workflow by analyzing timings, failures,
+      repeated blockers, and wasted motion.
+
+  # --- 共用：计划起草 / 评审 / QA 闸门 ---
+  - agent_id: drafter
+    role_id: Issue-Drafter
+    backstory: >
+      You break features and bugs into small, execution-scoped
+      engineering work items.
+
+  - agent_id: reviewer
+    role_id: Plan-Review-Agent
+    backstory: >
+      You enforce code review constraints and scope discipline.
+
+  - agent_id: qa_gate
+    role_id: Plan-QA-Agent
+    backstory: >
+      You are the final delivery gate. No item closes without
+      review and QA evidence.
+
+tasks:
+  # ===== 1. 收集仓库上下文 =====
+  - task_id: prepare_context
+    kind: skill
+    skill_id: team.collect-context
+
+  # ===== 2. 多维度并行扫描 =====
+
+  - task_id: bug_scan
+    kind: engine_task
+    agent_id: bug_scanner
+    output_model: StructuredBugScanResult
+    continue_on_error: true
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+      bug_scan_dormant: $tasks.prepare_context.outputs.bug_scan_dormant
+    description_template: |
+      Analyze the repository context as a QA/test lead and return JSON matching StructuredBugScanResult.
+      Rules:
+      - Only report bugs that are currently provable from the supplied repository context, baseline checks, and source evidence.
+      - Return at most {max_findings} bug findings. If max_findings is 0, return every well-supported bug candidate you can justify.
+      - Never turn missing test coverage, code smell, or vague suspicion into a bug.
+      - If bug_scan_dormant is true, prefer returning 0 findings unless there is fresh strong evidence.
+      - All user-facing natural language fields must use Simplified Chinese.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: Structured bug findings JSON.
+
+  - task_id: feature_scan
+    kind: engine_task
+    agent_id: feature_scanner
+    continue_on_error: true
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+    description_template: |
+      Analyze the repository context as a product manager and propose feature opportunities.
+      Rules:
+      - Return at most {max_findings} high-value feature ideas or product improvements. If max_findings is 0, return every well-supported idea.
+      - Focus on user-visible value and product capability improvements.
+      - Mention likely major or minor release impact when relevant.
+      - Keep the response concise and use Simplified Chinese for user-facing text.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: A concise shortlist of feature candidates with evidence.
+
+  - task_id: test_gap_scan
+    kind: engine_task
+    agent_id: test_gap_scanner
+    continue_on_error: true
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+    description_template: |
+      Analyze the repository context as a dedicated test-gap analyst.
+      Rules:
+      - Return at most {max_findings} high-value blackbox or whitebox test-gap candidates.
+      - For each candidate, distinguish blackbox vs whitebox and identify target_paths, missing_paths, suggested_test_files, and why the path is currently uncovered.
+      - Keep the response concise and use Simplified Chinese for user-facing text.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: A concise shortlist of test-gap findings.
+
+  - task_id: quality_scan
+    kind: engine_task
+    agent_id: quality_scanner
+    continue_on_error: true
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+    description_template: |
+      Review the repository context as a code-quality analyst.
+      Rules:
+      - Return at most {max_findings} concrete code-quality candidates.
+      - Focus on duplicated logic, stale code, oversized modules, safer deletions, and reuse boundaries.
+      - Do not spend candidates on pure product features.
+      - Keep the response concise and use Simplified Chinese for user-facing text.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: A concise shortlist of code-quality findings.
+
+  - task_id: process_scan
+    kind: engine_task
+    agent_id: process_scanner
+    continue_on_error: true
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      max_findings: $tasks.prepare_context.outputs.max_findings
+    description_template: |
+      Review the repository context and recent execution signals as a process optimization analyst.
+      Rules:
+      - Return at most {max_findings} process improvements grounded in runtime friction, failed handoffs, delivery bottlenecks, or repeated waste.
+      - Prefer a few high-value improvements over many weak ones.
+      - Keep the response concise and use Simplified Chinese for user-facing text.
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: A concise shortlist of process improvements.
+
+  # ===== 3. 汇总起草计划 =====
+
+  - task_id: draft_plan
+    kind: engine_task
+    agent_id: drafter
+    output_model: UpgradePlan
+    inputs:
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+      bug_scan: $tasks.bug_scan.outputs.raw
+      feature_scan: $tasks.feature_scan.outputs.raw
+      test_gap_scan: $tasks.test_gap_scan.outputs.raw
+      quality_scan: $tasks.quality_scan.outputs.raw
+      process_scan: $tasks.process_scan.outputs.raw
+      current_version: $tasks.prepare_context.outputs.current_version
+    description_template: |
+      Combine all scan results into a unified UpgradePlan JSON covering all lanes.
+      Rules:
+      - Create findings with appropriate lane and kind:
+        * Bugs: lane=bug, kind=BUG, version_bump=patch, requires_user_confirmation=false
+        * Features: lane=feature, kind=FEATURE, version_bump=minor, requires_user_confirmation=true
+        * Quality/test-gaps: lane=quality, kind=CODE_QUALITY, version_bump=none, requires_user_confirmation=true
+        * Process improvements: lane=process, kind=PROCESS, version_bump=none, requires_user_confirmation=false
+      - Every finding must include exactly one stable module name.
+      - Every finding must include small, executable work_items with review_role, qa_role, allowed_paths, tests, acceptance, and worktree_hint.
+      - owner_role will be normalized to Coding-Agent by the runtime.
+      - Test-gap findings must preserve test_gap_type, target_paths, missing_paths, suggested_test_files.
+      - Keep all user-facing natural language fields in Simplified Chinese.
+
+      Current version: {current_version}
+
+      === Bug Scan ===
+      {bug_scan}
+
+      === Feature Scan ===
+      {feature_scan}
+
+      === Test Gap Scan ===
+      {test_gap_scan}
+
+      === Code Quality Scan ===
+      {quality_scan}
+
+      === Process Scan ===
+      {process_scan}
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: Unified UpgradePlan JSON covering bug, feature, quality, and process findings.
+
+  # ===== 4. 评审 =====
+
+  - task_id: review_plan
+    kind: engine_task
+    agent_id: reviewer
+    output_model: UpgradePlan
+    inputs:
+      draft_plan: $tasks.draft_plan.outputs.raw
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+    description_template: |
+      Review the drafted unified UpgradePlan and return corrected UpgradePlan JSON.
+      Rules:
+      - Reject large, vague, or weakly evidenced findings.
+      - Keep only issue-scoped work_items with explicit path scope and validation steps.
+      - Verify each finding has the correct lane (bug/feature/quality/process).
+      - Bugs must have reproduction_steps and verification_steps.
+      - Features must stay scoped and justified by user value.
+      - Quality items must have concrete file paths and test plans.
+      - Process items must be measurable and actionable.
+      - Keep all user-facing natural language fields in Simplified Chinese.
+
+      Draft plan:
+      {draft_plan}
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: Reviewed UpgradePlan JSON.
+
+  # ===== 5. QA 闸门 =====
+
+  - task_id: qa_gate
+    kind: engine_task
+    agent_id: qa_gate
+    output_model: UpgradePlan
+    inputs:
+      reviewed_plan: $tasks.review_plan.outputs.raw
+      repo_context_blob: $tasks.prepare_context.outputs.repo_context_blob
+    description_template: |
+      Finalize the reviewed UpgradePlan from a QA and release perspective.
+      Rules:
+      - Bugs must have explicit acceptance, tests, reproduction_steps, and verification_steps.
+      - Features must have tests and acceptance; they remain pending approval before coding.
+      - Quality items must have tests and acceptance; they remain pending approval before coding.
+      - Process items must have explicit success criteria.
+      - Ensure all work_items are small enough for a single coding agent.
+      - Keep all user-facing natural language fields in Simplified Chinese.
+
+      Reviewed plan:
+      {reviewed_plan}
+
+      Repository context:
+      {repo_context_blob}
+    expected_output: QA-approved unified UpgradePlan JSON.
+
+  # ===== 6. 物化为 proposal/task =====
+
+  - task_id: materialize_plan
+    kind: skill
+    skill_id: team.materialize-findings
+    inputs:
+      plan: $tasks.qa_gate.outputs.json
+      project_id: $tasks.prepare_context.outputs.project_id
+      target_id: $tasks.prepare_context.outputs.target_id
+      repo_root: $tasks.prepare_context.outputs.repo_root
+      repo_locator: $tasks.prepare_context.outputs.repo_locator
+      current_version: $tasks.prepare_context.outputs.current_version

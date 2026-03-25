@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Type
 
-from app import crewai_spec_loader
+from app import spec_loader
 from app.pydantic_compat import BaseModel
-from app.crewai_task_models import (
+from app.task_models import (
     DeliveryAuditResult,
     DeliveryBugReproResult,
     DeliveryBugTestCaseResult,
@@ -179,7 +179,7 @@ def _task_spec_from_doc(doc: dict[str, Any]) -> CrewTaskSpec:
 
 def get_task_spec(task_name: str, *, team_id: str = "") -> CrewTaskSpec:
     name = str(task_name or "").strip()
-    loaded = crewai_spec_loader.task_doc(name, team_id=str(team_id or "").strip())
+    loaded = spec_loader.task_doc(name, team_id=str(team_id or "").strip())
     if loaded:
         return _task_spec_from_doc(loaded)
     if name in FALLBACK_TASK_SPECS:

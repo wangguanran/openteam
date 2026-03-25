@@ -16,7 +16,7 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
-from app import crewai_spec_loader  # noqa: E402
+from app import spec_loader  # noqa: E402
 from app.skill_library import builtin_skills  # noqa: E402
 from app.skill_library import executor as skill_executor  # noqa: E402
 from app.skill_library import registry as skill_registry  # noqa: E402
@@ -98,8 +98,8 @@ class SkillLibraryTests(unittest.TestCase):
                 encoding="utf-8",
             )
             context = SimpleNamespace(workflow=SimpleNamespace(team_id="demo-team"))
-            with mock.patch.object(crewai_spec_loader, "skill_specs_root", return_value=global_skills), mock.patch.object(
-                crewai_spec_loader,
+            with mock.patch.object(spec_loader, "skill_specs_root", return_value=global_skills), mock.patch.object(
+                spec_loader,
                 "teams_root",
                 return_value=root / "teams",
             ), mock.patch.dict(
@@ -110,7 +110,7 @@ class SkillLibraryTests(unittest.TestCase):
                 },
                 clear=False,
             ):
-                crewai_spec_loader.clear_spec_caches()
+                spec_loader.clear_spec_caches()
                 old_loaded = skill_executor._HANDLER_MODULES_LOADED
                 skill_executor._HANDLER_MODULES_LOADED = True
                 try:
@@ -120,7 +120,7 @@ class SkillLibraryTests(unittest.TestCase):
 
             self.assertTrue(out["ok"])
             self.assertEqual(out["outputs"]["handler"], "team")
-        crewai_spec_loader.clear_spec_caches()
+        spec_loader.clear_spec_caches()
 
 
 if __name__ == "__main__":

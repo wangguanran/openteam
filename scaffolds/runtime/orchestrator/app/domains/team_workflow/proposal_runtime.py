@@ -16,12 +16,12 @@ from openteam_common import utc_now_iso as _utc_now_iso
 
 from app import codex_llm
 from app import crew_tools
-from app import crewai_agent_factory
-from app import crewai_llm_factory
-from app import crewai_role_registry
-from app import crewai_runtime
-from app import crewai_team_registry
-from app import crewai_workflow_registry
+from app import agent_factory
+from app import llm_factory
+from app import role_registry
+from app import engine_runtime
+from app import team_registry
+from app import workflow_registry
 from app import improvement_store
 from app import workspace_store
 from app.github_issues_bus import GitHubIssuesBusError, ensure_issue, ensure_milestone, list_issue_comments, update_issue, upsert_comment_with_marker
@@ -49,27 +49,27 @@ class _IssueRecord(BaseModel):
     error: str = ""
 
 
-ROLE_PRODUCT_MANAGER = crewai_role_registry.ROLE_PRODUCT_MANAGER
-ROLE_TEST_MANAGER = crewai_role_registry.ROLE_TEST_MANAGER
-ROLE_ISSUE_DRAFTER = crewai_role_registry.ROLE_ISSUE_DRAFTER
-ROLE_PLAN_REVIEW_AGENT = crewai_role_registry.ROLE_PLAN_REVIEW_AGENT
-ROLE_PLAN_QA_AGENT = crewai_role_registry.ROLE_PLAN_QA_AGENT
-ROLE_REVIEW_AGENT = crewai_role_registry.ROLE_REVIEW_AGENT
-ROLE_QA_AGENT = crewai_role_registry.ROLE_QA_AGENT
-ROLE_PROCESS_OPTIMIZATION_ANALYST = crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST
-ROLE_ISSUE_DISCUSSION_AGENT = crewai_role_registry.ROLE_ISSUE_DISCUSSION_AGENT
-ROLE_ISSUE_AUDIT_AGENT = crewai_role_registry.ROLE_ISSUE_AUDIT_AGENT
-ROLE_BUG_REPRO_AGENT = crewai_role_registry.ROLE_BUG_REPRO_AGENT
-ROLE_BUG_TESTCASE_AGENT = crewai_role_registry.ROLE_BUG_TESTCASE_AGENT
-ROLE_TEST_CASE_GAP_AGENT = crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT
-ROLE_DOCUMENTATION_AGENT = crewai_role_registry.ROLE_DOCUMENTATION_AGENT
-ROLE_MILESTONE_MANAGER = crewai_role_registry.ROLE_MILESTONE_MANAGER
-ROLE_CODE_QUALITY_ANALYST = crewai_role_registry.ROLE_CODE_QUALITY_ANALYST
-ROLE_CODING_AGENT = crewai_role_registry.ROLE_CODING_AGENT
-ROLE_FEATURE_CODING_AGENT = crewai_role_registry.ROLE_FEATURE_CODING_AGENT
-ROLE_BUGFIX_CODING_AGENT = crewai_role_registry.ROLE_BUGFIX_CODING_AGENT
-ROLE_PROCESS_OPTIMIZATION_AGENT = crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_AGENT
-ROLE_CODE_QUALITY_AGENT = crewai_role_registry.ROLE_CODE_QUALITY_AGENT
+ROLE_PRODUCT_MANAGER = role_registry.ROLE_PRODUCT_MANAGER
+ROLE_TEST_MANAGER = role_registry.ROLE_TEST_MANAGER
+ROLE_ISSUE_DRAFTER = role_registry.ROLE_ISSUE_DRAFTER
+ROLE_PLAN_REVIEW_AGENT = role_registry.ROLE_PLAN_REVIEW_AGENT
+ROLE_PLAN_QA_AGENT = role_registry.ROLE_PLAN_QA_AGENT
+ROLE_REVIEW_AGENT = role_registry.ROLE_REVIEW_AGENT
+ROLE_QA_AGENT = role_registry.ROLE_QA_AGENT
+ROLE_PROCESS_OPTIMIZATION_ANALYST = role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST
+ROLE_ISSUE_DISCUSSION_AGENT = role_registry.ROLE_ISSUE_DISCUSSION_AGENT
+ROLE_ISSUE_AUDIT_AGENT = role_registry.ROLE_ISSUE_AUDIT_AGENT
+ROLE_BUG_REPRO_AGENT = role_registry.ROLE_BUG_REPRO_AGENT
+ROLE_BUG_TESTCASE_AGENT = role_registry.ROLE_BUG_TESTCASE_AGENT
+ROLE_TEST_CASE_GAP_AGENT = role_registry.ROLE_TEST_CASE_GAP_AGENT
+ROLE_DOCUMENTATION_AGENT = role_registry.ROLE_DOCUMENTATION_AGENT
+ROLE_MILESTONE_MANAGER = role_registry.ROLE_MILESTONE_MANAGER
+ROLE_CODE_QUALITY_ANALYST = role_registry.ROLE_CODE_QUALITY_ANALYST
+ROLE_CODING_AGENT = role_registry.ROLE_CODING_AGENT
+ROLE_FEATURE_CODING_AGENT = role_registry.ROLE_FEATURE_CODING_AGENT
+ROLE_BUGFIX_CODING_AGENT = role_registry.ROLE_BUGFIX_CODING_AGENT
+ROLE_PROCESS_OPTIMIZATION_AGENT = role_registry.ROLE_PROCESS_OPTIMIZATION_AGENT
+ROLE_CODE_QUALITY_AGENT = role_registry.ROLE_CODE_QUALITY_AGENT
 
 MODULE_ALIASES = {
     "runtime": "Runtime",
@@ -158,7 +158,7 @@ def _slug(text: str, *, default: str = "item") -> str:
 
 
 def _default_team_id() -> str:
-    return str(crewai_team_registry.default_team_id() or "").strip()
+    return str(team_registry.default_team_id() or "").strip()
 
 
 def _normalize_team_id(team_id: Any = "") -> str:
@@ -171,7 +171,7 @@ def _team_flow_id(team_id: Any = "") -> str:
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{3,}")
-role_display_zh = crewai_role_registry.role_display_zh
+role_display_zh = role_registry.role_display_zh
 
 
 def _module_slug(module: str) -> str:
@@ -204,7 +204,7 @@ def _normalize_module_name(
     raw_slug = _module_slug(raw)
     team_aliases = {
         _module_slug(str(spec.team_id or "")): "Team-Workflow"
-        for spec in crewai_team_registry.list_teams()
+        for spec in team_registry.list_teams()
         if str(spec.team_id or "").strip()
     }
     aliases = dict(MODULE_ALIASES)
@@ -294,15 +294,15 @@ def _default_documentation_policy(*, finding: UpgradeFinding, work_item: Upgrade
 
 
 def _lane_requires_user_confirmation(lane: str) -> bool:
-    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).requires_user_confirmation
+    return workflow_registry.workflow_for_lane_phase(lane, workflow_registry.PHASE_FINDING).requires_user_confirmation
 
 
 def _lane_max_candidates(lane: str, *, project_id: str = "openteam") -> int:
-    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING, project_id=project_id).max_candidates()
+    return workflow_registry.workflow_for_lane_phase(lane, workflow_registry.PHASE_FINDING, project_id=project_id).max_candidates()
 
 
 def _lane_max_continuous_runtime_minutes(lane: str, *, project_id: str = "openteam") -> int:
-    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING, project_id=project_id).max_continuous_runtime_minutes()
+    return workflow_registry.workflow_for_lane_phase(lane, workflow_registry.PHASE_FINDING, project_id=project_id).max_continuous_runtime_minutes()
 
 
 def _issue_type_token(lane: str) -> str:
@@ -1361,7 +1361,7 @@ def _merge_lane_state(target_id: str, lane: str, payload: dict[str, Any]) -> dic
 
 
 def _bug_dormant_after_zero_scans(*, project_id: str) -> int:
-    return crewai_workflow_registry.workflow_for_lane_phase("bug", crewai_workflow_registry.PHASE_FINDING, project_id=project_id).dormant_after_zero_scans()
+    return workflow_registry.workflow_for_lane_phase("bug", workflow_registry.PHASE_FINDING, project_id=project_id).dormant_after_zero_scans()
 
 
 def _has_unresolved_bug_tasks(*, project_id: str, target_id: str) -> bool:
@@ -1953,16 +1953,16 @@ def _bump_version(version: str, bump: str) -> str:
 
 
 def _lane_default_version_bump(lane: str) -> str:
-    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).default_version_bump
+    return workflow_registry.workflow_for_lane_phase(lane, workflow_registry.PHASE_FINDING).default_version_bump
 
 
 def _lane_default_cooldown_hours(lane: str, *, requires_user_confirmation: bool) -> int:
     _ = requires_user_confirmation
-    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).cooldown_hours()
+    return workflow_registry.workflow_for_lane_phase(lane, workflow_registry.PHASE_FINDING).cooldown_hours()
 
 
 def _lane_default_baseline_action(lane: str, version_bump: str) -> str:
-    return crewai_workflow_registry.workflow_for_lane_phase(lane, crewai_workflow_registry.PHASE_FINDING).default_baseline_action(version_bump)
+    return workflow_registry.workflow_for_lane_phase(lane, workflow_registry.PHASE_FINDING).default_baseline_action(version_bump)
 
 
 def _default_proof_required(*, finding: UpgradeFinding, work_item: UpgradeWorkItem) -> bool:
@@ -2132,7 +2132,7 @@ def _planned_version(current_version: str, findings: list[UpgradeFinding]) -> st
 
 
 def _crewai_llm(*, workflow: Any | None = None):
-    return crewai_llm_factory.build_crewai_llm(workflow=workflow)
+    return llm_factory.build_crewai_llm(workflow=workflow)
 
 
 def _coerce_plan(raw_output: Any, *, max_findings: int, repo_root: Path, current_version: str, project_id: str = "openteam") -> UpgradePlan:
@@ -2540,7 +2540,7 @@ def _structured_bug_scan_for_repo(
     repo_root = Path(str(repo_context.get("scan_repo_root") or repo_context.get("repo_root") or ".")).resolve()
     llm = _crewai_llm()
     tools_by_profile = _build_bug_scan_tools(repo_root=repo_root, repo_context=repo_context)
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=ROLE_TEST_MANAGER,
         team_id=_normalize_team_id(team_id),
         llm=llm,
@@ -2560,7 +2560,7 @@ def _structured_bug_scan_for_repo(
         output_json=StructuredBugScanResult,
     )
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose)
-    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+    with engine_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
         out = crew.kickoff()
     parsed = _coerce_structured_task_output(
         out,
@@ -2600,7 +2600,7 @@ def _structured_bug_scan_for_chunk(
         bug_scan_limit=bug_scan_limit,
         bug_scan_dormant=bug_scan_dormant,
     )
-    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+    with engine_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
         raw_result = llm.call(prompt, response_model=StructuredBugScanResult)
     parsed = raw_result if isinstance(raw_result, StructuredBugScanResult) else StructuredBugScanResult.model_validate(raw_result)
     module = str(module_chunk.get("module") or "module").strip()
@@ -2761,10 +2761,10 @@ def kickoff_upgrade_plan(
     bug_scan_limit = _scan_limit(max_findings, _lane_max_candidates("bug", project_id=project_id))
     quality_scan_limit = _scan_limit(max_findings, _lane_max_candidates("quality", project_id=project_id))
     enabled_workflows = _enabled_planning_workflow_ids(project_id=project_id)
-    feature_enabled = crewai_role_registry.WORKFLOW_FEATURE_FINDING in enabled_workflows
-    bug_enabled = crewai_role_registry.WORKFLOW_BUG_FINDING in enabled_workflows
-    quality_enabled = crewai_role_registry.WORKFLOW_QUALITY_FINDING in enabled_workflows
-    process_enabled = crewai_role_registry.WORKFLOW_PROCESS_FINDING in enabled_workflows
+    feature_enabled = role_registry.WORKFLOW_FEATURE_FINDING in enabled_workflows
+    bug_enabled = role_registry.WORKFLOW_BUG_FINDING in enabled_workflows
+    quality_enabled = role_registry.WORKFLOW_QUALITY_FINDING in enabled_workflows
+    process_enabled = role_registry.WORKFLOW_PROCESS_FINDING in enabled_workflows
 
     if _use_bug_only_fast_path(project_id=project_id, enabled_workflows=enabled_workflows):
         return _kickoff_bug_only_plan(
@@ -2777,20 +2777,20 @@ def kickoff_upgrade_plan(
             progress_callback=progress_callback,
         )
 
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
     from crewai import Crew, Process, Task
 
     llm = _crewai_llm()
 
     normalized_team_id = _normalize_team_id(team_id)
-    issue_drafter = crewai_agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, team_id=normalized_team_id, llm=llm, verbose=verbose)
-    review_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
-    qa_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
+    issue_drafter = agent_factory.build_crewai_agent(role_id=ROLE_ISSUE_DRAFTER, team_id=normalized_team_id, llm=llm, verbose=verbose)
+    review_agent = agent_factory.build_crewai_agent(role_id=ROLE_PLAN_REVIEW_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
+    qa_agent = agent_factory.build_crewai_agent(role_id=ROLE_PLAN_QA_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
     enabled_agents: list[Any] = [issue_drafter, review_agent, qa_agent]
     enabled_scan_tasks: list[Any] = []
 
     if feature_enabled:
-        product_manager = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, team_id=normalized_team_id, llm=llm, verbose=verbose)
+        product_manager = agent_factory.build_crewai_agent(role_id=ROLE_PRODUCT_MANAGER, team_id=normalized_team_id, llm=llm, verbose=verbose)
         enabled_agents.append(product_manager)
         enabled_scan_tasks.append(
             Task(
@@ -2819,7 +2819,7 @@ def kickoff_upgrade_plan(
             repo_root=Path(str(repo_context.get("scan_repo_root") or repo_context.get("repo_root") or ".")).resolve(),
             repo_context=repo_context,
         )
-        test_manager = crewai_agent_factory.build_crewai_agent(
+        test_manager = agent_factory.build_crewai_agent(
             role_id=ROLE_TEST_MANAGER,
             team_id=normalized_team_id,
             llm=llm,
@@ -2843,8 +2843,8 @@ def kickoff_upgrade_plan(
             )
         )
     if quality_enabled:
-        test_case_gap_agent = crewai_agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
-        code_quality_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, team_id=normalized_team_id, llm=llm, verbose=verbose)
+        test_case_gap_agent = agent_factory.build_crewai_agent(role_id=ROLE_TEST_CASE_GAP_AGENT, team_id=normalized_team_id, llm=llm, verbose=verbose)
+        code_quality_analyst = agent_factory.build_crewai_agent(role_id=ROLE_CODE_QUALITY_ANALYST, team_id=normalized_team_id, llm=llm, verbose=verbose)
         enabled_agents.extend([test_case_gap_agent, code_quality_analyst])
         enabled_scan_tasks.extend(
             [
@@ -2895,7 +2895,7 @@ def kickoff_upgrade_plan(
             ]
         )
     if process_enabled:
-        process_analyst = crewai_agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, team_id=normalized_team_id, llm=llm, verbose=verbose)
+        process_analyst = agent_factory.build_crewai_agent(role_id=ROLE_PROCESS_OPTIMIZATION_ANALYST, team_id=normalized_team_id, llm=llm, verbose=verbose)
         enabled_agents.append(process_analyst)
         enabled_scan_tasks.append(
             Task(
@@ -2988,7 +2988,7 @@ def kickoff_upgrade_plan(
         process=Process.sequential,
         verbose=verbose,
     )
-    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+    with engine_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
         out = crew.kickoff()
     current_version = str(repo_context.get("current_version") or "0.1.0").strip() or "0.1.0"
     plan = _coerce_plan(
@@ -3942,7 +3942,7 @@ def _discussion_fallback_reply(*, proposal: dict[str, Any], comments_text: str, 
 
 
 def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any], verbose: bool = False) -> ProposalDiscussionResponse:
-    crewai_runtime.require_crewai_importable()
+    engine_runtime.require_crewai_importable()
     from crewai import Crew, Process, Task
 
     llm = _crewai_llm()
@@ -3958,7 +3958,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             for c in comments
         ],
     }
-    agent = crewai_agent_factory.build_crewai_agent(
+    agent = agent_factory.build_crewai_agent(
         role_id=ROLE_ISSUE_DISCUSSION_AGENT,
         team_id=_normalize_team_id(str(proposal.get("team_id") or "")),
         llm=llm,
@@ -3983,7 +3983,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
         output_json=ProposalDiscussionResponse,
     )
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose)
-    with crewai_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
+    with engine_runtime.suppress_proxy_for_codex_oauth(model=str(getattr(llm, "model", "") or "")):
         out = crew.kickoff()
     if hasattr(out, "to_dict"):
         return ProposalDiscussionResponse.model_validate(out.to_dict())
@@ -4012,16 +4012,16 @@ def reconcile_feature_discussions(
     normalized_target_id = str(target_id or "").strip()
     workflows = [
         workflow
-        for workflow in crewai_workflow_registry.list_workflows(team_id=_normalize_team_id(team_id), project_id=normalized_project_id)
-        if workflow.phase == crewai_workflow_registry.PHASE_DISCUSSION and workflow.enabled
+        for workflow in workflow_registry.list_workflows(team_id=_normalize_team_id(team_id), project_id=normalized_project_id)
+        if workflow.phase == workflow_registry.PHASE_DISCUSSION and workflow.enabled
     ]
     for workflow in workflows:
-        runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+        runtime_policy = workflow_registry.evaluate_workflow_runtime_policy(
             workflow=workflow,
             target_id=normalized_target_id,
             force=False,
         )
-        _ = crewai_workflow_registry.update_workflow_runtime_state(normalized_target_id, workflow.workflow_id, runtime_policy)
+        _ = workflow_registry.update_workflow_runtime_state(normalized_target_id, workflow.workflow_id, runtime_policy)
         if not runtime_policy.allowed:
             stats["skipped_runtime"] += 1
             continue
@@ -4062,9 +4062,9 @@ def _upsert_proposal(
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     finding = _localize_finding_to_zh(finding)
-    workflow = crewai_workflow_registry.workflow_for_lane_phase(
+    workflow = workflow_registry.workflow_for_lane_phase(
         finding.lane,
-        crewai_workflow_registry.PHASE_FINDING,
+        workflow_registry.PHASE_FINDING,
         team_id=_normalize_team_id(team_id),
         project_id=project_id,
     )
@@ -4443,8 +4443,8 @@ def _ensure_task_record(
     ]
     doc["need_pm_decision"] = False
     normalized_team_id = _normalize_team_id(team_id)
-    coding_workflow = crewai_workflow_registry.workflow_for_phase(
-        crewai_workflow_registry.PHASE_CODING,
+    coding_workflow = workflow_registry.workflow_for_phase(
+        workflow_registry.PHASE_CODING,
         team_id=normalized_team_id,
         project_id=panel_project_id,
     )
@@ -4936,13 +4936,13 @@ def _sync_panel(*, db, project_id: str) -> dict[str, Any]:
 def _enabled_planning_workflow_ids(*, project_id: str) -> set[str]:
     enabled: set[str] = set()
     for workflow_id in (
-        crewai_role_registry.WORKFLOW_FEATURE_FINDING,
-        crewai_role_registry.WORKFLOW_BUG_FINDING,
-        crewai_role_registry.WORKFLOW_QUALITY_FINDING,
-        crewai_role_registry.WORKFLOW_PROCESS_FINDING,
+        role_registry.WORKFLOW_FEATURE_FINDING,
+        role_registry.WORKFLOW_BUG_FINDING,
+        role_registry.WORKFLOW_QUALITY_FINDING,
+        role_registry.WORKFLOW_PROCESS_FINDING,
     ):
         try:
-            spec = crewai_workflow_registry.workflow_spec(workflow_id, project_id=project_id)
+            spec = workflow_registry.workflow_spec(workflow_id, project_id=project_id)
         except Exception:
             continue
         if bool(spec.enabled):
@@ -4952,7 +4952,7 @@ def _enabled_planning_workflow_ids(*, project_id: str) -> set[str]:
 
 def _use_bug_only_fast_path(*, project_id: str, enabled_workflows: set[str] | None = None) -> bool:
     workflows = enabled_workflows if enabled_workflows is not None else _enabled_planning_workflow_ids(project_id=project_id)
-    return workflows == {crewai_role_registry.WORKFLOW_BUG_FINDING}
+    return workflows == {role_registry.WORKFLOW_BUG_FINDING}
 
 
 def _planning_role_ids(*, project_id: str) -> set[str]:
@@ -4964,25 +4964,25 @@ def _planning_role_ids(*, project_id: str) -> set[str]:
         ROLE_PLAN_REVIEW_AGENT,
         ROLE_PLAN_QA_AGENT,
     }
-    if crewai_role_registry.WORKFLOW_FEATURE_FINDING in enabled_workflows:
+    if role_registry.WORKFLOW_FEATURE_FINDING in enabled_workflows:
         roles.update({ROLE_PRODUCT_MANAGER, ROLE_MILESTONE_MANAGER})
-    if crewai_role_registry.WORKFLOW_BUG_FINDING in enabled_workflows:
+    if role_registry.WORKFLOW_BUG_FINDING in enabled_workflows:
         roles.add(ROLE_TEST_MANAGER)
-    if crewai_role_registry.WORKFLOW_QUALITY_FINDING in enabled_workflows:
+    if role_registry.WORKFLOW_QUALITY_FINDING in enabled_workflows:
         roles.update({ROLE_TEST_CASE_GAP_AGENT, ROLE_CODE_QUALITY_ANALYST})
-    if crewai_role_registry.WORKFLOW_PROCESS_FINDING in enabled_workflows:
+    if role_registry.WORKFLOW_PROCESS_FINDING in enabled_workflows:
         roles.add(ROLE_PROCESS_OPTIMIZATION_ANALYST)
     return roles
 
 
 def _register_agents(*, db, project_id: str, workstream_id: str, task_id: str, role_filter: set[str] | None = None) -> dict[str, str]:
-    blueprint = crewai_role_registry.planning_team_blueprint()
+    blueprint = role_registry.planning_team_blueprint()
     if role_filter:
-        blueprint = crewai_role_registry.TeamBlueprint(
+        blueprint = role_registry.TeamBlueprint(
             team_id=blueprint.team_id,
             members=tuple(member for member in blueprint.members if member.role_id in role_filter),
         )
-    return crewai_role_registry.register_team_blueprint(
+    return role_registry.register_team_blueprint(
         db=db,
         blueprint=blueprint,
         project_id=project_id,
@@ -5011,9 +5011,9 @@ def _record_from_materialized_item(
     proposal_id: str,
     dry_run: bool,
 ) -> dict[str, Any]:
-    workflow = crewai_workflow_registry.workflow_for_lane_phase(
+    workflow = workflow_registry.workflow_for_lane_phase(
         finding.lane,
-        crewai_workflow_registry.PHASE_CODING,
+        workflow_registry.PHASE_CODING,
         team_id=_normalize_team_id(team_id),
         project_id=project_id,
     )
@@ -5106,8 +5106,8 @@ def run_team_workflow(*, db, spec: Any, actor: str, run_id: str, crewai_info: di
 
     workflows = [
         workflow
-        for workflow in crewai_workflow_registry.list_workflows(team_id=team_id, project_id=project_id)
-        if workflow.phase == crewai_workflow_registry.PHASE_FINDING and workflow.enabled
+        for workflow in workflow_registry.list_workflows(team_id=team_id, project_id=project_id)
+        if workflow.phase == workflow_registry.PHASE_FINDING and workflow.enabled
     ]
     if not workflows:
         payload = {
@@ -5173,12 +5173,12 @@ def run_team_workflow(*, db, spec: Any, actor: str, run_id: str, crewai_info: di
     bug_scan_policy: dict[str, Any] = {}
 
     for workflow in workflows:
-        runtime_policy = crewai_workflow_registry.evaluate_workflow_runtime_policy(
+        runtime_policy = workflow_registry.evaluate_workflow_runtime_policy(
             workflow=workflow,
             target_id=target_id,
             force=force,
         )
-        _ = crewai_workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
+        _ = workflow_registry.update_workflow_runtime_state(target_id, workflow.workflow_id, runtime_policy)
         if not runtime_policy.allowed:
             workflow_results.append(
                 {
@@ -5223,8 +5223,11 @@ def run_team_workflow(*, db, spec: Any, actor: str, run_id: str, crewai_info: di
         plan_doc = dict(materialized.get("plan") or {}) if isinstance(materialized.get("plan"), dict) else {}
         ci_actions.extend([str(item).strip() for item in list(plan_doc.get("ci_actions") or []) if str(item).strip()])
         notes.extend([str(item).strip() for item in list(plan_doc.get("notes") or []) if str(item).strip()])
-        if workflow.lane == "bug":
-            bug_finding_count = len(list((plan_doc.get("findings") or [])))
+        # Count bug findings regardless of workflow lane (supports unified repo-review)
+        findings = list(plan_doc.get("findings") or [])
+        lane_bug_findings = [f for f in findings if isinstance(f, dict) and str(f.get("lane") or "").strip().lower() == "bug"]
+        if workflow.lane == "bug" or lane_bug_findings:
+            bug_finding_count = len(lane_bug_findings) if lane_bug_findings else len(findings)
             repo_context_for_bug_state = dict((((result.get("state") or {}).get("tasks") or {}).get("prepare_context") or {}).get("outputs") or {}).get("repo_context") or {}
             bug_scan_policy = dict(materialized.get("bug_scan_policy") or {})
 

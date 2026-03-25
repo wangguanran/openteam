@@ -136,9 +136,9 @@ class BootstrapAndRunTests(unittest.TestCase):
             ), mock.patch.object(
                 self.mod, "_ensure_crewai_ready", return_value={"ok": True}
             ), mock.patch.object(
-                self.mod, "_run_repo_improvement_bootstrap", return_value={"ok": True}
+                self.mod, "_run_default_team_bootstrap", return_value={"ok": True}
             ), mock.patch.object(
-                self.mod, "_read_repo_improvement_state", return_value={}
+                self.mod, "_read_default_team_state", return_value={}
             ), mock.patch.object(self.mod, "_resume_tasks", return_value={"ok": True, "resumed": []}), mock.patch.object(
                 self.mod, "_status_snapshot", return_value={"ok": True}
             ), mock.patch.dict(os.environ, dict(os.environ), clear=True):
@@ -241,9 +241,9 @@ class BootstrapAndRunTests(unittest.TestCase):
             ), mock.patch.object(
                 self.mod, "_ensure_crewai_ready", side_effect=fake_crewai
             ), mock.patch.object(
-                self.mod, "_run_repo_improvement_bootstrap", side_effect=fake_su_boot
+                self.mod, "_run_default_team_bootstrap", side_effect=fake_su_boot
             ), mock.patch.object(
-                self.mod, "_read_repo_improvement_state", return_value={"last_run": {"ts": "2026-02-28T00:00:00Z", "status": "DONE"}}
+                self.mod, "_read_default_team_state", return_value={"last_run": {"ts": "2026-02-28T00:00:00Z", "status": "DONE"}}
             ), mock.patch.object(self.mod, "_resume_tasks", side_effect=fake_resume), mock.patch.object(
                 self.mod, "_status_snapshot", side_effect=fake_snapshot
             ), mock.patch.dict(os.environ, dict(os.environ), clear=True):

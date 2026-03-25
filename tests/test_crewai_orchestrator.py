@@ -16,7 +16,7 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 
 from app import crew_tools  # noqa: E402
-from app.crewai_orchestrator import RunSpec, run_once  # noqa: E402
+from app.orchestrator import RunSpec, run_once  # noqa: E402
 
 
 class _FakeDB:
@@ -80,12 +80,12 @@ class CrewOrchestratorTests(unittest.TestCase):
         spec = RunSpec(project_id="openteam", workstream_id="general", objective="run checks", flow="standard")
 
         with mock.patch(
-            "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
+            "app.orchestrator.engine_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
-        ), mock.patch("app.crewai_orchestrator.openteam_root", return_value=Path("/tmp/openteam")), mock.patch(
-            "app.crewai_orchestrator.crew_tools.workspace_root", return_value=Path("/tmp/ws")
+        ), mock.patch("app.orchestrator.openteam_root", return_value=Path("/tmp/openteam")), mock.patch(
+            "app.orchestrator.crew_tools.workspace_root", return_value=Path("/tmp/ws")
         ), mock.patch(
-            "app.crewai_orchestrator.crew_tools.run_pipeline",
+            "app.orchestrator.crew_tools.run_pipeline",
             return_value={
                 "pipeline": "doctor",
                 "script_path": "/tmp/openteam/scripts/pipelines/doctor.py",
@@ -114,7 +114,7 @@ class CrewOrchestratorTests(unittest.TestCase):
         db = _FakeDB()
         spec = RunSpec(project_id="openteam", workstream_id="general", objective="bad request", flow="pipeline:task_create")
         with mock.patch(
-            "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
+            "app.orchestrator.engine_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
         ):
             out = run_once(db=db, spec=spec, actor="test")
@@ -141,10 +141,10 @@ class CrewOrchestratorTests(unittest.TestCase):
         )
 
         with mock.patch(
-            "app.crewai_orchestrator.crewai_runtime.require_crewai_importable",
+            "app.orchestrator.engine_runtime.require_crewai_importable",
             return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
         ), mock.patch(
-            "app.crewai_orchestrator.team_runtime_registry.team_runtime_adapter",
+            "app.orchestrator.team_runtime_registry.team_runtime_adapter",
             return_value=adapter,
         ) as mocked_adapter:
             out = run_once(db=db, spec=spec, actor="test")

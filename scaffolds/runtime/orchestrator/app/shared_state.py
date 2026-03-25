@@ -7,7 +7,7 @@ from typing import Any, Optional
 from agents import Agent
 from openteam_common import utc_now_iso as _utc_now_iso
 
-from . import crewai_role_registry
+from . import role_registry
 from .runtime_db import RuntimeDB
 from .state_store import runtime_state_root
 
@@ -104,15 +104,15 @@ PANEL_LOCK = threading.Lock()
 
 TEAM_WORKFLOW_STALE_AGENT_ROLES = frozenset(
     {
-        crewai_role_registry.ROLE_PRODUCT_MANAGER,
-        crewai_role_registry.ROLE_TEST_MANAGER,
-        crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT,
-        crewai_role_registry.ROLE_ISSUE_DRAFTER,
-        crewai_role_registry.ROLE_PLAN_REVIEW_AGENT,
-        crewai_role_registry.ROLE_PLAN_QA_AGENT,
-        crewai_role_registry.ROLE_MILESTONE_MANAGER,
-        crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST,
-        crewai_role_registry.ROLE_CODE_QUALITY_ANALYST,
+        role_registry.ROLE_PRODUCT_MANAGER,
+        role_registry.ROLE_TEST_MANAGER,
+        role_registry.ROLE_TEST_CASE_GAP_AGENT,
+        role_registry.ROLE_ISSUE_DRAFTER,
+        role_registry.ROLE_PLAN_REVIEW_AGENT,
+        role_registry.ROLE_PLAN_QA_AGENT,
+        role_registry.ROLE_MILESTONE_MANAGER,
+        role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST,
+        role_registry.ROLE_CODE_QUALITY_ANALYST,
         "Scheduler-Agent",
         "Release-Agent",
         "Process-Metrics-Agent",

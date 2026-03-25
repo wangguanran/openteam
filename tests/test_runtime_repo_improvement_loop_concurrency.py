@@ -38,7 +38,7 @@ else:  # pragma: no cover
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not available in this test environment")
 class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
     def test_workflow_loop_concurrency_loads_from_spec(self) -> None:
-        workflow = workflow_registry.workflow_spec("bug-finding", project_id="openteam")
+        workflow = workflow_registry.workflow_spec("repo-review", project_id="openteam")
         self.assertEqual(workflow.loop.concurrency, 1)
 
     def test_target_job_pool_runs_jobs_concurrently(self) -> None:
@@ -60,7 +60,7 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
                 active -= 1
             return str(target.get("target_id") or "")
 
-        results, errors = app_main._run_repo_improvement_target_jobs_in_pool(
+        results, errors = app_main._run_team_target_jobs_in_pool(
             targets=targets,
             worker_concurrency=10,
             thread_name_prefix="repo-improvement-test",
@@ -72,30 +72,31 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
         self.assertGreaterEqual(peak, 2)
 
     def test_workflow_status_snapshot_is_keyed_by_workflow_id(self) -> None:
-        app_main._set_repo_improvement_loop_state(
-            "bug-finding",
+        app_main._set_team_workflow_loop_state(
+            "repo-review",
             enabled=True,
             status="running",
-            current_action="running bug-finding workers",
+            current_action="running repo-review workers",
         )
-        app_main._set_repo_improvement_loop_state(
-            "coding",
+        app_main._set_team_workflow_loop_state(
+            "repo-coding",
             enabled=True,
             status="sleeping",
             current_action="sleeping until next coding sweep",
         )
 
-        statuses = app_main._repo_improvement_workflow_status_snapshot(
+        statuses = app_main._team_workflow_status_snapshot(
+            team_id="repo-improvement",
             target_id="demo-target",
             project_id="openteam",
         )
 
-        self.assertIn("bug-finding", statuses)
-        self.assertIn("coding", statuses)
-        self.assertIn("feature-discussion", statuses)
-        self.assertEqual(statuses["bug-finding"]["phase"], "finding")
-        self.assertEqual(statuses["coding"]["phase"], "coding")
-        self.assertEqual(statuses["coding"]["workflow_root"], "shared")
+        self.assertIn("repo-review", statuses)
+        self.assertIn("repo-coding", statuses)
+        self.assertIn("repo-review-discussion", statuses)
+        self.assertEqual(statuses["repo-review"]["phase"], "finding")
+        self.assertEqual(statuses["repo-coding"]["phase"], "coding")
+        self.assertEqual(statuses["repo-coding"]["workflow_root"], "shared")
 
 
 if __name__ == "__main__":

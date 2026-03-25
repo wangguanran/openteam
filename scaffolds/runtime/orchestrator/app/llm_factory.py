@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 from app import codex_llm
-from app import crewai_runtime
+from app import engine_runtime
 
 
 def _ensure_codex_proxy_bypass() -> None:
@@ -41,7 +41,7 @@ def _ensure_codex_proxy_bypass() -> None:
 
 def build_crewai_llm(*, workflow: Any | None = None):
     os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
-    crewai_runtime.require_crewai_importable(refresh=True)
+    engine_runtime.require_crewai_importable(refresh=True)
     from crewai.llm import LLM
 
     model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()

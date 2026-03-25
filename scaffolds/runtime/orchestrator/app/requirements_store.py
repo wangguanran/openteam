@@ -88,9 +88,9 @@ def _is_within(child: Path, parent: Path) -> bool:
 def _reserved_team_users() -> set[str]:
     reserved: set[str] = set()
     try:
-        from . import crewai_team_registry
+        from . import team_registry
 
-        for spec in crewai_team_registry.list_teams():
+        for spec in team_registry.list_teams():
             team_id = str(spec.team_id or "").strip().lower()
             if not team_id:
                 continue

@@ -36,14 +36,14 @@ from .requirements_store import (
 )
 from .runtime_db import RunRow, RuntimeDB
 from . import cluster_manager
-from . import crewai_orchestrator
-from . import crewai_role_registry
-from . import crewai_runtime
+from . import orchestrator
+from . import role_registry
+from . import engine_runtime
 from . import improvement_store
 from . import openclaw_reporter
 from . import crew_tools
 from .engines.crewai import workflow_registry as team_workflow_registry
-from . import crewai_team_registry
+from . import team_registry
 from . import team_runtime_registry
 from .state_store import (
     StateError,
@@ -486,7 +486,7 @@ def _openteam_checks(openteam_path: str) -> dict[str, Any]:
     specs_roles_dir = p / "specs" / "roles"
     state_dir = runtime_state_root()
     runtime_app_dir = p / "scaffolds" / "runtime" / "orchestrator" / "app"
-    crewai_orchestrator_file = runtime_app_dir / "crewai_orchestrator.py"
+    orchestrator_file = runtime_app_dir / "orchestrator.py"
     runtime_role_library_dir = runtime_app_dir / "role_library" / "specs"
     teams_root = runtime_app_dir / "teams"
     team_spec_files = sorted(str(path.relative_to(runtime_app_dir)) for path in teams_root.glob("*/specs/team.yaml")) if teams_root.exists() else []
@@ -508,7 +508,7 @@ def _openteam_checks(openteam_path: str) -> dict[str, Any]:
         "specs_workflows_dir_exists": specs_workflows_dir.exists(),
         "specs_roles_dir_exists": specs_roles_dir.exists(),
         "state_dir_exists": state_dir.exists(),
-        "crewai_orchestrator_exists": crewai_orchestrator_file.exists(),
+        "orchestrator_exists": orchestrator_file.exists(),
         "runtime_role_library_exists": runtime_role_library_dir.exists(),
         "team_specs_exist": bool(team_spec_files),
         "team_spec_files": team_spec_files,
@@ -534,15 +534,15 @@ _PANEL_DIRTY: set[str] = set()
 _PANEL_LOCK = threading.Lock()
 _TEAM_WORKFLOW_STALE_AGENT_ROLES = frozenset(
     {
-        crewai_role_registry.ROLE_PRODUCT_MANAGER,
-        crewai_role_registry.ROLE_TEST_MANAGER,
-        crewai_role_registry.ROLE_TEST_CASE_GAP_AGENT,
-        crewai_role_registry.ROLE_ISSUE_DRAFTER,
-        crewai_role_registry.ROLE_PLAN_REVIEW_AGENT,
-        crewai_role_registry.ROLE_PLAN_QA_AGENT,
-        crewai_role_registry.ROLE_MILESTONE_MANAGER,
-        crewai_role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST,
-        crewai_role_registry.ROLE_CODE_QUALITY_ANALYST,
+        role_registry.ROLE_PRODUCT_MANAGER,
+        role_registry.ROLE_TEST_MANAGER,
+        role_registry.ROLE_TEST_CASE_GAP_AGENT,
+        role_registry.ROLE_ISSUE_DRAFTER,
+        role_registry.ROLE_PLAN_REVIEW_AGENT,
+        role_registry.ROLE_PLAN_QA_AGENT,
+        role_registry.ROLE_MILESTONE_MANAGER,
+        role_registry.ROLE_PROCESS_OPTIMIZATION_ANALYST,
+        role_registry.ROLE_CODE_QUALITY_ANALYST,
         "Scheduler-Agent",
         "Release-Agent",
         "Process-Metrics-Agent",
@@ -555,7 +555,7 @@ def _team_runtime(team_id: str) -> team_runtime_registry.TeamRuntimeAdapter:
 
 
 def _default_team_runtime() -> team_runtime_registry.TeamRuntimeAdapter:
-    return _team_runtime(crewai_team_registry.default_team_id())
+    return _team_runtime(team_registry.default_team_id())
 
 
 class _ScopedRunLocks:
@@ -1054,7 +1054,7 @@ def _run_team_iteration(
             "lock_key": lock_key,
         }
     try:
-        spec = crewai_orchestrator.RunSpec(
+        spec = orchestrator.RunSpec(
             project_id=effective_project_id,
             workstream_id=workstream_id,
             objective=objective or f"Run OpenTeam workflow team:{resolved_team_id}",
@@ -1067,7 +1067,7 @@ def _run_team_iteration(
             force=force,
             trigger=trigger,
         )
-        out = crewai_orchestrator.run_once(db=DB, spec=spec, actor=actor)
+        out = orchestrator.run_once(db=DB, spec=spec, actor=actor)
         _mark_panel_dirty(project_id)
         return out
     finally:
@@ -1075,7 +1075,7 @@ def _run_team_iteration(
 
 
 def _run_team_discussion_sync(*, team_id: str, actor: str, project_id: str = "", target_id: str = "") -> dict[str, Any]:
-    resolved_team_id = str(team_id or "").strip() or crewai_team_registry.default_team_id()
+    resolved_team_id = str(team_id or "").strip() or team_registry.default_team_id()
     out = _team_runtime(resolved_team_id).reconcile_discussions_fn(
         db=DB,
         actor=actor,
@@ -1098,7 +1098,7 @@ def _run_team_coding_iteration(
     force: bool = False,
     concurrency: Optional[int] = None,
 ) -> dict[str, Any]:
-    resolved_team_id = str(team_id or "").strip() or crewai_team_registry.default_team_id()
+    resolved_team_id = str(team_id or "").strip() or team_registry.default_team_id()
     _cleanup_stale_team_activity()
     current_project_id = _effective_team_project_id(
         project_id=str(project_id or "openteam").strip() or "openteam",
@@ -1515,7 +1515,7 @@ def _startup_background_threads() -> None:
             time.sleep(max(1, interval_sec))
 
     if _env_truthy("OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED", "1"):
-        for team in crewai_team_registry.list_teams():
+        for team in team_registry.list_teams():
             for workflow in team_workflow_registry.list_workflows(team_id=team.team_id, project_id="openteam"):
                 if not workflow.loop.enabled:
                     continue
@@ -1527,7 +1527,7 @@ def _startup_background_threads() -> None:
                 )
                 thread.start()
     else:
-        for team in crewai_team_registry.list_teams():
+        for team in team_registry.list_teams():
             for workflow in team_workflow_registry.list_workflows(team_id=team.team_id, project_id="openteam"):
                 _set_team_workflow_loop_state(
                     _team_workflow_loop_id(team.team_id, workflow.workflow_id),
@@ -1789,14 +1789,14 @@ class RecoveryResumeIn(BaseModel):
 def healthz(response: Response):
     openteam_path = os.getenv("OPENTEAM_REPO_PATH", "/openteam")
     checks = _openteam_checks(openteam_path)
-    crewai_info = crewai_runtime.probe_crewai()
+    crewai_info = engine_runtime.probe_crewai()
     ok = (
         checks["exists"]
         and checks["specs_workflows_dir_exists"]
         and checks["specs_roles_dir_exists"]
         and checks["runtime_role_library_exists"]
         and checks["team_specs_exist"]
-        and checks["crewai_orchestrator_exists"]
+        and checks["orchestrator_exists"]
         and bool(crewai_info.get("importable"))
     )
     db = {"backend": ("postgres" if (os.getenv("OPENTEAM_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
@@ -1818,7 +1818,7 @@ def v1_status():
     ws_root = str(_workspace_root())
     active_projects = _active_projects_summary()
     targets = improvement_store.list_targets()
-    default_team_id = crewai_team_registry.default_team_id()
+    default_team_id = team_registry.default_team_id()
     default_team_runtime = _team_runtime(default_team_id)
     default_target = _default_local_improvement_target()
     default_target_id = str((default_target or {}).get("target_id") or "")
@@ -1829,7 +1829,7 @@ def v1_status():
 
     tasks = _load_tasks_summary()
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
-    crewai_info = crewai_runtime.probe_crewai()
+    crewai_info = engine_runtime.probe_crewai()
     milestones = [m.__dict__ for m in list_milestones("openteam")]
     target_summaries: list[dict[str, Any]] = []
     for target in targets:
@@ -1860,7 +1860,7 @@ def v1_status():
     openclaw_status["state"] = openclaw_reporter.load_state()
     pending = _pending_decisions()
     teams_payload: dict[str, Any] = {}
-    for team in crewai_team_registry.list_teams():
+    for team in team_registry.list_teams():
         team_runtime = _team_runtime(team.team_id)
         team_state = team_runtime.read_state_fn(default_target_id) if default_target_id else {}
         proposals = team_runtime.list_proposals_fn()
@@ -2092,7 +2092,7 @@ def v1_run_start(payload: RunStartIn):
                 detail={"error": "task_not_found", "task_id": task_id, "project_id": project_id},
             )
     flow = crew_tools.resolve_run_request_flow(flow=payload.flow, pipeline=payload.pipeline)
-    spec = crewai_orchestrator.RunSpec(
+    spec = orchestrator.RunSpec(
         project_id=project_id,
         workstream_id=workstream_id,
         objective=str(payload.objective),
@@ -2106,7 +2106,7 @@ def v1_run_start(payload: RunStartIn):
         force=bool(payload.force),
         trigger=str(payload.trigger or ""),
     )
-    out = crewai_orchestrator.run_once(db=DB, spec=spec, actor="crewai_orchestrator")
+    out = orchestrator.run_once(db=DB, spec=spec, actor="orchestrator")
     _mark_panel_dirty(project_id)
     return out
 
@@ -3011,7 +3011,7 @@ def v1_teams():
             "workflow_ids": list(spec.workflow_ids),
             "stage_ids": list(spec.stage_ids),
         }
-        for spec in crewai_team_registry.list_teams()
+        for spec in team_registry.list_teams()
     ]
     return {"total": len(teams), "teams": teams}
 
@@ -3480,7 +3480,7 @@ def _pending_decisions() -> list[dict[str, Any]]:
             decisions.append({"type": "TASK_NEED_PM_DECISION", "task_id": t.get("task_id"), "title": t.get("title")})
 
     # 3) Repo-improvement proposals waiting for user input.
-    for team in crewai_team_registry.list_teams():
+    for team in team_registry.list_teams():
         try:
             for p in _team_runtime(team.team_id).list_proposals_fn():
                 status = str(p.get("status") or "").strip().upper()

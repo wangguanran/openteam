@@ -58,17 +58,17 @@ class RepoImprovementDeliveryConcurrencyTests(unittest.TestCase):
                     overlap.set()
             return {"ok": True, "task_id": task_id, "status": "closed", "project_id": "demo"}
 
-        fake_workflow = mock.Mock(workflow_id="coding")
+        fake_workflow = mock.Mock(workflow_id="repo-coding")
         fake_runtime_policy = mock.Mock(allowed=True, reason="")
 
         with mock.patch("app.domains.team_workflow.task_runtime.list_delivery_tasks", return_value=tasks), mock.patch(
-            "app.domains.team_workflow.task_runtime.crewai_workflow_registry.workflow_for_phase",
+            "app.domains.team_workflow.task_runtime.workflow_registry.workflow_for_phase",
             return_value=fake_workflow,
         ), mock.patch(
-            "app.domains.team_workflow.task_runtime.crewai_workflow_registry.evaluate_workflow_runtime_policy",
+            "app.domains.team_workflow.task_runtime.workflow_registry.evaluate_workflow_runtime_policy",
             return_value=fake_runtime_policy,
         ), mock.patch(
-            "app.domains.team_workflow.task_runtime.crewai_workflow_registry.update_workflow_runtime_state",
+            "app.domains.team_workflow.task_runtime.workflow_registry.update_workflow_runtime_state",
             return_value={},
         ), mock.patch(
             "app.domains.team_workflow.task_runtime._claim_delivery_task_lease",

@@ -23,13 +23,9 @@ role_pool:
   - Process-Metrics-Agent
   - Milestone-Manager-Agent
 workflow_ids:
-  - bug-finding
-  - coding
-  - feature-finding
-  - feature-discussion
-  - quality-finding
-  - quality-discussion
-  - process-finding
+  - repo-review
+  - repo-review-discussion
+  - repo-coding
 stage_ids:
   - planning
   - proposal-confirmation

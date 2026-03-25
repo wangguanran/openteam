@@ -18,20 +18,20 @@ def _add_template_app_to_syspath() -> None:
 
 _add_template_app_to_syspath()
 
-from app import crewai_runtime  # noqa: E402
+from app import engine_runtime  # noqa: E402
 
 
 class CrewAIRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_env = dict(os.environ)
         self._orig_syspath = list(sys.path)
-        crewai_runtime._probe_crewai_cached.cache_clear()
+        engine_runtime._probe_crewai_cached.cache_clear()
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self._orig_env)
         sys.path[:] = self._orig_syspath
-        crewai_runtime._probe_crewai_cached.cache_clear()
+        engine_runtime._probe_crewai_cached.cache_clear()
 
     def test_probe_prefers_env_path_and_exposes_import_metadata(self):
         with tempfile.TemporaryDirectory() as td:
@@ -42,8 +42,8 @@ class CrewAIRuntimeTests(unittest.TestCase):
             os.environ["OPENTEAM_CREWAI_SRC_PATH"] = str(src)
 
             fake_mod = SimpleNamespace(__version__="0.test", __file__=str(pkg / "__init__.py"))
-            with mock.patch("app.crewai_runtime.importlib.import_module", return_value=fake_mod) as mocked_import:
-                info = crewai_runtime.probe_crewai(refresh=True)
+            with mock.patch("app.engine_runtime.importlib.import_module", return_value=fake_mod) as mocked_import:
+                info = engine_runtime.probe_crewai(refresh=True)
 
             self.assertTrue(info["configured"])
             self.assertEqual(info["source_path"], str(src.resolve()))
@@ -53,8 +53,8 @@ class CrewAIRuntimeTests(unittest.TestCase):
 
     def test_probe_uses_installed_crewai_when_no_src_override_is_set(self):
         fake_mod = SimpleNamespace(__version__="1.10.0", __file__="/tmp/site-packages/crewai/__init__.py")
-        with mock.patch("app.crewai_runtime.importlib.import_module", return_value=fake_mod):
-            info = crewai_runtime.probe_crewai(refresh=True)
+        with mock.patch("app.engine_runtime.importlib.import_module", return_value=fake_mod):
+            info = engine_runtime.probe_crewai(refresh=True)
 
         self.assertFalse(info["configured"])
         self.assertEqual(info["source_path"], "")
@@ -82,8 +82,8 @@ class CrewAIRuntimeTests(unittest.TestCase):
                     return fresh_mod
                 raise AssertionError(f"unexpected import: {name}")
 
-            with mock.patch("app.crewai_runtime.importlib.import_module", side_effect=_fake_import):
-                info = crewai_runtime.probe_crewai(refresh=True)
+            with mock.patch("app.engine_runtime.importlib.import_module", side_effect=_fake_import):
+                info = engine_runtime.probe_crewai(refresh=True)
 
             self.assertEqual(info["module_path"], str(init_py))
             self.assertEqual(sys.modules["crewai"], fresh_mod)
@@ -91,13 +91,13 @@ class CrewAIRuntimeTests(unittest.TestCase):
     def test_require_crewai_importable_raises_with_context_when_import_fails(self):
         os.environ["OPENTEAM_CREWAI_SRC_PATH"] = "/tmp/path-that-does-not-exist"
         with mock.patch(
-            "app.crewai_runtime.importlib.import_module",
+            "app.engine_runtime.importlib.import_module",
             side_effect=ModuleNotFoundError("No module named 'crewai'"),
         ):
-            info = crewai_runtime.probe_crewai(refresh=True)
+            info = engine_runtime.probe_crewai(refresh=True)
             self.assertFalse(info["importable"])
-            with self.assertRaises(crewai_runtime.CrewAIRuntimeError) as ctx:
-                crewai_runtime.require_crewai_importable(refresh=True)
+            with self.assertRaises(engine_runtime.CrewAIRuntimeError) as ctx:
+                engine_runtime.require_crewai_importable(refresh=True)
 
         msg = str(ctx.exception)
         self.assertIn("crewai import failed", msg)
@@ -136,7 +136,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
             },
             clear=False,
         ):
-            self.assertTrue(crewai_runtime.suppress_crewai_first_time_tracing_prompt())
+            self.assertTrue(engine_runtime.suppress_crewai_first_time_tracing_prompt())
 
         self.assertEqual(calls, [("suppress", True), ("mark", False)])
 
@@ -147,9 +147,9 @@ class CrewAIRuntimeTests(unittest.TestCase):
             os.environ["HOME"] = str(home)
             os.environ["CREWAI_STORAGE_DIR"] = "openteam-test-crewai"
 
-            self.assertTrue(crewai_runtime._prime_crewai_tracing_user_data())
+            self.assertTrue(engine_runtime._prime_crewai_tracing_user_data())
 
-            user_file = crewai_runtime._crewai_user_data_file()
+            user_file = engine_runtime._crewai_user_data_file()
             self.assertTrue(user_file.exists())
             payload = json.loads(user_file.read_text(encoding="utf-8"))
             self.assertTrue(payload["first_execution_done"])
@@ -160,7 +160,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
         os.environ["HTTPS_PROXY"] = "http://proxy.example"
         os.environ["ALL_PROXY"] = "socks5://proxy.example"
 
-        with crewai_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):
+        with engine_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):
             self.assertNotIn("HTTP_PROXY", os.environ)
             self.assertNotIn("HTTPS_PROXY", os.environ)
             self.assertNotIn("ALL_PROXY", os.environ)
@@ -173,7 +173,7 @@ class CrewAIRuntimeTests(unittest.TestCase):
         os.environ["OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX"] = "0"
         os.environ["HTTP_PROXY"] = "http://proxy.example"
 
-        with crewai_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):
+        with engine_runtime.suppress_proxy_for_codex_oauth(model="openai-codex/gpt-5.4", auth_mode="oauth_codex"):
             self.assertEqual(os.environ["HTTP_PROXY"], "http://proxy.example")
 
 
