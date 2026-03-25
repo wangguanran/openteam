@@ -1,0 +1,20 @@
+services:
+  control-plane:
+    environment:
+      PYTHONPATH: /openteam/scaffolds/runtime/orchestrator:/openteam
+      OPENTEAM_LLM_MODEL: openai/gpt-4.1
+      OPENTEAM_LLM_BASE_URL: https://openrouter.ai/api/v1
+      OPENTEAM_LLM_API_KEY: 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
+      OPENTEAM_LLM_MAX_TOKENS: "32768"
+    volumes:
+      # Override: mount repo as read-write (local dev), remove ro constraint
+      - ${OPENTEAM_REPO_PATH:-../openteam}:/openteam:rw
+      - ${OPENTEAM_REPO_PATH:-../openteam}/docs:/openteam/docs
+      - runtime_state_data:/openteam-runtime/state:rw
+      - runtime_hub_data:/openteam-runtime/hub:rw
+      - runtime_workspace_data:/openteam-runtime/workspace:rw
+      - runtime_tmp_data:/openteam-runtime/tmp:rw
+      - runtime_cache_data:/openteam-runtime/cache:rw
+      - ${HOME}/.openteam/workspace:/openteam-workspace:rw
+      - ${HOME}/.codex:/root/.codex:rw
+      - ${HOME}/.openclaw:/root/.openclaw:ro

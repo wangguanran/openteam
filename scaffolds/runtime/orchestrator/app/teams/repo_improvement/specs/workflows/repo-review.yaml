@@ -35,10 +35,12 @@ process:
   verbose: false
 
 agents:
-  # --- Bug 扫描 ---
+  # --- Bug 扫描（推理强的模型）---
   - agent_id: bug_scanner
     role_id: Test-Manager
     tool_profile: qa
+    model: openrouter/anthropic/claude-sonnet-4
+    max_tokens: 16384
     backstory: >
       You reason like a QA/test lead. Focus on reproducible defects,
       failing behavior, and operational risk. Pure coverage gaps belong
@@ -47,44 +49,60 @@ agents:
   # --- Feature 扫描 ---
   - agent_id: feature_scanner
     role_id: Product-Manager
+    model: openrouter/openai/gpt-4.1
+    max_tokens: 8192
     backstory: >
       You think like a product manager with 10+ years shipping products.
       Prioritize user-visible value, not just technical improvements.
 
-  # --- Quality 扫描（测试缺口 + 代码质量）---
+  # --- Quality 扫描（轻量模型）---
   - agent_id: test_gap_scanner
     role_id: Test-Case-Gap-Agent
+    model: openrouter/openai/gpt-4.1-mini
+    max_tokens: 8192
     backstory: >
       You think like a test architecture lead. Map behavior paths
       to existing tests and flag uncovered branches.
 
   - agent_id: quality_scanner
     role_id: Code-Quality-Analyst
+    model: openrouter/openai/gpt-4.1-mini
+    max_tokens: 8192
     backstory: >
       You think like a staff engineer doing code health stewardship.
       Look for dead code, cleanup opportunities, and safer deletions.
 
-  # --- Process 扫描 ---
+  # --- Process 扫描（轻量模型）---
   - agent_id: process_scanner
     role_id: Process-Optimization-Analyst
+    model: openrouter/openai/gpt-4.1-mini
+    max_tokens: 8192
     backstory: >
       You optimize the team workflow by analyzing timings, failures,
       repeated blockers, and wasted motion.
 
-  # --- 共用：计划起草 / 评审 / QA 闸门 ---
+  # --- 计划起草（大上下文汇总）---
   - agent_id: drafter
     role_id: Issue-Drafter
+    model: openrouter/openai/gpt-4.1
+    max_tokens: 32768
     backstory: >
       You break features and bugs into small, execution-scoped
       engineering work items.
 
+  # --- 评审（推理强的模型）---
   - agent_id: reviewer
     role_id: Plan-Review-Agent
+    model: openrouter/anthropic/claude-sonnet-4
+    max_tokens: 16384
     backstory: >
       You enforce code review constraints and scope discipline.
 
+  # --- QA 闸门（轻量模型）---
   - agent_id: qa_gate
     role_id: Plan-QA-Agent
+    model: openrouter/openai/gpt-4.1-mini
+    max_tokens: 16384
     backstory: >
       You are the final delivery gate. No item closes without
       review and QA evidence.
@@ -209,6 +227,7 @@ tasks:
       current_version: $tasks.prepare_context.outputs.current_version
     description_template: |
       Combine all scan results into a unified UpgradePlan JSON covering all lanes.
+      IMPORTANT: Keep the JSON output compact. At most 2 findings per lane (8 total max). Each finding should have at most 2 work_items. Omit empty optional fields.
       Rules:
       - Create findings with appropriate lane and kind:
         * Bugs: lane=bug, kind=BUG, version_bump=patch, requires_user_confirmation=false
