@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 def _add_syspath():
     repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -55,6 +56,40 @@ class WorkflowAgentSpecFieldsTests(unittest.TestCase):
         for agent in spec.agents:
             self.assertTrue(hasattr(agent, "model"), f"agent {agent.agent_id} missing model field")
             self.assertTrue(hasattr(agent, "max_tokens"), f"agent {agent.agent_id} missing max_tokens field")
+
+
+class AgentLLMConfigTests(unittest.TestCase):
+    def test_agent_model_overrides_global(self):
+        from app.engines.llm_config import build_agent_llm_config
+        agent = workflow_registry.WorkflowAgentSpec(agent_id="t", role_id="T", model="openrouter/google/gemini-2.5-flash")
+        with mock.patch.dict(os.environ, {"OPENTEAM_LLM_MODEL": "openrouter/openai/gpt-4.1"}):
+            cfg = build_agent_llm_config(agent_spec=agent)
+        self.assertEqual(cfg.model, "openrouter/google/gemini-2.5-flash")
+
+    def test_empty_agent_model_inherits_global(self):
+        from app.engines.llm_config import build_agent_llm_config
+        agent = workflow_registry.WorkflowAgentSpec(agent_id="t", role_id="T")
+        with mock.patch.dict(os.environ, {"OPENTEAM_LLM_MODEL": "openrouter/openai/gpt-4.1"}):
+            cfg = build_agent_llm_config(agent_spec=agent)
+        self.assertEqual(cfg.model, "openrouter/openai/gpt-4.1")
+
+    def test_agent_max_tokens_overrides(self):
+        from app.engines.llm_config import build_agent_llm_config
+        agent = workflow_registry.WorkflowAgentSpec(agent_id="t", role_id="T", max_tokens=32768)
+        cfg = build_agent_llm_config(agent_spec=agent)
+        self.assertEqual(cfg.max_tokens, 32768)
+
+    def test_agent_api_key_overrides(self):
+        from app.engines.llm_config import build_agent_llm_config
+        agent = workflow_registry.WorkflowAgentSpec(agent_id="t", role_id="T", api_key="sk-agent-specific")
+        with mock.patch.dict(os.environ, {"OPENTEAM_LLM_API_KEY": "sk-global"}):
+            cfg = build_agent_llm_config(agent_spec=agent)
+        self.assertEqual(cfg.api_key, "sk-agent-specific")
+
+    def test_none_agent_returns_global(self):
+        from app.engines.llm_config import build_agent_llm_config
+        cfg = build_agent_llm_config(agent_spec=None)
+        self.assertIsNotNone(cfg.model)
 
 
 if __name__ == "__main__":
