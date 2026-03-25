@@ -114,7 +114,7 @@ class WorkflowRegistryTests(unittest.TestCase):
         ids = {spec.workflow_id for spec in workflows}
 
         self.assertIn("repo-review", ids)
-        self.assertIn("repo-review-discussion", ids)
+        self.assertIn("repo-coding", ids)
         self.assertIn("repo-coding", ids)
 
         repo_review = next(spec for spec in workflows if spec.workflow_id == "repo-review")

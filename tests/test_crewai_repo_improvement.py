@@ -146,40 +146,13 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         self.assertEqual(len(out["workflow_results"]), 1)
         self.assertIn("unified review summary", out["summary"])
 
-    def test_reconcile_feature_discussions_runs_discussion_workflows(self):
-        discussion_workflow = SimpleNamespace(workflow_id="repo-review-discussion", lane="review", phase="discussion", enabled=True)
-        allowed_policy = SimpleNamespace(allowed=True, reason="", active_window_start_hour=0, active_window_end_hour=24, max_continuous_runtime_minutes=0, current_local_hour=0, active_since="", now_iso="")
-
-        feature_result = {
-            "ok": True,
-            "state": {
-                "tasks": {
-                    "claim_discussion": {"outputs": {"proposal": {"proposal_id": "P-1"}}},
-                    "apply_discussion": {"outputs": {"updated": True}},
-                }
-            },
-        }
-        quality_result = {
-            "ok": True,
-            "state": {"tasks": {"claim_discussion": {"outputs": {"proposal": None}}, "apply_discussion": {"outputs": {"updated": False}}}},
-        }
-
+    def test_reconcile_discussions_returns_cleanly_with_no_discussion_workflows(self):
         with mock.patch(
             "app.domains.team_workflow.proposal_runtime.workflow_registry.list_workflows",
-            return_value=(discussion_workflow,),
-        ), mock.patch(
-            "app.domains.team_workflow.proposal_runtime.workflow_registry.evaluate_workflow_runtime_policy",
-            return_value=allowed_policy,
-        ), mock.patch(
-            "app.domains.team_workflow.proposal_runtime.workflow_registry.update_workflow_runtime_state",
-            return_value={},
-        ), mock.patch(
-            "app.engines.crewai.workflow_runner.run_workflow",
-            return_value=feature_result,
+            return_value=(),
         ):
             out = proposal_runtime.reconcile_feature_discussions(db=_FakeDB(), actor="test", project_id="openteam", target_id="demo-target")
 
-        self.assertGreaterEqual(out.get("scanned", 0), 0)
         self.assertEqual(out["errors"], 0)
 
     def test_crewai_llm_marks_openrouter_models_as_litellm(self):

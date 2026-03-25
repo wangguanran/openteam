@@ -24,7 +24,6 @@ role_pool:
   - Milestone-Manager-Agent
 workflow_ids:
   - repo-review
-  - repo-review-discussion
   - repo-coding
 stage_ids:
   - planning

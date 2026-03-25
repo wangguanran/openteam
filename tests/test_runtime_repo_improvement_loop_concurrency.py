@@ -93,7 +93,7 @@ class RepoImprovementLoopConcurrencyTests(unittest.TestCase):
 
         self.assertIn("repo-review", statuses)
         self.assertIn("repo-coding", statuses)
-        self.assertIn("repo-review-discussion", statuses)
+        self.assertIn("repo-coding", statuses)
         self.assertEqual(statuses["repo-review"]["phase"], "finding")
         self.assertEqual(statuses["repo-coding"]["phase"], "coding")
         self.assertEqual(statuses["repo-coding"]["workflow_root"], "shared")
