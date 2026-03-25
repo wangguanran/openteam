@@ -24,18 +24,22 @@ class CrewAIEngine:
         engine_runtime.require_crewai_importable(refresh=True)
         from crewai.llm import LLM
 
+        from app.engines.provider import detect_provider, is_reasoning_model
+
+        provider = detect_provider(config.model)
         kwargs: dict[str, Any] = {
             "model": config.model,
             "max_tokens": config.max_tokens,
-            "api": "responses",
-            "is_litellm": "openrouter" in config.model.lower(),
+            "is_litellm": provider.litellm,
         }
+        if provider.api_mode == "responses":
+            kwargs["api"] = "responses"
         if config.max_retries:
             kwargs["max_retries"] = config.max_retries
-        if any(t in config.model.lower() for t in ("gpt-5", "codex", "o1", "o3", "o4")):
+        if provider.supports_reasoning and is_reasoning_model(config.model):
             kwargs["reasoning_effort"] = config.reasoning_effort
-        if config.base_url:
-            kwargs["base_url"] = config.base_url
+        if config.base_url or provider.default_base_url:
+            kwargs["base_url"] = config.base_url or provider.default_base_url
         if config.api_key:
             kwargs["api_key"] = config.api_key
         return LLM(**kwargs)

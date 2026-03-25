@@ -240,7 +240,9 @@ def _execute_crewai_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
     elif template_spec is not None:
         expected_output = template_spec.expected_output
 
-    llm = llm_factory.build_crewai_llm(workflow=context.workflow)
+    from app.engines.llm_config import build_agent_llm_config
+    _agent_llm_config = build_agent_llm_config(agent_spec=agent_spec, workflow=context.workflow)
+    llm = llm_factory.build_crewai_llm(workflow=context.workflow, override_config=_agent_llm_config)
     tools_by_profile = task_inputs.get("tools_by_profile") if isinstance(task_inputs.get("tools_by_profile"), dict) else None
     agent = agent_factory.build_crewai_agent(
         role_id=str(task_inputs.get("role_id") or agent_spec.role_id or "").strip(),
@@ -286,8 +288,6 @@ def _execute_engine_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
     """Execute a task via the pluggable engine interface (crewai / claude / openai_agents)."""
     from app.engines.registry import get_engine
     from app.engines.base import EngineAgentSpec, EngineTaskSpec
-    from app.engines.llm_config import build_llm_config
-
     engine_id = str(task.engine or "").strip() or str(context.workflow.engine or "").strip()
     engine = get_engine(engine_id)
 
@@ -332,7 +332,8 @@ def _execute_engine_task(task: workflow_registry.WorkflowTaskSpec, *, context: W
         allow_delegation=bool(task_inputs.get("allow_delegation", agent_spec_raw.allow_delegation)),
     )
 
-    llm_config = build_llm_config(workflow=context.workflow)
+    from app.engines.llm_config import build_agent_llm_config
+    llm_config = build_agent_llm_config(agent_spec=agent_spec_raw, workflow=context.workflow)
     llm = engine.build_llm(llm_config)
 
     raw_defs = task_inputs.get("generic_tool_defs") or []
