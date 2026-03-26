@@ -53,6 +53,8 @@ curl -fsS http://127.0.0.1:8787/v1/status | jq '.repo_improvement'
 
 `openteam/` git 仓库必须**只包含 OpenTeam 自身相关文件**（代码/模板/策略/文档/evals/集成适配器等）。
 
+scope=`openteam` 的运行态产物也不再写回 repo-local `.openteam/`。自管任务台账/日志与 Skill Boot 产物默认落在 runtime state root（默认 `~/.openteam/runtime/default/state/**`；可通过 `OPENTEAM_RUNTIME_ROOT` 覆盖）。
+
 任何 `project:<id>` 的真相源文件（requirements/冲突报告/任务台账/任务日志/prompts/知识库/状态快照/项目 repo workdir 等）必须落在 **Workspace**（不在 `openteam/` 目录树内）：
 
 ```text
@@ -125,6 +127,10 @@ cd openteam
 
 - `specs/`：声明式资产（roles / workflows / prompts / policies / schemas）
 - `~/.openteam/runtime-config/default/`：运行配置与本地 watcher 日志
+- `~/.openteam/runtime/default/state/ledger/tasks/`：OpenTeam 自身任务台账
+- `~/.openteam/runtime/default/state/logs/tasks/`：OpenTeam 自身任务日志与 `metrics.jsonl`
+- `~/.openteam/runtime/default/state/openteam/kb/`：OpenTeam 自身来源摘要与 Skill Cards
+- `~/.openteam/runtime/default/state/openteam/memory/`：OpenTeam 自身角色记忆
 - Docker named volumes：runtime state/hub/cache/tmp/worktrees
 - `scaffolds/`：可部署骨架（runtime / hub）
 - `templates/`：内容模板与任务日志模板

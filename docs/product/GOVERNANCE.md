@@ -8,7 +8,7 @@
 
 一个任务进入实施前至少满足：
 
-- 台账已创建：`.openteam/ledger/tasks/<TASK_ID>.yaml`
+- 台账已创建：`~/.openteam/runtime/default/state/ledger/tasks/<TASK_ID>.yaml`（或 `OPENTEAM_RUNTIME_ROOT/state/ledger/tasks/<TASK_ID>.yaml`）
 - `00~02` 日志存在并有初始内容
 - 风险等级与闸门明确（R2/R3 有审批计划）
 - 依赖、验收标准、回滚策略（若涉及发布）已记录

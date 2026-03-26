@@ -125,7 +125,11 @@ def check_repo_purity(repo_root: Path) -> dict[str, Any]:
 
     # 2) docs/requirements must not exist in repo (projects moved; openteam self lives under docs/product/openteam/)
     if _is_dir(repo_root / "docs" / "requirements"):
-        add("IN_REPO_REQUIREMENTS_DIR", repo_root / "docs" / "requirements", "Project requirements must live in workspace; openteam lives under docs/product/openteam/")
+        add(
+            "IN_REPO_REQUIREMENTS_DIR",
+            repo_root / "docs" / "requirements",
+            "Project requirements must live in workspace; openteam lives under docs/product/openteam/",
+        )
 
     # 3) docs/plans may only contain openteam (project plans must live in workspace)
     plan = repo_root / "docs" / "plans"

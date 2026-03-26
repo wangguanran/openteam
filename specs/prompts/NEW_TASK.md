@@ -15,11 +15,11 @@
 执行步骤（必须按顺序）：
 
 1. 在 `openteam` 里运行：`./scripts/openteam.sh new-task "<title>"` 生成骨架，得到 `<TASK_ID>`。
-2. 填写 `.openteam/logs/tasks/<TASK_ID>/00_intake.md`：目标/非目标、澄清问题、风险分级、审批点。
+2. 填写 `~/.openteam/runtime/default/state/logs/tasks/<TASK_ID>/00_intake.md`：目标/非目标、澄清问题、风险分级、审批点（如设置 `OPENTEAM_RUNTIME_ROOT`，则使用该 runtime root 下的 `state/logs/tasks/`）。
 3. 填写 `01_plan.md`：方案、拆分、里程碑、验收标准、回滚策略。
 4. 填写 `02_todo.md`：可并行 TODO；如需外部最新信息，列出 Skill Boot 计划与落盘路径。
 5. 进入 Delivery：实施/测试/评审/发布/观测按 `03~06` 追加证据。
-6. 结束时补齐 `07_retro.md`，并运行 `./openteam repo-improvement --force`。
+6. 结束时补齐 `~/.openteam/runtime/default/state/logs/tasks/<TASK_ID>/07_retro.md`，并运行 `./openteam repo-improvement --force`。
 
 输出要求：
 

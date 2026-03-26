@@ -74,6 +74,7 @@ sshpass*
 # Common scratch dirs
 .tmp/
 tmp/
+.worktrees/
 
 # Backup files created by OpenTeam scripts/migrations (keep local)
 *.bak.*
