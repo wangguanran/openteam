@@ -101,11 +101,16 @@ def materialize_findings_skill(*, context: Any, inputs: dict[str, Any], state: d
     dry_run = bool(context.dry_run)
     records: list[dict[str, Any]] = []
     pending_proposals: list[dict[str, Any]] = []
-    filtered_findings = [
-        finding
-        for finding in list(plan.findings or [])
-        if str(finding.lane or "").strip().lower() == str(workflow.lane or "").strip().lower()
-    ]
+    workflow_lane = str(workflow.lane or "").strip().lower()
+    if workflow_lane in ("review", "shared", ""):
+        # Unified review workflow: accept all findings regardless of lane
+        filtered_findings = list(plan.findings or [])
+    else:
+        filtered_findings = [
+            finding
+            for finding in list(plan.findings or [])
+            if str(finding.lane or "").strip().lower() == workflow_lane
+        ]
     filtered_plan = plan.model_copy(
         update={
             "findings": filtered_findings,

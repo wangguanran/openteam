@@ -6,6 +6,7 @@ services:
       OPENTEAM_LLM_BASE_URL: https://openrouter.ai/api/v1
       OPENTEAM_LLM_API_KEY: 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
       OPENTEAM_LLM_MAX_TOKENS: "32768"
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
     volumes:
       # Override: mount repo as read-write (local dev), remove ro constraint
       - ${OPENTEAM_REPO_PATH:-../openteam}:/openteam:rw

@@ -501,13 +501,24 @@ def workflow_for_lane_phase(lane: str, phase: str, *, team_id: str = "", project
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
     if normalized_phase == PHASE_CODING:
         return workflow_for_phase(PHASE_CODING, team_id=resolved_team_id, project_id=project_id)
-    for spec in list_workflows(team_id=resolved_team_id, project_id=project_id):
+    workflows = list_workflows(team_id=resolved_team_id, project_id=project_id)
+    # Exact match
+    for spec in workflows:
         if spec.lane == normalized_lane and spec.phase == normalized_phase:
             return spec
+    # Fallback: "review" lane covers all finding lanes (bug/feature/quality/process)
+    if normalized_phase == PHASE_FINDING:
+        for spec in workflows:
+            if spec.lane == "review" and spec.phase == PHASE_FINDING:
+                return spec
     if normalized_phase == PHASE_DISCUSSION and normalized_lane in ("bug", "process"):
         raise KeyError(f"lane {normalized_lane!r} does not support phase {normalized_phase!r}")
-    for spec in list_workflows(team_id=resolved_team_id, project_id=project_id):
+    for spec in workflows:
         if spec.lane == normalized_lane and spec.phase == PHASE_FINDING:
+            return spec
+    # Final fallback: review workflow
+    for spec in workflows:
+        if spec.lane == "review":
             return spec
     raise KeyError(f"unknown workflow for lane={normalized_lane!r} phase={normalized_phase!r}")
 
