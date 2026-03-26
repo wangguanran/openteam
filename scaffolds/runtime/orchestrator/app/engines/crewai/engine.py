@@ -27,8 +27,14 @@ class CrewAIEngine:
         from app.engines.provider import detect_provider, is_reasoning_model
 
         provider = detect_provider(config.model)
+        # For openrouter: keep "openrouter/" prefix (litellm recognizes it).
+        # Set OPENROUTER_API_KEY so litellm auto-authenticates.
+        model_for_llm = config.model
+        if provider.name == "openrouter" and config.api_key:
+            import os
+            os.environ.setdefault("OPENROUTER_API_KEY", config.api_key)
         kwargs: dict[str, Any] = {
-            "model": config.model,
+            "model": model_for_llm,
             "max_tokens": config.max_tokens,
             "is_litellm": provider.litellm,
         }

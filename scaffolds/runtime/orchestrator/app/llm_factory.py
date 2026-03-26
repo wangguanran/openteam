@@ -98,12 +98,17 @@ def build_crewai_llm(*, workflow: Any | None = None, override_config: Any | None
             pass  # handled below
 
     provider = detect_provider(model)
+    # For openrouter: keep "openrouter/" prefix (litellm recognizes it).
+    # Set OPENROUTER_API_KEY so litellm auto-authenticates.
+    model_for_llm = model
+    if provider.name == "openrouter" and api_key:
+        os.environ.setdefault("OPENROUTER_API_KEY", api_key)
     max_tokens = int(os.getenv("OPENTEAM_LLM_MAX_TOKENS") or "16384")
     if override_config is not None and override_config.max_tokens > 0:
         max_tokens = override_config.max_tokens
 
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": model_for_llm,
         "is_litellm": provider.litellm,
         "max_tokens": max_tokens,
     }
