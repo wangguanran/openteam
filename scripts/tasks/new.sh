@@ -40,13 +40,16 @@ fi
 DATE="$(today)"
 NOW_ISO="$(now_utc_iso)"
 
-ensure_dir "$ROOT/.openteam/ledger/tasks"
-ensure_dir "$ROOT/.openteam/logs/tasks"
+ledger_dir="$(openteam_self_ledger_tasks_dir)"
+logs_root="$(openteam_self_logs_tasks_dir)"
+
+ensure_dir "$ledger_dir"
+ensure_dir "$logs_root"
 
 task_id=""
 for _ in 1 2 3 4 5; do
   cand="TASK-$(ts_compact_utc)"
-  if [[ ! -e "$ROOT/.openteam/ledger/tasks/$cand.yaml" ]]; then
+  if [[ ! -e "$ledger_dir/$cand.yaml" ]]; then
     task_id="$cand"
     break
   fi
@@ -58,7 +61,7 @@ if [[ -z "$task_id" ]]; then
   exit 1
 fi
 
-logs_dir="$ROOT/.openteam/logs/tasks/$task_id"
+logs_dir="$logs_root/$task_id"
 ensure_dir "$logs_dir"
 
 render_log() {
@@ -75,7 +78,7 @@ render_log() {
     "$tpl" >"$out"
 }
 
-ledger_out="$ROOT/.openteam/ledger/tasks/$task_id.yaml"
+ledger_out="$ledger_dir/$task_id.yaml"
 if [[ -e "$ledger_out" ]]; then
   echo "Refusing to overwrite: $ledger_out" >&2
   exit 1

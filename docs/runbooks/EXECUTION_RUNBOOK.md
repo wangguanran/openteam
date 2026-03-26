@@ -46,6 +46,8 @@ cd openteam
 # 分支可选：默认允许直接在 main 上完成任务并推送；如需评审/协作可创建工作分支并开 PR。
 ```
 
+scope=`openteam` 的任务证据默认落在 `~/.openteam/runtime/default/state/ledger/tasks/` 与 `~/.openteam/runtime/default/state/logs/tasks/`；如设置 `OPENTEAM_RUNTIME_ROOT`，则改为该 runtime root 下的 `state/**`。
+
 关闭任务（提交前闸门）：
 
 ```bash

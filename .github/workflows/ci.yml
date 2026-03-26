@@ -21,11 +21,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest ruff
-          python -m pip install -r scaffolds/runtime/orchestrator/requirements.txt || true
+          python -m pip install pytest ruff fastapi "uvicorn[standard]" openai-agents PyYAML "psycopg[binary]" litellm redis pydantic
 
-      - name: Lint with ruff
-        run: ruff check --select E,F,W . --exclude __pycache__ --exclude pytest-of-* || true
+      - name: Lint boundary and verification suite
+        run: |
+          ruff check --select E,F,W \
+            scripts/governance/check_repo_purity.py \
+            tests/test_self_artifact_paths.py \
+            tests/test_ci_workflows.py \
+            tests/test_bootstrap_and_run.py \
+            tests/test_openteam_root_detection.py \
+            evals/test_repo_purity.py
 
       - name: Run tests
         env:
@@ -40,8 +46,7 @@ jobs:
             --ignore=tests/test_crewai_task_registry.py \
             --ignore=tests/test_crewai_team_registry.py \
             --ignore=tests/test_crewai_workflow_registry.py \
-            --ignore=tests/test_codex_llm.py \
-            || true
+            --ignore=tests/test_codex_llm.py
 
   syntax-check:
     runs-on: ubuntu-latest

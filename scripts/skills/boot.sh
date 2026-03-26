@@ -18,19 +18,22 @@ if [[ -z "$slug" ]]; then
   slug="topic"
 fi
 
-ensure_dir "$ROOT/.openteam/kb/sources"
-ensure_dir "$ROOT/.openteam/kb/roles/$ROLE/skill_cards"
-ensure_dir "$ROOT/.openteam/memory/roles/$ROLE"
+kb_root="$(openteam_self_kb_root)"
+memory_root="$(openteam_self_memory_root)"
 
-src_path="$ROOT/.openteam/kb/sources/$(date +%Y%m%d)_${slug}.md"
-skill_path="$ROOT/.openteam/kb/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}.md"
-mem_index="$ROOT/.openteam/memory/roles/$ROLE/index.md"
+ensure_dir "$kb_root/sources"
+ensure_dir "$kb_root/roles/$ROLE/skill_cards"
+ensure_dir "$memory_root/roles/$ROLE"
+
+src_path="$kb_root/sources/$(date +%Y%m%d)_${slug}.md"
+skill_path="$kb_root/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}.md"
+mem_index="$memory_root/roles/$ROLE/index.md"
 
 if [[ -e "$src_path" || -e "$skill_path" ]]; then
   # Avoid overwrite by suffixing timestamp.
   suffix="$(ts_compact_utc)"
-  src_path="$ROOT/.openteam/kb/sources/$(date +%Y%m%d)_${slug}_${suffix}.md"
-  skill_path="$ROOT/.openteam/kb/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}_${suffix}.md"
+  src_path="$kb_root/sources/$(date +%Y%m%d)_${slug}_${suffix}.md"
+  skill_path="$kb_root/roles/$ROLE/skill_cards/$(date +%Y%m%d)_${slug}_${suffix}.md"
 fi
 
 if ! safe_create_file "$src_path"; then

@@ -67,6 +67,34 @@ openteam_home_dir() {
   fi
 }
 
+openteam_runtime_root() {
+  if [[ -n "${OPENTEAM_RUNTIME_ROOT:-}" ]]; then
+    printf '%s\n' "$OPENTEAM_RUNTIME_ROOT"
+  else
+    printf '%s/runtime/default\n' "$(openteam_home_dir)"
+  fi
+}
+
+openteam_runtime_state_dir() {
+  printf '%s/state\n' "$(openteam_runtime_root)"
+}
+
+openteam_self_ledger_tasks_dir() {
+  printf '%s/ledger/tasks\n' "$(openteam_runtime_state_dir)"
+}
+
+openteam_self_logs_tasks_dir() {
+  printf '%s/logs/tasks\n' "$(openteam_runtime_state_dir)"
+}
+
+openteam_self_kb_root() {
+  printf '%s/openteam/kb\n' "$(openteam_runtime_state_dir)"
+}
+
+openteam_self_memory_root() {
+  printf '%s/openteam/memory\n' "$(openteam_runtime_state_dir)"
+}
+
 default_runtime_config_dir() {
   printf '%s/runtime-config/default\n' "$(openteam_home_dir)"
 }
