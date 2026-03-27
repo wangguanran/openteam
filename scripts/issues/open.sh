@@ -22,7 +22,7 @@ if [[ -z "$title" ]]; then
   title="OpenTeam Team Workflow"
 fi
 
-pending_dir="$ROOT/.openteam/ledger/openteam_issues_pending"
+pending_dir="$(openteam_self_pending_issues_dir)"
 ensure_dir "$pending_dir"
 
 fallback() {
