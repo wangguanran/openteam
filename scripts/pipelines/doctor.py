@@ -9,11 +9,10 @@ import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from _common import PipelineError, add_default_args, default_runtime_root, resolve_repo_root, resolve_workspace_root, runtime_state_root
 from _db import connect, get_db_url
-from repo_purity_check import main as _repo_purity_main
 from workspace_doctor import check_workspace
 
 
@@ -88,14 +87,26 @@ def _db_check(repo_root: Path) -> dict[str, Any]:
     try:
         conn = connect(dsn)
     except Exception as e:
-        return {"ok": False, "status": "FAIL", "reason": "db_driver_or_connect_failed", "error": str(e)[:300], "hint": 'Install: python3 -m pip install --user "psycopg[binary]"'}
+        return {
+            "ok": False,
+            "status": "FAIL",
+            "reason": "db_driver_or_connect_failed",
+            "error": str(e)[:300],
+            "hint": 'Install: python3 -m pip install --user "psycopg[binary]"',
+        }
 
     try:
         with conn.cursor() as cur:
             try:
                 rows = cur.execute("SELECT version, applied_at FROM schema_migrations ORDER BY version ASC").fetchall()
             except Exception as e:
-                return {"ok": False, "status": "FAIL", "reason": "migrations_missing", "error": str(e)[:200], "hint": "Run: openteam db migrate"}
+                return {
+                    "ok": False,
+                    "status": "FAIL",
+                    "reason": "migrations_missing",
+                    "error": str(e)[:200],
+                    "hint": "Run: openteam db migrate",
+                }
         vers = []
         for r in rows or []:
             try:
@@ -132,20 +143,37 @@ def _llm_config_check() -> dict[str, Any]:
         or ""
     ).strip()
     key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
-    ok = bool(base and key)
+    model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
+    needs_codex = "codex" in model.lower()
+    codex_ok, codex_msg = _codex_status()
+    codex_oauth_ready = bool(needs_codex and codex_ok)
+    api_key_ready = bool(base and key)
+    ok = bool(api_key_ready or codex_oauth_ready)
+    auth_strategy = ""
+    if codex_oauth_ready:
+        auth_strategy = "codex_oauth"
+    elif api_key_ready:
+        auth_strategy = "api_key"
     masked = ""
     if key:
         masked = ("*" * len(key)) if len(key) <= 8 else f"{key[:4]}***{key[-4:]}"
     out = {
         "ok": ok,
+        "model": model,
+        "auth_strategy": auth_strategy,
+        "codex_login_status": codex_msg,
+        "codex_oauth_ready": codex_oauth_ready,
         "base_url_set": bool(base),
         "api_key_set": bool(key),
         "base_url": base,
         "api_key_masked": masked,
-        "required": ["OPENTEAM_LLM_BASE_URL", "OPENTEAM_LLM_API_KEY"],
+        "required": [
+            "Codex OAuth login via `codex login` for codex models",
+            "or OPENTEAM_LLM_BASE_URL + OPENTEAM_LLM_API_KEY",
+        ],
     }
     if not ok:
-        out["hint"] = "export OPENTEAM_LLM_BASE_URL=... and OPENTEAM_LLM_API_KEY=..."
+        out["hint"] = "run `codex login` for codex models, or export OPENTEAM_LLM_BASE_URL=... and OPENTEAM_LLM_API_KEY=..."
     return out
 
 

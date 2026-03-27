@@ -87,6 +87,10 @@ openteam_self_logs_tasks_dir() {
   printf '%s/logs/tasks\n' "$(openteam_runtime_state_dir)"
 }
 
+openteam_self_pending_issues_dir() {
+  printf '%s/ledger/openteam_issues_pending\n' "$(openteam_runtime_state_dir)"
+}
+
 openteam_self_kb_root() {
   printf '%s/openteam/kb\n' "$(openteam_runtime_state_dir)"
 }

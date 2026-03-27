@@ -11,7 +11,7 @@ if [[ -z "$TASK_ID" ]]; then
   exit 2
 fi
 
-logs_dir="$ROOT/.openteam/logs/tasks/$TASK_ID"
+logs_dir="$(openteam_self_logs_tasks_dir)/$TASK_ID"
 if [[ ! -d "$logs_dir" ]]; then
   echo "Task logs dir not found: $logs_dir" >&2
   exit 1

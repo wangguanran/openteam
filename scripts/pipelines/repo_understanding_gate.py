@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from _common import PipelineError, add_default_args, read_text, render_template, resolve_repo_root, ts_compact_utc, utc_now_iso, write_text
 
@@ -26,7 +25,12 @@ def _arch_overview() -> str:
     lines = [
         "- `openteam/openteam`：CLI 客户端（默认连本机 Control Plane）。",
         "- `scaffolds/runtime/orchestrator/app/main.py`：Control Plane（FastAPI）模板代码。",
-        "- 真相源（scope=openteam）在 repo 内：`.openteam/ledger`、`.openteam/logs`、`docs/product/openteam/requirements`。",
+        (
+            "- 真相源（scope=openteam）分层存放：任务 ledger/logs 在 "
+            "`~/.openteam/runtime/default/state/ledger` 与 "
+            "`~/.openteam/runtime/default/state/logs`"
+            "（或 `OPENTEAM_RUNTIME_ROOT/state/**`），平台 docs/specs/requirements 在 repo 内。"
+        ),
         "- 真相源（scope=project:<id>）必须在 Workspace（repo 外）。",
         "- GitHub Projects v2 为视图层（mapping 在 `integrations/github_projects/mapping.yaml`）。",
     ]
@@ -38,7 +42,10 @@ def _modules() -> str:
         "- CLI：`openteam/openteam`。",
         "- Pipelines（本次新增）：`openteam/scripts/pipelines/`。",
         "- Governance：`openteam/scripts/governance/`（repo purity 等）。",
-        "- Runtime/Task 入口实现：`openteam/scripts/runtime/`、`openteam/scripts/tasks/`、`openteam/scripts/issues/`、`openteam/scripts/skills/`、`openteam/scripts/policy/`。",
+        (
+            "- Runtime/Task 入口实现：`openteam/scripts/runtime/`、`openteam/scripts/tasks/`、"
+            "`openteam/scripts/issues/`、`openteam/scripts/skills/`、`openteam/scripts/policy/`。"
+        ),
         "- Requirements 协议：`openteam/scripts/requirements/` + runtime template `app/requirements_store.py`。",
         "- Panel Sync：runtime template `app/panel_github_sync.py`（通过 Control Plane 触发）。",
         "- Runtime 模板：`openteam/scaffolds/runtime/`（生成到 repo 外 `openteam-runtime/`）。",
@@ -84,10 +91,26 @@ def main(argv: list[str] | None = None) -> int:
     evidence_rg = "\n\n".join(
         [
             "$ rg -n \"@app.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head",
-            _run(repo, ["bash", "-lc", "rg -n \"@app\\.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head -n 40 || true"], timeout_sec=10),
+            _run(
+                repo,
+                [
+                    "bash",
+                    "-lc",
+                    "rg -n \"@app\\.(get|post)\\(\\\"/v1/\" scaffolds/runtime/orchestrator/app/main.py | head -n 40 || true",
+                ],
+                timeout_sec=10,
+            ),
             "",
             "$ rg -n \"cmd_task_new|cmd_req_add|cmd_team_run|cmd_team_coding_run\" openteam",
-            _run(repo, ["bash", "-lc", "rg -n \"cmd_task_new|cmd_req_add|cmd_team_run|cmd_team_coding_run\" openteam | head -n 80 || true"], timeout_sec=10),
+            _run(
+                repo,
+                [
+                    "bash",
+                    "-lc",
+                    "rg -n \"cmd_task_new|cmd_req_add|cmd_team_run|cmd_team_coding_run\" openteam | head -n 80 || true",
+                ],
+                timeout_sec=10,
+            ),
         ]
     ).strip()
     evidence_scripts = "\n\n".join(
