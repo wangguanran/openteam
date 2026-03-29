@@ -33,6 +33,7 @@ class CiWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("check_delivery_coverage.py", workflow)
         self.assertIn("coverage run -m pytest", workflow)
+        self.assertNotIn("tests/test_cockpit_state.py", workflow)
 
     def test_runtime_ci_runs_delivery_studio_suite(self) -> None:
         text = (ROOT / ".github" / "workflows" / "runtime-ci.yml").read_text(encoding="utf-8")

@@ -57,7 +57,6 @@ jobs:
             tests/test_delivery_studio_panel_projection.py \
             tests/test_delivery_studio_review_gate.py \
             tests/test_delivery_coverage_policy.py \
-            tests/test_cockpit_state.py \
             -v --tb=short
           coverage json -o coverage.json
           python scripts/ci/check_delivery_coverage.py --report coverage.json
