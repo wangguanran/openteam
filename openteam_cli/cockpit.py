@@ -22,22 +22,32 @@ if App is not None:
     class DeliveryCockpitApp(App[None]):
         BINDINGS = [("q", "quit", "Quit")]
 
+        def __init__(self, *, project: str = "", team: str = "delivery-studio") -> None:
+            super().__init__()
+            self.project = str(project or "")
+            self.team = str(team or "delivery-studio")
+
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
             with Horizontal():
-                yield Static("agents", id="left-pane")
+                yield Static(f"agents\nteam={self.team}", id="left-pane")
                 yield Static("panel", id="center-pane")
-                yield Static("status", id="right-pane")
+                yield Static(f"status\nproject={self.project or '-'}", id="right-pane")
             yield Input(placeholder="Talk to panel, use @agent, or /approve /review /watch", id="command-line")
             yield Footer()
 
 else:
 
     class DeliveryCockpitApp:
+        def __init__(self, *, project: str = "", team: str = "delivery-studio") -> None:
+            self.project = str(project or "")
+            self.team = str(team or "delivery-studio")
+
         def run(self) -> None:
             raise RuntimeError("textual is required to run `openteam cockpit`")
 
 
 def cmd_cockpit(args: argparse.Namespace) -> None:
-    _ = args
-    DeliveryCockpitApp().run()
+    project = str(getattr(args, "project", "") or "")
+    team = str(getattr(args, "team", "delivery-studio") or "delivery-studio")
+    DeliveryCockpitApp(project=project, team=team).run()

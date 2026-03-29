@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
+from collections.abc import Mapping
 
 
 @dataclass(frozen=True)
@@ -31,7 +33,7 @@ class RightStatus:
     review_gate: str
     ci: str
     pr: str
-    workstreams: dict[str, str]
+    workstreams: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,8 @@ def route_input(text: str) -> dict[str, str]:
         head, _, tail = raw.partition(" ")
         return {"mode": "agent", "target": head[1:], "text": tail.strip()}
     if raw.startswith("/"):
-        return {"mode": "command", "target": raw[1:].strip(), "text": ""}
+        head, _, tail = raw.partition(" ")
+        return {"mode": "command", "target": head[1:], "text": tail.strip()}
     return {"mode": "panel", "target": "panel", "text": raw}
 
 
@@ -85,6 +88,6 @@ def build_snapshot(
         review_gate=str(request.get("review_gate") or ""),
         ci=str(request.get("ci") or ""),
         pr=str(request.get("pr") or ""),
-        workstreams=dict(request.get("workstreams") or {}),
+        workstreams=MappingProxyType(dict(request.get("workstreams") or {})),
     )
     return CockpitSnapshot(left=left, center=center, right=right)
