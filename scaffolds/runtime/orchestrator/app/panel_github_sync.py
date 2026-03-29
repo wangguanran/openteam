@@ -1,5 +1,3 @@
-import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -18,7 +16,6 @@ from .github_projects_client import (
     UPDATE_ITEM_FIELD_MUTATION,
     UPDATE_DRAFT_ISSUE_MUTATION,
     GitHubAPIError,
-    GitHubAuthError,
     GitHubGraphQL,
     pick_project_from_number_query,
     resolve_github_token,
@@ -26,7 +23,7 @@ from .github_projects_client import (
 from .panel_mapping import MappingDoc, PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import list_milestones
 from .runtime_db import RuntimeDB
-from .state_store import ledger_tasks_dir, load_focus, runtime_state_root, openteam_root, openteam_requirements_dir
+from .state_store import ledger_tasks_dir, load_focus, openteam_root, openteam_requirements_dir
 from .workspace_store import ensure_project_scaffold, ledger_tasks_dir as ws_ledger_tasks_dir, requirements_dir as ws_requirements_dir
 
 
@@ -219,11 +216,15 @@ def _desired_items(
         team_workflow_doc = t.get("team_workflow")
         if not isinstance(team_workflow_doc, dict):
             team_workflow_doc = {}
+        execution_policy = t.get("execution_policy")
+        if not isinstance(execution_policy, dict):
+            execution_policy = {}
+        module = str((team_workflow_doc or {}).get("module") or execution_policy.get("module") or "")
         title = _panel_item_title(
             str(t.get("title") or "").strip(),
             kind=str((team_workflow_doc or {}).get("kind") or ""),
             lane=str((team_workflow_doc or {}).get("lane") or ""),
-            module=str((team_workflow_doc or {}).get("module") or (((t.get("execution_policy") or {}) if isinstance(t.get("execution_policy"), dict) else {}).get("module")) or ""),
+            module=module,
         )
         state = str(t.get("status") or t.get("state") or "").strip()
         wsid = str(t.get("workstream_id") or "general").strip()
@@ -314,7 +315,11 @@ def _desired_items(
                     "openteam_status": option_name("openteam_status", status_key, status_key),
                     "workstreams": ",".join(str(x) for x in ws),
                     "risk": option_name("risk", "LOW", "LOW"),
-                    "need_pm_decision": option_name("need_pm_decision", "YES" if st in ("CONFLICT",) else "NO", "Yes" if st in ("CONFLICT",) else "No"),
+                    "need_pm_decision": option_name(
+                        "need_pm_decision",
+                        "YES" if st in ("CONFLICT",) else "NO",
+                        "Yes" if st in ("CONFLICT",) else "No",
+                    ),
                     "current_focus": focus_obj,
                     "active_agents": 0,
                     "last_heartbeat": "",
@@ -444,7 +449,7 @@ def _desired_items(
                         m.objective or "",
                         "",
                         (
-                            f"Plan: docs/plans/openteam/plan.yaml"
+                            "Plan: docs/plans/openteam/plan.yaml"
                             if str(project_id) == "openteam"
                             else f"Plan: <WORKSPACE>/projects/{project_id}/state/plan/plan.yaml"
                         ),
@@ -532,14 +537,34 @@ def _delivery_request_items(*, project_id: str, mapping: MappingDoc, db: Runtime
                     "project_name": str(doc.get("project_id") or ""),
                     "priority": option_name("priority", str(doc.get("priority") or "P1"), str(doc.get("priority") or "P1")),
                     "stage": option_name("stage", stage_key(str(doc.get("stage") or "")), str(doc.get("stage") or "Discussing")),
-                    "spec_approved": option_name("spec_approved", "YES" if bool(doc.get("spec_approved")) else "NO", "Yes" if bool(doc.get("spec_approved")) else "No"),
+                    "spec_approved": option_name(
+                        "spec_approved",
+                        "YES" if bool(doc.get("spec_approved")) else "NO",
+                        "Yes" if bool(doc.get("spec_approved")) else "No",
+                    ),
                     "change_request": str(doc.get("change_request_of") or ""),
-                    "review_gate": option_name("review_gate", str(doc.get("review_gate") or "Pending").upper().replace(" ", "_"), str(doc.get("review_gate") or "Pending")),
-                    "ci": option_name("ci", str(doc.get("ci") or "Pending").upper().replace(" ", "_"), str(doc.get("ci") or "Pending")),
-                    "release_ready": option_name("release_ready", "YES" if bool(doc.get("release_ready")) else "NO", "Yes" if bool(doc.get("release_ready")) else "No"),
+                    "review_gate": option_name(
+                        "review_gate",
+                        str(doc.get("review_gate") or "Pending").upper().replace(" ", "_"),
+                        str(doc.get("review_gate") or "Pending"),
+                    ),
+                    "ci": option_name(
+                        "ci",
+                        str(doc.get("ci") or "Pending").upper().replace(" ", "_"),
+                        str(doc.get("ci") or "Pending"),
+                    ),
+                    "release_ready": option_name(
+                        "release_ready",
+                        "YES" if bool(doc.get("release_ready")) else "NO",
+                        "Yes" if bool(doc.get("release_ready")) else "No",
+                    ),
                     "owner": str(doc.get("owner") or ""),
                     "blocked_reason": str(doc.get("blocked_reason") or ""),
-                    "needs_you": option_name("needs_you", "YES" if bool(doc.get("needs_you")) else "NO", "Yes" if bool(doc.get("needs_you")) else "No"),
+                    "needs_you": option_name(
+                        "needs_you",
+                        "YES" if bool(doc.get("needs_you")) else "NO",
+                        "Yes" if bool(doc.get("needs_you")) else "No",
+                    ),
                     "pr": str(doc.get("pr") or ""),
                 },
             )
@@ -568,7 +593,14 @@ def _required_field_specs(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return [x for x in out if x["name"] and x["type"]]
 
 
-def _field_value_input(field_type: str, *, text: str = "", number: Optional[float] = None, date: str = "", single_select_option_id: str = "") -> dict[str, Any]:
+def _field_value_input(
+    field_type: str,
+    *,
+    text: str = "",
+    number: Optional[float] = None,
+    date: str = "",
+    single_select_option_id: str = "",
+) -> dict[str, Any]:
     ft = (field_type or "").upper()
     if ft == "TEXT":
         return {"text": text}
@@ -638,10 +670,14 @@ class GitHubProjectsPanelSync:
 
         try:
             mapping = load_mapping()
-        except PanelMappingError as e:
+        except PanelMappingError:
             # Still allow dry-run without mapping file by returning a minimal plan.
             if dry_run:
-                mapping = MappingDoc(path=openteam_root() / "integrations" / "github_projects" / "mapping.yaml", sha256="missing", data={"projects": {}})
+                mapping = MappingDoc(
+                    path=openteam_root() / "integrations" / "github_projects" / "mapping.yaml",
+                    sha256="missing",
+                    data={"projects": {}},
+                )
             else:
                 raise
 
@@ -737,7 +773,13 @@ class GitHubProjectsPanelSync:
                         "id": fid,
                         "name": name,
                         "dataType": str(cfg_node.get("dataType") or ""),
-                        "options_by_name": {str(o.get("name") or ""): {"id": str(o.get("id") or ""), "name": str(o.get("name") or "")} for o in (cfg_node.get("options") or [])},
+                        "options_by_name": {
+                            str(o.get("name") or ""): {
+                                "id": str(o.get("id") or ""),
+                                "name": str(o.get("name") or ""),
+                            }
+                            for o in (cfg_node.get("options") or [])
+                        },
                         "raw": cfg_node,
                     }
                 except GitHubAPIError as e:
@@ -747,7 +789,12 @@ class GitHubProjectsPanelSync:
                 create_errors.append(f"missing_field name={name} key={key}")
                 continue
 
-            resolved_fields[key] = {"id": fid, "name": name, "type": ftype, "options_by_name": (by_name.get(name) or {}).get("options_by_name") or {}}
+            resolved_fields[key] = {
+                "id": fid,
+                "name": name,
+                "type": ftype,
+                "options_by_name": (by_name.get(name) or {}).get("options_by_name") or {},
+            }
 
         if create_errors:
             raise PanelSyncError("Field mapping incomplete: " + "; ".join(create_errors[:5]))
