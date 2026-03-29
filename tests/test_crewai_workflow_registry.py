@@ -27,10 +27,12 @@ class WorkflowRegistryTests(unittest.TestCase):
 
     def test_workflow_spec_returns_delivery_studio_discuss_workflow(self):
         spec = workflow_registry.workflow_spec("delivery-studio-discuss", team_id="delivery-studio", project_id="openteam")
+        raw = workflow_registry.spec_loader.team_workflow_doc("delivery-studio", "delivery-studio-discuss")
 
         self.assertEqual(spec.workflow_id, "delivery-studio-discuss")
         self.assertEqual(spec.lane, "discussion")
         self.assertEqual(spec.phase, "discussion")
+        self.assertEqual(spec.display_name_zh, "需求讨论流程")
         self.assertTrue(spec.enabled)
         self.assertEqual(spec.task_source, "direct_task")
         self.assertTrue(any(agent.agent_id == "moderator" for agent in spec.agents))
@@ -38,6 +40,8 @@ class WorkflowRegistryTests(unittest.TestCase):
         self.assertTrue(any(agent.agent_id == "skeptic" for agent in spec.agents))
         self.assertTrue(any(task.task_id == "moderate_requirement" for task in spec.tasks))
         self.assertTrue(any(task.skill_id == "team.delivery-studio-discuss" for task in spec.tasks))
+        self.assertNotIn("runtime_policy", raw)
+        self.assertNotIn("loop", raw)
 
     def test_list_workflows_loads_delivery_studio_agents_tasks_and_loop_config(self):
         workflows = workflow_registry.list_workflows(team_id="delivery-studio", project_id="openteam")
@@ -49,6 +53,7 @@ class WorkflowRegistryTests(unittest.TestCase):
 
         discuss = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-discuss")
         self.assertEqual(discuss.phase, workflow_registry.PHASE_DISCUSSION)
+        self.assertEqual(discuss.display_name_zh, "需求讨论流程")
         self.assertEqual(discuss.task_source, "direct_task")
         self.assertTrue(any(agent.agent_id == "moderator" for agent in discuss.agents))
         self.assertTrue(any(agent.agent_id == "product_architect" for agent in discuss.agents))
@@ -58,6 +63,7 @@ class WorkflowRegistryTests(unittest.TestCase):
 
         coding = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-coding")
         self.assertEqual(coding.phase, workflow_registry.PHASE_CODING)
+        self.assertEqual(coding.display_name_zh, "交付实施流程")
         self.assertEqual(coding.stages, ("delivery",))
         self.assertEqual(
             [agent.agent_id for agent in coding.agents],
@@ -82,6 +88,12 @@ class WorkflowRegistryTests(unittest.TestCase):
         self.assertTrue(any(task.task_id == "review_gate" for task in review.tasks))
         self.assertTrue(any(task.skill_id == "team.delivery-studio-review" for task in review.tasks))
         self.assertIn("verification", review.stages)
+
+    def test_delivery_studio_workflow_docs_do_not_include_runtime_policy_or_loop_blocks(self):
+        for workflow_id in ("delivery-studio-discuss", "delivery-studio-coding", "delivery-studio-review"):
+            raw = workflow_registry.spec_loader.team_workflow_doc("delivery-studio", workflow_id)
+            self.assertNotIn("runtime_policy", raw)
+            self.assertNotIn("loop", raw)
 
     def test_project_workflow_override_can_disable_repo_review(self):
         with mock.patch(

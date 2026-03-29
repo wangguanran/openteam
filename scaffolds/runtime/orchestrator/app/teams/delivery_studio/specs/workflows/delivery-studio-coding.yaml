@@ -2,7 +2,7 @@ workflow_id: delivery-studio-coding
 engine: ""
 lane: delivery
 phase: coding
-display_name_zh: 交付工作室编码流程
+display_name_zh: 交付实施流程
 enabled: true
 description: Execute mobile/admin/backend workstreams after approval, docs, contracts, and plan are ready.
 task_source: direct_task
@@ -12,19 +12,6 @@ default_version_bump: none
 baseline_action_default: delivery_coding
 stages:
   - delivery
-runtime_policy:
-  max_candidates: 1
-  active_window_start_hour: 0
-  active_window_end_hour: 24
-  max_continuous_runtime_minutes: 0
-loop:
-  enabled: true
-  run_on_startup: false
-  interval_sec: 180
-  initial_delay_sec: 45
-  concurrency: 1
-  target_selector: enabled_targets
-  max_units_per_tick: 1
 process:
   mode: sequential
   verbose: false

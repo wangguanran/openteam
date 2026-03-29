@@ -2,7 +2,7 @@ workflow_id: delivery-studio-discuss
 engine: ""
 lane: discussion
 phase: discussion
-display_name_zh: 交付工作室讨论流程
+display_name_zh: 需求讨论流程
 enabled: true
 description: Moderator-led requirement discovery and option comparison for delivery-studio.
 task_source: direct_task
@@ -12,18 +12,6 @@ default_version_bump: none
 baseline_action_default: delivery_discuss
 stages:
   - discussion
-runtime_policy:
-  active_window_start_hour: 0
-  active_window_end_hour: 24
-  max_continuous_runtime_minutes: 0
-loop:
-  enabled: true
-  run_on_startup: false
-  interval_sec: 180
-  initial_delay_sec: 30
-  concurrency: 1
-  target_selector: enabled_targets
-  max_units_per_tick: 1
 process:
   mode: sequential
   verbose: false
