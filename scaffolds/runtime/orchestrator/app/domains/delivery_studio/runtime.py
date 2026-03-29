@@ -11,6 +11,10 @@ from . import review_gate, store
 from .models import DeliveryRequest
 
 
+class DeliveryStudioStageError(ValueError):
+    pass
+
+
 def _request_id() -> str:
     return f"REQ-{uuid4().hex[:8].upper()}"
 
@@ -37,8 +41,15 @@ def create_request(*, project_id: str, title: str, text: str, created_by: str) -
     return out
 
 
+def _require_request_stage(*, doc: dict[str, object], expected_stage: str, action: str) -> None:
+    current_stage = str(doc.get("stage") or "").strip()
+    if current_stage != expected_stage:
+        raise DeliveryStudioStageError(f"{action} requires stage '{expected_stage}' but request is '{current_stage or 'unknown'}'")
+
+
 def mark_awaiting_approval(*, project_id: str, request_id: str, final_proposal: str) -> dict[str, object]:
     doc = store.load_request(project_id, request_id)
+    _require_request_stage(doc=doc, expected_stage="Discussing", action="mark_awaiting_approval")
     doc["stage"] = "Awaiting Approval"
     doc["needs_you"] = True
     artifact_dir = workspace_store.delivery_request_artifacts_dir(project_id, request_id)
@@ -52,6 +63,7 @@ def mark_awaiting_approval(*, project_id: str, request_id: str, final_proposal: 
 
 def approve_request(*, project_id: str, request_id: str, approved_by: str, selected_option: str) -> dict[str, object]:
     doc = store.load_request(project_id, request_id)
+    _require_request_stage(doc=doc, expected_stage="Awaiting Approval", action="approve_request")
     doc["stage"] = "Locked"
     doc["needs_you"] = False
     doc["spec_approved"] = True

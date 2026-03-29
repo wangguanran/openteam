@@ -19,6 +19,10 @@ from app.domains.delivery_studio import review_gate  # noqa: E402
 
 
 class DeliveryStudioReviewGateTests(unittest.TestCase):
+    def test_empty_reviewer_outputs_raise_instead_of_passing_gate(self) -> None:
+        with self.assertRaises(ValueError):
+            review_gate.evaluate_review_gate(reviewer_outputs=[])
+
     def test_block_decision_without_explicit_issues_still_blocks_gate(self) -> None:
         result = review_gate.evaluate_review_gate(
             reviewer_outputs=[

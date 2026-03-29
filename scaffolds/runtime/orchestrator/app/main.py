@@ -1703,6 +1703,11 @@ class DeliveryApprovalIn(BaseModel):
     selected_option: str = Field(..., min_length=1)
 
 
+class DeliveryAwaitingApprovalIn(BaseModel):
+    project_id: str
+    final_proposal: str = Field(..., min_length=1)
+
+
 class DeliveryReviewFinalizeIn(BaseModel):
     project_id: str
     reviewer_outputs: list[dict[str, Any]]
@@ -3233,6 +3238,25 @@ def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryAppr
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioStageError as exc:
+        raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
+
+
+@app.post("/v1/teams/{team_id}/requests/{request_id}/awaiting-approval")
+def v1_team_request_mark_awaiting_approval(team_id: str, request_id: str, payload: DeliveryAwaitingApprovalIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    try:
+        return delivery_studio_runtime.mark_awaiting_approval(
+            project_id=str(payload.project_id).strip(),
+            request_id=request_id,
+            final_proposal=str(payload.final_proposal).strip(),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioStageError as exc:
+        raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
 
 
 @app.post("/v1/teams/{team_id}/requests/{request_id}/review/finalize")
@@ -3248,6 +3272,8 @@ def v1_team_request_review_finalize(team_id: str, request_id: str, payload: Deli
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.review_gate.DeliveryStudioReviewError as exc:
+        raise HTTPException(status_code=400, detail={"error": "reviewer_outputs_invalid", "message": str(exc)}) from exc
 
     repo_full_name = str(payload.repo_full_name or "").strip()
     head_sha = str(payload.head_sha or "").strip()

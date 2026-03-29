@@ -167,6 +167,83 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             self.assertEqual(locked["selected_option"], "option-b")
             self.assertTrue(Path(locked["artifacts"]["approval_record"]).exists())
 
+    def test_approve_request_rejects_discussing_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need three UI options before coding.",
+                created_by="user",
+            )
+
+            with self.assertRaises(ValueError):
+                delivery_runtime.approve_request(
+                    project_id="demo",
+                    request_id=req["request_id"],
+                    approved_by="user",
+                    selected_option="option-b",
+                )
+
+    def test_approve_route_rejects_discussing_stage_with_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need three UI options before coding.",
+                created_by="user",
+            )
+
+            with self.assertRaises(HTTPException) as ctx:
+                app_main.v1_team_request_approve(
+                    "delivery-studio",
+                    req["request_id"],
+                    app_main.DeliveryApprovalIn(project_id="demo", selected_option="option-b"),
+                )
+
+            self.assertEqual(ctx.exception.status_code, 409)
+            persisted = delivery_store.load_request("demo", req["request_id"])
+            self.assertEqual(persisted["stage"], "Discussing")
+
+    def test_awaiting_approval_route_persists_draft_and_unlocks_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need three UI options before coding.",
+                created_by="user",
+            )
+
+            transitioned = app_main.v1_team_request_mark_awaiting_approval(
+                "delivery-studio",
+                req["request_id"],
+                app_main.DeliveryAwaitingApprovalIn(
+                    project_id="demo",
+                    final_proposal="Option B is recommended.",
+                ),
+            )
+
+            self.assertEqual(transitioned["stage"], "Awaiting Approval")
+            self.assertTrue(transitioned["needs_you"])
+            self.assertIn("approval_draft", transitioned["artifacts"])
+            self.assertTrue(Path(transitioned["artifacts"]["approval_draft"]).exists())
+
+            locked = app_main.v1_team_request_approve(
+                "delivery-studio",
+                req["request_id"],
+                app_main.DeliveryApprovalIn(project_id="demo", selected_option="option-b"),
+            )
+            self.assertEqual(locked["stage"], "Locked")
+            self.assertFalse(locked["needs_you"])
+
     def test_change_request_creates_new_request_linked_to_parent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
@@ -293,6 +370,53 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             persisted = delivery_store.load_request("demo", req["request_id"])
             self.assertEqual(persisted["stage"], "CI Running")
             self.assertEqual(persisted["review_gate"], "Passed")
+
+    def test_finalize_review_rejects_empty_reviewer_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Ready for review.",
+                created_by="user",
+            )
+
+            with self.assertRaises(ValueError):
+                delivery_runtime.finalize_review(
+                    project_id="demo",
+                    request_id=req["request_id"],
+                    reviewer_outputs=[],
+                )
+
+    def test_review_finalize_route_rejects_empty_reviewer_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Ready for review.",
+                created_by="user",
+            )
+
+            with self.assertRaises(HTTPException) as ctx:
+                app_main.v1_team_request_review_finalize(
+                    "delivery-studio",
+                    req["request_id"],
+                    app_main.DeliveryReviewFinalizeIn(
+                        project_id="demo",
+                        reviewer_outputs=[],
+                        repo_full_name="octo/demo",
+                        head_sha="abc123",
+                    ),
+                )
+
+            self.assertEqual(ctx.exception.status_code, 400)
+            persisted = delivery_store.load_request("demo", req["request_id"])
+            self.assertEqual(persisted["stage"], "Discussing")
 
 
 if __name__ == "__main__":

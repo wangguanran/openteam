@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 
+class DeliveryStudioReviewError(ValueError):
+    pass
+
+
 def _reviewer_blocking_reasons(item: dict[str, Any]) -> list[str]:
     blocked_reasons: list[str] = []
     if str(item.get("decision") or "").upper() == "BLOCK":
@@ -17,6 +21,8 @@ def _reviewer_blocking_reasons(item: dict[str, Any]) -> list[str]:
 
 
 def evaluate_review_gate(*, reviewer_outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    if not reviewer_outputs:
+        raise DeliveryStudioReviewError("reviewer_outputs must not be empty")
     blocked_reasons: list[str] = []
     for item in reviewer_outputs:
         blocked_reasons.extend(_reviewer_blocking_reasons(item))
