@@ -37,10 +37,18 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_runtime_ci_runs_delivery_studio_suite(self) -> None:
         text = (ROOT / ".github" / "workflows" / "runtime-ci.yml").read_text(encoding="utf-8")
+        self.assertIn("tests.test_runtime_auto_update", text)
+        self.assertIn("tests.test_improvement_store", text)
+        self.assertIn("tests.test_openclaw_reporter", text)
         self.assertIn("tests.test_delivery_studio_runtime", text)
         self.assertIn("tests.test_delivery_studio_panel_projection", text)
         self.assertIn("tests.test_delivery_studio_review_gate", text)
         self.assertNotIn("tests.test_crewai_self_upgrade", text)
+
+    def test_runtime_requirements_exclude_test_only_coverage_tooling(self) -> None:
+        text = (ROOT / "scaffolds" / "runtime" / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
+        self.assertNotIn("coverage>=", text)
+        self.assertNotIn("\ncoverage\n", f"\n{text}\n")
 
     def test_repo_understanding_gate_uses_runtime_state_for_openteam_task_artifacts(self) -> None:
         mod = _load_repo_understanding_gate()
