@@ -478,7 +478,35 @@ def _desired_items(
 
 
 def _delivery_request_items(*, project_id: str, mapping: MappingDoc, db: RuntimeDB) -> list[DesiredItem]:
-    _ = mapping, db
+    _ = db
+    cfg = get_project_cfg(mapping, project_id) or {}
+    fields = cfg.get("fields") or {}
+
+    def option_name(field_key: str, option_key: str, fallback: str) -> str:
+        field_cfg = fields.get(field_key) or {}
+        options = field_cfg.get("options") or {}
+        opt = options.get(option_key) or {}
+        return str(opt.get("name") or fallback)
+
+    def stage_key(raw: str) -> str:
+        aliases = {
+            "discussing": "DISCUSSING",
+            "awaiting approval": "AWAITING_APPROVAL",
+            "locked": "LOCKED",
+            "docs updating": "DOCS_UPDATING",
+            "plan ready": "PLAN_READY",
+            "implementing": "IMPLEMENTING",
+            "in review": "IN_REVIEW",
+            "changes requested": "CHANGES_REQUESTED",
+            "ci running": "CI_RUNNING",
+            "ready to merge": "READY_TO_MERGE",
+            "merged": "MERGED",
+        }
+        value = _norm(raw)
+        if not value:
+            return "DISCUSSING"
+        return aliases.get(value.lower(), value.upper().replace(" ", "_"))
+
     items: list[DesiredItem] = []
     for request_path in sorted(workspace_store.delivery_requests_dir(project_id).glob("*/request.yaml")):
         doc = yaml.safe_load(request_path.read_text(encoding="utf-8")) or {}
@@ -502,16 +530,16 @@ def _delivery_request_items(*, project_id: str, mapping: MappingDoc, db: Runtime
                 field_values={
                     "request_id": request_id,
                     "project_name": str(doc.get("project_id") or ""),
-                    "priority": str(doc.get("priority") or "P1"),
-                    "stage": str(doc.get("stage") or "Discussing"),
-                    "spec_approved": "Yes" if bool(doc.get("spec_approved")) else "No",
+                    "priority": option_name("priority", str(doc.get("priority") or "P1"), str(doc.get("priority") or "P1")),
+                    "stage": option_name("stage", stage_key(str(doc.get("stage") or "")), str(doc.get("stage") or "Discussing")),
+                    "spec_approved": option_name("spec_approved", "YES" if bool(doc.get("spec_approved")) else "NO", "Yes" if bool(doc.get("spec_approved")) else "No"),
                     "change_request": str(doc.get("change_request_of") or ""),
-                    "review_gate": str(doc.get("review_gate") or "Pending"),
-                    "ci": str(doc.get("ci") or "Pending"),
-                    "release_ready": "Yes" if bool(doc.get("release_ready")) else "No",
+                    "review_gate": option_name("review_gate", str(doc.get("review_gate") or "Pending").upper().replace(" ", "_"), str(doc.get("review_gate") or "Pending")),
+                    "ci": option_name("ci", str(doc.get("ci") or "Pending").upper().replace(" ", "_"), str(doc.get("ci") or "Pending")),
+                    "release_ready": option_name("release_ready", "YES" if bool(doc.get("release_ready")) else "NO", "Yes" if bool(doc.get("release_ready")) else "No"),
                     "owner": str(doc.get("owner") or ""),
                     "blocked_reason": str(doc.get("blocked_reason") or ""),
-                    "needs_you": "Yes" if bool(doc.get("needs_you")) else "No",
+                    "needs_you": option_name("needs_you", "YES" if bool(doc.get("needs_you")) else "NO", "Yes" if bool(doc.get("needs_you")) else "No"),
                     "pr": str(doc.get("pr") or ""),
                 },
             )

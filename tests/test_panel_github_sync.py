@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -15,6 +16,8 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 
 from app import panel_github_sync  # noqa: E402
+from app import workspace_store  # noqa: E402
+from app.domains.delivery_studio import runtime as delivery_runtime  # noqa: E402
 from app.runtime_db import RuntimeDB  # noqa: E402
 
 
@@ -173,6 +176,127 @@ class PanelGitHubSyncTests(unittest.TestCase):
         self.assertEqual(updates_by_field["F-REQUEST-ID"], {"text": "REQ-1234"})
         self.assertEqual(updates_by_field["F-STAGE"], {"singleSelectOptionId": "OPT-STAGE-DISCUSSING"})
         self.assertEqual(updates_by_field["F-NEEDS-YOU"], {"singleSelectOptionId": "OPT-NO"})
+
+    def test_sync_delivery_request_uses_mapping_option_names_for_single_select_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            db = RuntimeDB(str(Path(td) / "runtime.db"))
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need app, admin, backend.",
+                created_by="user",
+            )
+
+            mapping = panel_github_sync.MappingDoc(
+                path=Path(td) / "mapping.yaml",
+                sha256="test",
+                data={
+                    "github": {"graphql_api_url": "https://example.test/graphql"},
+                    "projects": {
+                        "demo": {
+                            "project_id": "demo",
+                            "owner_type": "USER",
+                            "owner": "demo-user",
+                            "project_node_id": "PROJECT-1",
+                            "fields": {
+                                "request_id": {"name": "Request ID", "type": "TEXT", "field_id": ""},
+                                "stage": {
+                                    "name": "Stage",
+                                    "type": "SINGLE_SELECT",
+                                    "field_id": "",
+                                    "options": {
+                                        "DISCUSSING": {"name": "讨论中", "option_id": ""},
+                                        "AWAITING_APPROVAL": {"name": "等待确认", "option_id": ""},
+                                    },
+                                },
+                                "needs_you": {
+                                    "name": "Needs You",
+                                    "type": "SINGLE_SELECT",
+                                    "field_id": "",
+                                    "options": {
+                                        "YES": {"name": "需要你", "option_id": ""},
+                                        "NO": {"name": "无需你", "option_id": ""},
+                                    },
+                                },
+                            },
+                        }
+                    },
+                },
+            )
+            field_updates: list[dict[str, object]] = []
+
+            class FakeGraphQL:
+                def __init__(self, *, token: str, api_url: str) -> None:
+                    self.token = token
+                    self.api_url = api_url
+
+                def graphql(self, query: str, variables: dict[str, object]) -> dict[str, object]:
+                    if query == panel_github_sync.PROJECT_FIELDS_QUERY:
+                        return {
+                            "node": {
+                                "fields": {
+                                    "nodes": [
+                                        {"id": "F-REQUEST-ID", "name": "Request ID", "dataType": "TEXT", "__typename": "ProjectV2Field"},
+                                        {
+                                            "id": "F-STAGE",
+                                            "name": "Stage",
+                                            "dataType": "SINGLE_SELECT",
+                                            "__typename": "ProjectV2SingleSelectField",
+                                            "options": [
+                                                {"id": "OPT-STAGE-DISCUSSING", "name": "讨论中"},
+                                                {"id": "OPT-STAGE-AWAITING", "name": "等待确认"},
+                                            ],
+                                        },
+                                        {
+                                            "id": "F-NEEDS-YOU",
+                                            "name": "Needs You",
+                                            "dataType": "SINGLE_SELECT",
+                                            "__typename": "ProjectV2SingleSelectField",
+                                            "options": [
+                                                {"id": "OPT-YES", "name": "需要你"},
+                                                {"id": "OPT-NO", "name": "无需你"},
+                                            ],
+                                        },
+                                    ]
+                                }
+                            }
+                        }
+                    if query == panel_github_sync.PROJECT_ITEMS_QUERY:
+                        return {
+                            "node": {
+                                "items": {
+                                    "nodes": [],
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                }
+                            }
+                        }
+                    if query == panel_github_sync.ADD_DRAFT_ISSUE_MUTATION:
+                        return {"addProjectV2DraftIssue": {"projectItem": {"id": "ITEM-1"}}}
+                    if query == panel_github_sync.UPDATE_ITEM_FIELD_MUTATION:
+                        field_updates.append(variables)
+                        return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": str(variables["itemId"])}}}
+                    raise AssertionError(f"unexpected query: {query[:60]}")
+
+            with (
+                mock.patch.object(panel_github_sync, "load_mapping", return_value=mapping),
+                mock.patch.object(panel_github_sync, "resolve_github_token", return_value="token"),
+                mock.patch.object(panel_github_sync, "GitHubGraphQL", FakeGraphQL),
+            ):
+                result = panel_github_sync.GitHubProjectsPanelSync(db=db).sync(
+                    project_id="demo",
+                    mode="incremental",
+                    dry_run=False,
+                )
+
+            self.assertEqual(result["stats"]["created"], 1)
+            self.assertEqual(result["stats"]["errors"], 0)
+            updates_by_field = {str(call["fieldId"]): call["value"] for call in field_updates}
+            self.assertEqual(updates_by_field["F-REQUEST-ID"], {"text": str(req["request_id"])})
+            self.assertEqual(updates_by_field["F-STAGE"], {"singleSelectOptionId": "OPT-STAGE-DISCUSSING"})
+            self.assertEqual(updates_by_field["F-NEEDS-YOU"], {"singleSelectOptionId": "OPT-NO"})
 
 
 if __name__ == "__main__":
