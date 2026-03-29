@@ -114,6 +114,104 @@ projects:
         type: "TEXT"
         field_id: ""
 
+      request_id:
+        name: "Request ID"
+        type: "TEXT"
+        field_id: ""
+
+      project_name:
+        name: "Project"
+        type: "TEXT"
+        field_id: ""
+
+      priority:
+        name: "Priority"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          P0: { name: "P0", option_id: "" }
+          P1: { name: "P1", option_id: "" }
+          P2: { name: "P2", option_id: "" }
+
+      stage:
+        name: "Stage"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          DISCUSSING: { name: "Discussing", option_id: "" }
+          AWAITING_APPROVAL: { name: "Awaiting Approval", option_id: "" }
+          LOCKED: { name: "Locked", option_id: "" }
+          DOCS_UPDATING: { name: "Docs Updating", option_id: "" }
+          PLAN_READY: { name: "Plan Ready", option_id: "" }
+          IMPLEMENTING: { name: "Implementing", option_id: "" }
+          IN_REVIEW: { name: "In Review", option_id: "" }
+          CHANGES_REQUESTED: { name: "Changes Requested", option_id: "" }
+          CI_RUNNING: { name: "CI Running", option_id: "" }
+          READY_TO_MERGE: { name: "Ready to Merge", option_id: "" }
+          MERGED: { name: "Merged", option_id: "" }
+
+      spec_approved:
+        name: "Spec Approved"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      change_request:
+        name: "Change Request"
+        type: "TEXT"
+        field_id: ""
+
+      review_gate:
+        name: "Review Gate"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          PENDING: { name: "Pending", option_id: "" }
+          PASSED: { name: "Passed", option_id: "" }
+          BLOCKED: { name: "Blocked", option_id: "" }
+
+      ci:
+        name: "CI"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          PENDING: { name: "Pending", option_id: "" }
+          PASSED: { name: "Passed", option_id: "" }
+          FAILED: { name: "Failed", option_id: "" }
+
+      release_ready:
+        name: "Release Ready"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      owner:
+        name: "Owner"
+        type: "TEXT"
+        field_id: ""
+
+      blocked_reason:
+        name: "Blocked Reason"
+        type: "TEXT"
+        field_id: ""
+
+      needs_you:
+        name: "Needs You"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      pr:
+        name: "PR"
+        type: "TEXT"
+        field_id: ""
+
     # --- Normalization rules ---
     status_mapping:
       # ledger_state -> OpenTeam Status option key
@@ -246,6 +344,104 @@ projects:
 
       repo_mode:
         name: "Repo Mode"
+        type: "TEXT"
+        field_id: ""
+
+      request_id:
+        name: "Request ID"
+        type: "TEXT"
+        field_id: ""
+
+      project_name:
+        name: "Project"
+        type: "TEXT"
+        field_id: ""
+
+      priority:
+        name: "Priority"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          P0: { name: "P0", option_id: "" }
+          P1: { name: "P1", option_id: "" }
+          P2: { name: "P2", option_id: "" }
+
+      stage:
+        name: "Stage"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          DISCUSSING: { name: "Discussing", option_id: "" }
+          AWAITING_APPROVAL: { name: "Awaiting Approval", option_id: "" }
+          LOCKED: { name: "Locked", option_id: "" }
+          DOCS_UPDATING: { name: "Docs Updating", option_id: "" }
+          PLAN_READY: { name: "Plan Ready", option_id: "" }
+          IMPLEMENTING: { name: "Implementing", option_id: "" }
+          IN_REVIEW: { name: "In Review", option_id: "" }
+          CHANGES_REQUESTED: { name: "Changes Requested", option_id: "" }
+          CI_RUNNING: { name: "CI Running", option_id: "" }
+          READY_TO_MERGE: { name: "Ready to Merge", option_id: "" }
+          MERGED: { name: "Merged", option_id: "" }
+
+      spec_approved:
+        name: "Spec Approved"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      change_request:
+        name: "Change Request"
+        type: "TEXT"
+        field_id: ""
+
+      review_gate:
+        name: "Review Gate"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          PENDING: { name: "Pending", option_id: "" }
+          PASSED: { name: "Passed", option_id: "" }
+          BLOCKED: { name: "Blocked", option_id: "" }
+
+      ci:
+        name: "CI"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          PENDING: { name: "Pending", option_id: "" }
+          PASSED: { name: "Passed", option_id: "" }
+          FAILED: { name: "Failed", option_id: "" }
+
+      release_ready:
+        name: "Release Ready"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      owner:
+        name: "Owner"
+        type: "TEXT"
+        field_id: ""
+
+      blocked_reason:
+        name: "Blocked Reason"
+        type: "TEXT"
+        field_id: ""
+
+      needs_you:
+        name: "Needs You"
+        type: "SINGLE_SELECT"
+        field_id: ""
+        options:
+          YES: { name: "Yes", option_id: "" }
+          NO: { name: "No", option_id: "" }
+
+      pr:
+        name: "PR"
         type: "TEXT"
         field_id: ""
 
