@@ -21,6 +21,7 @@ _log = get_logger("openteam.control_plane")
 
 from . import codex_llm
 from .demo_seed import seed_mock_data
+from . import github_checks_client
 from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraphQL, RATE_LIMIT_QUERY, resolve_github_token
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
@@ -1702,6 +1703,13 @@ class DeliveryApprovalIn(BaseModel):
     selected_option: str = Field(..., min_length=1)
 
 
+class DeliveryReviewFinalizeIn(BaseModel):
+    project_id: str
+    reviewer_outputs: list[dict[str, Any]]
+    repo_full_name: str = ""
+    head_sha: str = ""
+
+
 class OpenClawConfigIn(BaseModel):
     enabled: Optional[bool] = None
     channel: Optional[str] = None
@@ -3225,6 +3233,36 @@ def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryAppr
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+
+
+@app.post("/v1/teams/{team_id}/requests/{request_id}/review/finalize")
+def v1_team_request_review_finalize(team_id: str, request_id: str, payload: DeliveryReviewFinalizeIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    try:
+        out = delivery_studio_runtime.finalize_review(
+            project_id=str(payload.project_id).strip(),
+            request_id=request_id,
+            reviewer_outputs=list(payload.reviewer_outputs or []),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+
+    repo_full_name = str(payload.repo_full_name or "").strip()
+    head_sha = str(payload.head_sha or "").strip()
+    if github_checks_client.checks_writes_enabled() and repo_full_name and head_sha:
+        token = resolve_github_token()
+        for item in delivery_studio_runtime.review_gate.build_check_runs(
+            request_id=request_id,
+            reviewer_outputs=list(payload.reviewer_outputs or []),
+        ):
+            github_checks_client.create_check_run(
+                repo_full_name=repo_full_name,
+                token=token,
+                payload={**item, "head_sha": head_sha},
+            )
+    return {"ok": True, "request": out}
 
 
 @app.post("/v1/teams/{team_id}/coding/run")

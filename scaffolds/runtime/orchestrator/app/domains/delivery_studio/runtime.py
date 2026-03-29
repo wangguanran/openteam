@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from openteam_common import utc_now_iso
 
 from app import workspace_store
 
-from . import store
+from . import review_gate, store
 from .models import DeliveryRequest
 
 
@@ -82,3 +83,15 @@ def create_change_request(*, project_id: str, parent_request_id: str, text: str,
     child["change_request_of"] = parent_request_id
     store.save_request(project_id, str(child["request_id"]), child)
     return child
+
+
+def finalize_review(*, project_id: str, request_id: str, reviewer_outputs: list[dict[str, Any]]) -> dict[str, object]:
+    doc = store.load_request(project_id, request_id)
+    gate = review_gate.evaluate_review_gate(reviewer_outputs=reviewer_outputs)
+    doc["review_gate"] = gate["review_gate"]
+    doc["blocked_reason"] = gate["blocked_reason"]
+    doc["stage"] = "Changes Requested" if gate["review_gate"] == "Blocked" else "CI Running"
+    doc["blocked"] = gate["review_gate"] == "Blocked"
+    doc["rework_ticket"] = gate["rework_ticket"]
+    store.save_request(project_id, request_id, doc)
+    return doc
