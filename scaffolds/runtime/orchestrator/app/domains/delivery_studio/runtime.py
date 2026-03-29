@@ -76,6 +76,11 @@ def mark_awaiting_approval(*, project_id: str, request_id: str, final_proposal: 
 def approve_request(*, project_id: str, request_id: str, approved_by: str, selected_option: str) -> dict[str, object]:
     doc = store.load_request(project_id, request_id)
     _require_request_stage(doc=doc, expected_stage="Awaiting Approval", action="approve_request")
+    selected_option = _require_nonblank_text(
+        value=selected_option,
+        field_name="selected_option",
+        action="approve_request",
+    )
     doc["stage"] = "Locked"
     doc["needs_you"] = False
     doc["spec_approved"] = True
@@ -111,6 +116,7 @@ def create_change_request(*, project_id: str, parent_request_id: str, text: str,
 
 def finalize_review(*, project_id: str, request_id: str, reviewer_outputs: list[dict[str, Any]]) -> dict[str, object]:
     doc = store.load_request(project_id, request_id)
+    _require_request_stage(doc=doc, expected_stage="Locked", action="finalize_review")
     gate = review_gate.evaluate_review_gate(reviewer_outputs=reviewer_outputs)
     doc["review_gate"] = gate["review_gate"]
     doc["blocked_reason"] = gate["blocked_reason"]

@@ -210,6 +210,42 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             persisted = delivery_store.load_request("demo", req["request_id"])
             self.assertEqual(persisted["stage"], "Discussing")
 
+    def test_review_finalize_route_rejects_discussing_stage_with_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Ready for review.",
+                created_by="user",
+            )
+
+            with self.assertRaises(HTTPException) as ctx:
+                app_main.v1_team_request_review_finalize(
+                    "delivery-studio",
+                    req["request_id"],
+                    app_main.DeliveryReviewFinalizeIn(
+                        project_id="demo",
+                        reviewer_outputs=[
+                            {
+                                "reviewer_id": "reviewer-a",
+                                "decision": "PASS",
+                                "blocking_issues": [],
+                                "test_complete": True,
+                            }
+                        ],
+                        repo_full_name="octo/demo",
+                        head_sha="abc123",
+                    ),
+                )
+
+            self.assertEqual(ctx.exception.status_code, 409)
+            persisted = delivery_store.load_request("demo", req["request_id"])
+            self.assertEqual(persisted["stage"], "Discussing")
+            self.assertNotIn("review_gate", persisted)
+
     def test_awaiting_approval_route_persists_draft_and_unlocks_approval(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
@@ -243,6 +279,36 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(locked["stage"], "Locked")
             self.assertFalse(locked["needs_you"])
+
+    def test_approve_route_rejects_whitespace_selected_option(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need three UI options before coding.",
+                created_by="user",
+            )
+            delivery_runtime.mark_awaiting_approval(
+                project_id="demo",
+                request_id=req["request_id"],
+                final_proposal="Option B is recommended.",
+            )
+
+            with self.assertRaises(HTTPException) as ctx:
+                app_main.v1_team_request_approve(
+                    "delivery-studio",
+                    req["request_id"],
+                    app_main.DeliveryApprovalIn(project_id="demo", selected_option="   "),
+                )
+
+            self.assertEqual(ctx.exception.status_code, 400)
+            persisted = delivery_store.load_request("demo", req["request_id"])
+            self.assertEqual(persisted["stage"], "Awaiting Approval")
+            self.assertFalse(persisted["spec_approved"])
+            self.assertEqual(persisted["selected_option"], "")
 
     def test_awaiting_approval_route_rejects_whitespace_final_proposal(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -350,6 +416,17 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
                 text="Ready for review.",
                 created_by="user",
             )
+            delivery_runtime.mark_awaiting_approval(
+                project_id="demo",
+                request_id=req["request_id"],
+                final_proposal="Option B is recommended.",
+            )
+            delivery_runtime.approve_request(
+                project_id="demo",
+                request_id=req["request_id"],
+                approved_by="user",
+                selected_option="option-b",
+            )
 
             original_require = app_main._require_leader_write
             original_enabled = app_main.github_checks_client.checks_writes_enabled
@@ -428,6 +505,17 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
                 text="Ready for review.",
                 created_by="user",
             )
+            delivery_runtime.mark_awaiting_approval(
+                project_id="demo",
+                request_id=req["request_id"],
+                final_proposal="Option B is recommended.",
+            )
+            delivery_runtime.approve_request(
+                project_id="demo",
+                request_id=req["request_id"],
+                approved_by="user",
+                selected_option="option-b",
+            )
 
             with self.assertRaises(HTTPException) as ctx:
                 app_main.v1_team_request_review_finalize(
@@ -443,7 +531,7 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
 
             self.assertEqual(ctx.exception.status_code, 400)
             persisted = delivery_store.load_request("demo", req["request_id"])
-            self.assertEqual(persisted["stage"], "Discussing")
+            self.assertEqual(persisted["stage"], "Locked")
 
 
 if __name__ == "__main__":

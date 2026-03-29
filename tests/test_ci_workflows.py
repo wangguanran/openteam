@@ -33,7 +33,8 @@ class CiWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("check_delivery_coverage.py", workflow)
         self.assertIn("coverage run -m pytest", workflow)
-        self.assertNotIn("tests/test_cockpit_state.py", workflow)
+        self.assertIn("tests/test_cockpit_state.py", workflow)
+        self.assertIn("tests/test_openteam_repl.py", workflow)
 
     def test_runtime_ci_runs_delivery_studio_suite(self) -> None:
         text = (ROOT / ".github" / "workflows" / "runtime-ci.yml").read_text(encoding="utf-8")
@@ -43,6 +44,8 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("tests.test_delivery_studio_runtime", text)
         self.assertIn("tests.test_delivery_studio_panel_projection", text)
         self.assertIn("tests.test_delivery_studio_review_gate", text)
+        self.assertIn("tests.test_cockpit_state", text)
+        self.assertIn("tests.test_openteam_repl", text)
         self.assertNotIn("tests.test_crewai_self_upgrade", text)
 
     def test_runtime_requirements_keep_coverage_for_task_5_contract(self) -> None:

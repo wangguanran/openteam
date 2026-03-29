@@ -64,4 +64,6 @@ jobs:
             tests.test_delivery_studio_runtime \
             tests.test_delivery_studio_panel_projection \
             tests.test_delivery_studio_review_gate \
+            tests.test_cockpit_state \
+            tests.test_openteam_repl \
             tests.test_bootstrap_and_run

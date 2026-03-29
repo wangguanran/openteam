@@ -3238,6 +3238,8 @@ def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryAppr
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioInputError as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid_selected_option", "message": str(exc)}) from exc
     except delivery_studio_runtime.DeliveryStudioStageError as exc:
         raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
 
@@ -3274,6 +3276,8 @@ def v1_team_request_review_finalize(team_id: str, request_id: str, payload: Deli
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioStageError as exc:
+        raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
     except delivery_studio_runtime.review_gate.DeliveryStudioReviewError as exc:
         raise HTTPException(status_code=400, detail={"error": "reviewer_outputs_invalid", "message": str(exc)}) from exc
 

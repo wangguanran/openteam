@@ -56,6 +56,8 @@ jobs:
             tests/test_delivery_studio_runtime.py \
             tests/test_delivery_studio_panel_projection.py \
             tests/test_delivery_studio_review_gate.py \
+            tests/test_cockpit_state.py \
+            tests/test_openteam_repl.py \
             tests/test_delivery_coverage_policy.py \
             -v --tb=short
           coverage json -o coverage.json
