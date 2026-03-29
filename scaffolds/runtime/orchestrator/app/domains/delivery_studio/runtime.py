@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from uuid import uuid4
+
+from openteam_common import utc_now_iso
+
+from app import workspace_store
+
+from . import store
+from .models import DeliveryRequest
+
+
+def _request_id() -> str:
+    return f"REQ-{uuid4().hex[:8].upper()}"
+
+
+def create_request(*, project_id: str, title: str, text: str, created_by: str) -> dict[str, object]:
+    workspace_store.ensure_project_scaffold(project_id)
+    request_id = _request_id()
+    artifact_dir = workspace_store.delivery_request_artifacts_dir(project_id, request_id)
+    raw_record = artifact_dir / "00_intake" / "raw_requirement.md"
+    raw_record.parent.mkdir(parents=True, exist_ok=True)
+    raw_record.write_text(f"# Raw Requirement\n\n{text}\n", encoding="utf-8")
+
+    req = DeliveryRequest(
+        request_id=request_id,
+        project_id=project_id,
+        title=title,
+        text=text,
+        artifacts={"raw_record": str(raw_record)},
+    )
+    _ = created_by
+    request_path = store.save_request(project_id, request_id, req.model_dump())
+    out = req.model_dump()
+    out["request_path"] = str(request_path)
+    return out
+
+
+def mark_awaiting_approval(*, project_id: str, request_id: str, final_proposal: str) -> dict[str, object]:
+    doc = store.load_request(project_id, request_id)
+    doc["stage"] = "Awaiting Approval"
+    doc["needs_you"] = True
+    artifact_dir = workspace_store.delivery_request_artifacts_dir(project_id, request_id)
+    draft = artifact_dir / "03_design" / "approval_draft.md"
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text(final_proposal + "\n", encoding="utf-8")
+    doc.setdefault("artifacts", {})["approval_draft"] = str(draft)
+    store.save_request(project_id, request_id, doc)
+    return doc
+
+
+def approve_request(*, project_id: str, request_id: str, approved_by: str, selected_option: str) -> dict[str, object]:
+    doc = store.load_request(project_id, request_id)
+    doc["stage"] = "Locked"
+    doc["needs_you"] = False
+    doc["spec_approved"] = True
+    doc["selected_option"] = selected_option
+    artifact_dir = workspace_store.delivery_request_artifacts_dir(project_id, request_id)
+    approval = artifact_dir / "03_design" / "approval_record.md"
+    approval.parent.mkdir(parents=True, exist_ok=True)
+    approval.write_text(
+        (
+            "# Approval Record\n\n"
+            f"- approved_by: {approved_by}\n"
+            f"- selected_option: {selected_option}\n"
+            f"- approved_at: {utc_now_iso()}\n"
+        ),
+        encoding="utf-8",
+    )
+    doc.setdefault("artifacts", {})["approval_record"] = str(approval)
+    store.save_request(project_id, request_id, doc)
+    return doc
+
+
+def create_change_request(*, project_id: str, parent_request_id: str, text: str, created_by: str) -> dict[str, object]:
+    child = create_request(
+        project_id=project_id,
+        title=f"Change for {parent_request_id}",
+        text=text,
+        created_by=created_by,
+    )
+    child["change_request_of"] = parent_request_id
+    store.save_request(project_id, str(child["request_id"]), child)
+    return child

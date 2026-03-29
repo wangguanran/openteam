@@ -42,6 +42,7 @@ from . import engine_runtime
 from . import improvement_store
 from . import openclaw_reporter
 from . import crew_tools
+from .domains.delivery_studio import runtime as delivery_studio_runtime
 from .engines.crewai import workflow_registry as team_workflow_registry
 from . import team_registry
 from . import team_runtime_registry
@@ -1690,6 +1691,17 @@ class TeamProposalDecisionIn(BaseModel):
     version_bump: Optional[str] = None
 
 
+class DeliveryRequestCreateIn(BaseModel):
+    project_id: str
+    title: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1)
+
+
+class DeliveryApprovalIn(BaseModel):
+    project_id: str
+    selected_option: str = Field(..., min_length=1)
+
+
 class OpenClawConfigIn(BaseModel):
     enabled: Optional[bool] = None
     channel: Optional[str] = None
@@ -3184,6 +3196,32 @@ def v1_team_coding_tasks(
         "tasks": tasks,
         "summary": team_runtime.delivery_summary_fn(project_id=project_id, target_id=target_id),
     }
+
+
+@app.post("/v1/teams/{team_id}/requests")
+def v1_team_request_create(team_id: str, payload: DeliveryRequestCreateIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    return delivery_studio_runtime.create_request(
+        project_id=str(payload.project_id).strip(),
+        title=str(payload.title).strip(),
+        text=str(payload.text).strip(),
+        created_by="user",
+    )
+
+
+@app.post("/v1/teams/{team_id}/requests/{request_id}/approve")
+def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryApprovalIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    return delivery_studio_runtime.approve_request(
+        project_id=str(payload.project_id).strip(),
+        request_id=request_id,
+        approved_by="user",
+        selected_option=str(payload.selected_option).strip(),
+    )
 
 
 @app.post("/v1/teams/{team_id}/coding/run")
