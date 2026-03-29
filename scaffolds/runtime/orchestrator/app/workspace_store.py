@@ -189,13 +189,17 @@ def delivery_requests_dir(project_id: str, *, root: Optional[Path] = None) -> Pa
     return delivery_studio_dir(project_id, root=root) / "requests"
 
 
+def _delivery_request_key(request_id: str) -> str:
+    return _safe_project_id(request_id.lower().replace(":", "-"))
+
+
 def delivery_request_dir(project_id: str, request_id: str, *, root: Optional[Path] = None) -> Path:
-    safe_request_id = _safe_project_id(request_id.lower().replace(":", "-"))
+    safe_request_id = _delivery_request_key(request_id)
     return delivery_requests_dir(project_id, root=root) / safe_request_id
 
 
 def delivery_request_artifacts_dir(project_id: str, request_id: str, *, root: Optional[Path] = None) -> Path:
-    return logs_tasks_dir(project_id, root=root) / request_id
+    return logs_tasks_dir(project_id, root=root) / _delivery_request_key(request_id)
 
 
 def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> dict[str, Any]:

@@ -3216,12 +3216,15 @@ def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryAppr
     if team_id != "delivery-studio":
         raise HTTPException(status_code=404, detail="team_request_api_unsupported")
     _require_leader_write()
-    return delivery_studio_runtime.approve_request(
-        project_id=str(payload.project_id).strip(),
-        request_id=request_id,
-        approved_by="user",
-        selected_option=str(payload.selected_option).strip(),
-    )
+    try:
+        return delivery_studio_runtime.approve_request(
+            project_id=str(payload.project_id).strip(),
+            request_id=request_id,
+            approved_by="user",
+            selected_option=str(payload.selected_option).strip(),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
 
 
 @app.post("/v1/teams/{team_id}/coding/run")
