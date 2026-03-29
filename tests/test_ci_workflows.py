@@ -29,9 +29,16 @@ class CiWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("|| true", text)
 
-    def test_runtime_ci_references_existing_runtime_auto_update_test(self) -> None:
+    def test_ci_workflow_runs_delivery_coverage_gate(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("check_delivery_coverage.py", workflow)
+        self.assertIn("coverage run -m pytest", workflow)
+
+    def test_runtime_ci_runs_delivery_studio_suite(self) -> None:
         text = (ROOT / ".github" / "workflows" / "runtime-ci.yml").read_text(encoding="utf-8")
-        self.assertIn("tests.test_runtime_auto_update", text)
+        self.assertIn("tests.test_delivery_studio_runtime", text)
+        self.assertIn("tests.test_delivery_studio_panel_projection", text)
+        self.assertIn("tests.test_delivery_studio_review_gate", text)
         self.assertNotIn("tests.test_crewai_self_upgrade", text)
 
     def test_repo_understanding_gate_uses_runtime_state_for_openteam_task_artifacts(self) -> None:

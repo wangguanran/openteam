@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest ruff fastapi "uvicorn[standard]" openai-agents PyYAML "psycopg[binary]" litellm redis pydantic
+          python -m pip install pytest ruff coverage textual fastapi "uvicorn[standard]" openai-agents PyYAML "psycopg[binary]" litellm redis pydantic
 
       - name: Lint boundary and verification suite
         run: |
@@ -47,6 +47,20 @@ jobs:
             --ignore=tests/test_crewai_team_registry.py \
             --ignore=tests/test_crewai_workflow_registry.py \
             --ignore=tests/test_codex_llm.py
+
+      - name: Run delivery-studio unit tests with coverage
+        env:
+          OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED: "0"
+        run: |
+          coverage run -m pytest \
+            tests/test_delivery_studio_runtime.py \
+            tests/test_delivery_studio_panel_projection.py \
+            tests/test_delivery_studio_review_gate.py \
+            tests/test_delivery_coverage_policy.py \
+            tests/test_cockpit_state.py \
+            -v --tb=short
+          coverage json -o coverage.json
+          python scripts/ci/check_delivery_coverage.py --report coverage.json
 
   syntax-check:
     runs-on: ubuntu-latest
