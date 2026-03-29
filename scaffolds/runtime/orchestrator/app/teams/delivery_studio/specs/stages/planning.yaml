@@ -1,0 +1,27 @@
+stage_id: planning
+display_name_zh: 规划阶段
+members:
+  - role_id: Moderator
+    state: RUNNING
+    current_action: keeping planning focused and decision-oriented
+  - role_id: Product-Architect
+    state: RUNNING
+    current_action: converging on the product and architecture shape
+  - role_id: Senior-Engineer-Skeptic
+    state: RUNNING
+    current_action: challenging the draft plan for scope and implementation risk
+  - role_id: App-UI-Designer
+    state: RUNNING
+    current_action: shaping the App UI implementation options
+  - role_id: Admin-Web-Designer
+    state: RUNNING
+    current_action: shaping the Admin Web implementation options
+  - role_id: Backend-Architect
+    state: RUNNING
+    current_action: defining backend boundaries and contracts
+  - role_id: Test-Architect
+    state: RUNNING
+    current_action: defining verification strategy and test coverage
+  - role_id: Review-Moderator
+    state: RUNNING
+    current_action: checking that review gates remain clear and actionable

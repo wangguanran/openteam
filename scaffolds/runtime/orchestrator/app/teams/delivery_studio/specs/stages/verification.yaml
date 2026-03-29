@@ -1,0 +1,9 @@
+stage_id: verification
+display_name_zh: 验证阶段
+members:
+  - role_id: Test-Architect
+    state: RUNNING
+    current_action: checking tests and validation evidence
+  - role_id: Review-Moderator
+    state: RUNNING
+    current_action: checking review findings and final sign-off

@@ -1,0 +1,9 @@
+stage_id: discussion
+display_name_zh: 讨论阶段
+members:
+  - role_id: Moderator
+    state: RUNNING
+    current_action: guiding the discussion and summarizing decisions
+  - role_id: Product-Architect
+    state: RUNNING
+    current_action: framing the product trade-offs and solution shape

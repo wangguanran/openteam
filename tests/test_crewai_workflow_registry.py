@@ -18,12 +18,44 @@ from app.engines.crewai import workflow_registry as workflow_registry  # noqa: E
 
 class WorkflowRegistryTests(unittest.TestCase):
     def test_workflow_spec_returns_known_workflow(self):
-        spec = workflow_registry.workflow_spec("repo-review", project_id="openteam")
+        spec = workflow_registry.workflow_spec("repo-review", team_id="repo-improvement", project_id="openteam")
 
         self.assertEqual(spec.workflow_id, "repo-review")
         self.assertEqual(spec.lane, "review")
         self.assertEqual(spec.phase, "finding")
         self.assertTrue(spec.enabled)
+
+    def test_workflow_spec_returns_delivery_studio_discuss_workflow(self):
+        spec = workflow_registry.workflow_spec("delivery-studio-discuss", team_id="delivery-studio", project_id="openteam")
+
+        self.assertEqual(spec.workflow_id, "delivery-studio-discuss")
+        self.assertEqual(spec.lane, "discussion")
+        self.assertEqual(spec.phase, "discussion")
+        self.assertTrue(spec.enabled)
+        self.assertTrue(any(agent.agent_id == "moderator" for agent in spec.agents))
+        self.assertTrue(any(agent.agent_id == "product_architect" for agent in spec.agents))
+
+    def test_list_workflows_loads_delivery_studio_agents_tasks_and_loop_config(self):
+        workflows = workflow_registry.list_workflows(team_id="delivery-studio", project_id="openteam")
+        ids = {spec.workflow_id for spec in workflows}
+
+        self.assertIn("delivery-studio-discuss", ids)
+        self.assertIn("delivery-studio-coding", ids)
+        self.assertIn("delivery-studio-review", ids)
+
+        discuss = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-discuss")
+        self.assertEqual(discuss.phase, workflow_registry.PHASE_DISCUSSION)
+        self.assertTrue(any(agent.agent_id == "moderator" for agent in discuss.agents))
+        self.assertTrue(any(agent.agent_id == "product_architect" for agent in discuss.agents))
+        self.assertIn("discussion", discuss.stages)
+
+        coding = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-coding")
+        self.assertEqual(coding.phase, workflow_registry.PHASE_CODING)
+        self.assertIn("delivery", coding.stages)
+
+        review = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-review")
+        self.assertEqual(review.phase, workflow_registry.PHASE_FINDING)
+        self.assertIn("verification", review.stages)
 
     def test_project_workflow_override_can_disable_repo_review(self):
         with mock.patch(
@@ -41,7 +73,7 @@ class WorkflowRegistryTests(unittest.TestCase):
                 }
             },
         ):
-            spec = workflow_registry.workflow_spec("repo-review", project_id="demo")
+            spec = workflow_registry.workflow_spec("repo-review", team_id="repo-improvement", project_id="demo")
 
         self.assertFalse(spec.enabled)
         self.assertEqual(spec.disabled_reason, "disabled_for_repo")
@@ -61,7 +93,7 @@ class WorkflowRegistryTests(unittest.TestCase):
                 }
             },
         ):
-            spec = workflow_registry.workflow_spec("repo-review", project_id="demo")
+            spec = workflow_registry.workflow_spec("repo-review", team_id="repo-improvement", project_id="demo")
 
         self.assertEqual(spec.max_candidates(), 3)
 
@@ -80,7 +112,7 @@ class WorkflowRegistryTests(unittest.TestCase):
                 }
             },
         ):
-            spec = workflow_registry.workflow_spec("repo-review", project_id="demo")
+            spec = workflow_registry.workflow_spec("repo-review", team_id="repo-improvement", project_id="demo")
 
         self.assertEqual(spec.dormant_after_zero_scans(), 1)
 
@@ -103,14 +135,14 @@ class WorkflowRegistryTests(unittest.TestCase):
                 }
             },
         ):
-            spec = workflow_registry.workflow_spec("repo-review", project_id="demo")
+            spec = workflow_registry.workflow_spec("repo-review", team_id="repo-improvement", project_id="demo")
 
         self.assertEqual(spec.active_window_start_hour(), 9)
         self.assertEqual(spec.active_window_end_hour(), 18)
         self.assertEqual(spec.max_continuous_runtime_minutes(), 60)
 
     def test_list_workflows_loads_agents_tasks_and_loop_config(self):
-        workflows = workflow_registry.list_workflows(project_id="openteam")
+        workflows = workflow_registry.list_workflows(team_id="repo-improvement", project_id="openteam")
         ids = {spec.workflow_id for spec in workflows}
 
         self.assertIn("repo-review", ids)

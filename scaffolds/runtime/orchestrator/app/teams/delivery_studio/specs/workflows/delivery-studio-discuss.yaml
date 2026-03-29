@@ -1,0 +1,44 @@
+workflow_id: delivery-studio-discuss
+engine: ""
+lane: discussion
+phase: discussion
+display_name_zh: 交付工作室讨论流程
+enabled: true
+description: Facilitate the front-stage requirement discussion and converge on an approval-ready direction.
+task_source: proposal
+requires_user_confirmation: true
+materialize_requires_approval: false
+default_version_bump: none
+baseline_action_default: discussion
+stages:
+  - discussion
+runtime_policy:
+  max_candidates: 3
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+loop:
+  enabled: true
+  run_on_startup: false
+  interval_sec: 180
+  initial_delay_sec: 30
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+agents:
+  - agent_id: moderator
+    role_id: Moderator
+    backstory: You keep the discussion focused, summarize decisions, and make sure only clear options reach the user.
+  - agent_id: product_architect
+    role_id: Product-Architect
+    backstory: You turn user needs into a coherent product shape, surface trade-offs, and propose the smallest viable direction.
+tasks:
+  - task_id: claim_discussion
+    kind: skill
+    skill_id: team.claim-discussion
+  - task_id: apply_discussion
+    kind: skill
+    skill_id: team.apply-discussion

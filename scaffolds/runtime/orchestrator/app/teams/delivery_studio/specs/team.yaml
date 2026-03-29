@@ -1,0 +1,21 @@
+team_id: delivery-studio
+display_name_zh: 交付工作室
+mission: Turn approved product requirements into merge-ready delivery through multi-agent discussion, planning, implementation, review, and verification.
+role_pool:
+  - Moderator
+  - Product-Architect
+  - Senior-Engineer-Skeptic
+  - App-UI-Designer
+  - Admin-Web-Designer
+  - Backend-Architect
+  - Test-Architect
+  - Review-Moderator
+workflow_ids:
+  - delivery-studio-discuss
+  - delivery-studio-coding
+  - delivery-studio-review
+stage_ids:
+  - discussion
+  - planning
+  - delivery
+  - verification
