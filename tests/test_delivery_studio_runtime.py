@@ -486,6 +486,17 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
                 text="Ready for review.",
                 created_by="user",
             )
+            delivery_runtime.mark_awaiting_approval(
+                project_id="demo",
+                request_id=req["request_id"],
+                final_proposal="Option B is recommended.",
+            )
+            delivery_runtime.approve_request(
+                project_id="demo",
+                request_id=req["request_id"],
+                approved_by="user",
+                selected_option="option-b",
+            )
 
             with self.assertRaises(ValueError):
                 delivery_runtime.finalize_review(
@@ -493,6 +504,58 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
                     request_id=req["request_id"],
                     reviewer_outputs=[],
                 )
+
+    def test_finalize_review_allows_changes_requested_rerun_to_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Ready for review.",
+                created_by="user",
+            )
+            delivery_runtime.mark_awaiting_approval(
+                project_id="demo",
+                request_id=req["request_id"],
+                final_proposal="Option B is recommended.",
+            )
+            delivery_runtime.approve_request(
+                project_id="demo",
+                request_id=req["request_id"],
+                approved_by="user",
+                selected_option="option-b",
+            )
+            first_pass = delivery_runtime.finalize_review(
+                project_id="demo",
+                request_id=req["request_id"],
+                reviewer_outputs=[
+                    {
+                        "reviewer_id": "reviewer-a",
+                        "decision": "BLOCK",
+                        "blocking_issues": ["update the validation flow"],
+                        "test_complete": True,
+                    }
+                ],
+            )
+
+            self.assertEqual(first_pass["stage"], "Changes Requested")
+            rerun = delivery_runtime.finalize_review(
+                project_id="demo",
+                request_id=req["request_id"],
+                reviewer_outputs=[
+                    {
+                        "reviewer_id": "reviewer-a",
+                        "decision": "PASS",
+                        "blocking_issues": [],
+                        "test_complete": True,
+                    }
+                ],
+            )
+
+            self.assertEqual(rerun["stage"], "CI Running")
+            self.assertEqual(rerun["review_gate"], "Passed")
 
     def test_review_finalize_route_rejects_empty_reviewer_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as td:
