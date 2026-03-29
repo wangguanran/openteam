@@ -45,10 +45,15 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("tests.test_delivery_studio_review_gate", text)
         self.assertNotIn("tests.test_crewai_self_upgrade", text)
 
-    def test_runtime_requirements_exclude_test_only_coverage_tooling(self) -> None:
+    def test_runtime_requirements_keep_coverage_for_task_5_contract(self) -> None:
         text = (ROOT / "scaffolds" / "runtime" / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
-        self.assertNotIn("coverage>=", text)
-        self.assertNotIn("\ncoverage\n", f"\n{text}\n")
+        self.assertIn("coverage>=7.6", text)
+
+    def test_runtime_dockerfile_filters_test_only_coverage_from_runtime_install(self) -> None:
+        text = (ROOT / "tooling" / "docker" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn('line.strip().startswith("crewai")', text)
+        self.assertIn('line.strip().startswith("coverage")', text)
+        self.assertIn("pip install --no-cache-dir -r /tmp/requirements-base.txt", text)
 
     def test_repo_understanding_gate_uses_runtime_state_for_openteam_task_artifacts(self) -> None:
         mod = _load_repo_understanding_gate()
