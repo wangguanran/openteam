@@ -1,15 +1,15 @@
 workflow_id: delivery-studio-review
 engine: ""
 lane: review
-phase: finding
-display_name_zh: 交付工作室评审流程
+phase: coding
+display_name_zh: 多模型评审闸门
 enabled: true
-description: Review the delivered diff, surface residual issues, and close the delivery loop.
-task_source: proposal
+description: Run the 3-agent veto review panel and block release on incomplete tests or failing acceptance evidence.
+task_source: direct_task
 requires_user_confirmation: false
 materialize_requires_approval: false
 default_version_bump: none
-baseline_action_default: review
+baseline_action_default: delivery_review
 stages:
   - verification
 runtime_policy:
@@ -31,14 +31,20 @@ process:
 agents:
   - agent_id: review_moderator
     role_id: Review-Moderator
-    backstory: You coordinate the review, summarize findings, and keep the gate decisive.
-  - agent_id: test_architect
-    role_id: Test-Architect
-    backstory: You check that the validation evidence is actually sufficient.
-  - agent_id: senior_engineer_skeptic
-    role_id: Senior-Engineer-Skeptic
-    backstory: You challenge the diff for correctness, safety, and scope discipline.
+    model: openrouter/openai/gpt-5.4
+  - agent_id: reviewer_a
+    role_id: Review-Agent
+    model: openrouter/openai/gpt-5.4
+    backstory: You focus on requirement fidelity, scope, and workstream closure.
+  - agent_id: reviewer_b
+    role_id: Review-Agent
+    model: openrouter/anthropic/claude-opus-4.6
+    backstory: You focus on engineering quality, contract safety, and test completeness.
+  - agent_id: reviewer_c
+    role_id: Review-Agent
+    model: openrouter/openai/gpt-5.4
+    backstory: You focus on UI/UX consistency and product-flow correctness across mobile, admin, and backend.
 tasks:
-  - task_id: review_summary
+  - task_id: review_gate
     kind: skill
-    skill_id: team.apply-discussion
+    skill_id: team.delivery-studio-review

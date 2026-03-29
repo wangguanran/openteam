@@ -1,9 +1,3 @@
 stage_id: verification
-display_name_zh: 验证阶段
-members:
-  - role_id: Test-Architect
-    state: RUNNING
-    current_action: checking tests and validation evidence
-  - role_id: Review-Moderator
-    state: RUNNING
-    current_action: checking review findings and final sign-off
+display_name_zh: 评审与验证
+summary: Review veto, test completeness, GitHub Checks, CI, and merge readiness are enforced here.

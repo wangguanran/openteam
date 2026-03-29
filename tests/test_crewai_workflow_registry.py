@@ -32,8 +32,12 @@ class WorkflowRegistryTests(unittest.TestCase):
         self.assertEqual(spec.lane, "discussion")
         self.assertEqual(spec.phase, "discussion")
         self.assertTrue(spec.enabled)
+        self.assertEqual(spec.task_source, "direct_task")
         self.assertTrue(any(agent.agent_id == "moderator" for agent in spec.agents))
         self.assertTrue(any(agent.agent_id == "product_architect" for agent in spec.agents))
+        self.assertTrue(any(agent.agent_id == "skeptic" for agent in spec.agents))
+        self.assertTrue(any(task.task_id == "moderate_requirement" for task in spec.tasks))
+        self.assertTrue(any(task.skill_id == "team.delivery-studio-discuss" for task in spec.tasks))
 
     def test_list_workflows_loads_delivery_studio_agents_tasks_and_loop_config(self):
         workflows = workflow_registry.list_workflows(team_id="delivery-studio", project_id="openteam")
@@ -45,16 +49,38 @@ class WorkflowRegistryTests(unittest.TestCase):
 
         discuss = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-discuss")
         self.assertEqual(discuss.phase, workflow_registry.PHASE_DISCUSSION)
+        self.assertEqual(discuss.task_source, "direct_task")
         self.assertTrue(any(agent.agent_id == "moderator" for agent in discuss.agents))
         self.assertTrue(any(agent.agent_id == "product_architect" for agent in discuss.agents))
+        self.assertTrue(any(agent.agent_id == "skeptic" for agent in discuss.agents))
         self.assertIn("discussion", discuss.stages)
+        self.assertTrue(any(task.task_id == "moderate_requirement" for task in discuss.tasks))
 
         coding = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-coding")
         self.assertEqual(coding.phase, workflow_registry.PHASE_CODING)
-        self.assertIn("delivery", coding.stages)
+        self.assertEqual(coding.stages, ("delivery",))
+        self.assertEqual(
+            [agent.agent_id for agent in coding.agents],
+            ["delivery_lead", "mobile_owner", "admin_owner", "backend_owner", "docs_owner", "qa_owner"],
+        )
+        self.assertEqual(
+            [agent.role_id for agent in coding.agents],
+            ["Scheduler-Agent", "Coding-Agent", "Coding-Agent", "Coding-Agent", "Documentation-Agent", "QA-Agent"],
+        )
 
         review = next(spec for spec in workflows if spec.workflow_id == "delivery-studio-review")
-        self.assertEqual(review.phase, workflow_registry.PHASE_FINDING)
+        self.assertEqual(review.phase, workflow_registry.PHASE_CODING)
+        self.assertEqual(review.task_source, "direct_task")
+        self.assertEqual(
+            [agent.agent_id for agent in review.agents],
+            ["review_moderator", "reviewer_a", "reviewer_b", "reviewer_c"],
+        )
+        self.assertEqual(
+            [agent.role_id for agent in review.agents],
+            ["Review-Moderator", "Review-Agent", "Review-Agent", "Review-Agent"],
+        )
+        self.assertTrue(any(task.task_id == "review_gate" for task in review.tasks))
+        self.assertTrue(any(task.skill_id == "team.delivery-studio-review" for task in review.tasks))
         self.assertIn("verification", review.stages)
 
     def test_project_workflow_override_can_disable_repo_review(self):

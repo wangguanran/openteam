@@ -16,6 +16,9 @@ from app import team_registry  # noqa: E402
 
 
 class CrewAITeamRegistryTests(unittest.TestCase):
+    def test_default_team_is_loaded_from_team_specs(self) -> None:
+        self.assertEqual(team_registry.default_team_id(), "repo-improvement")
+
     def test_team_specs_include_repo_improvement_and_delivery_studio(self) -> None:
         team_ids = {spec.team_id for spec in team_registry.list_teams()}
 
@@ -30,6 +33,12 @@ class CrewAITeamRegistryTests(unittest.TestCase):
         self.assertIn("repo-coding", spec.workflow_ids)
         self.assertIn("planning", spec.stage_ids)
         self.assertIn("Test-Manager", spec.role_pool)
+        self.assertIn("Scheduler-Agent", spec.role_pool)
+        self.assertIn("Coding-Agent", spec.role_pool)
+        self.assertIn("Review-Agent", spec.role_pool)
+        self.assertIn("QA-Agent", spec.role_pool)
+        self.assertIn("Documentation-Agent", spec.role_pool)
+        self.assertIn("Release-Agent", spec.role_pool)
 
     def test_delivery_studio_team_spec_exposes_team_metadata_from_yaml(self) -> None:
         spec = team_registry.team_spec("delivery-studio")
@@ -44,7 +53,18 @@ class CrewAITeamRegistryTests(unittest.TestCase):
         self.assertIn("verification", spec.stage_ids)
         self.assertIn("Moderator", spec.role_pool)
         self.assertIn("Product-Architect", spec.role_pool)
+        self.assertIn("Senior-Engineer-Skeptic", spec.role_pool)
+        self.assertIn("App-UI-Designer", spec.role_pool)
+        self.assertIn("Admin-Web-Designer", spec.role_pool)
+        self.assertIn("Backend-Architect", spec.role_pool)
+        self.assertIn("Test-Architect", spec.role_pool)
         self.assertIn("Review-Moderator", spec.role_pool)
+        self.assertIn("Scheduler-Agent", spec.role_pool)
+        self.assertIn("Coding-Agent", spec.role_pool)
+        self.assertIn("Review-Agent", spec.role_pool)
+        self.assertIn("QA-Agent", spec.role_pool)
+        self.assertIn("Documentation-Agent", spec.role_pool)
+        self.assertIn("Release-Agent", spec.role_pool)
 
     def test_list_teams_reads_team_specs_from_config_tree(self) -> None:
         team_ids = {spec.team_id for spec in team_registry.list_teams()}

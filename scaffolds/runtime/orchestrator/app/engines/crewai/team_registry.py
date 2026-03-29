@@ -59,4 +59,7 @@ def default_team_id() -> str:
     teams = list_teams()
     if not teams:
         raise KeyError("no team specs configured")
+    for spec in teams:
+        if spec.team_id == "repo-improvement":
+            return spec.team_id
     return teams[0].team_id
