@@ -7,7 +7,11 @@ def evaluate_review_gate(*, reviewer_outputs: list[dict[str, Any]]) -> dict[str,
     blocked_reasons: list[str] = []
     for item in reviewer_outputs:
         if str(item.get("decision") or "").upper() == "BLOCK":
-            blocked_reasons.extend([str(x) for x in (item.get("blocking_issues") or []) if str(x).strip()])
+            issues = [str(x) for x in (item.get("blocking_issues") or []) if str(x).strip()]
+            if issues:
+                blocked_reasons.extend(issues)
+            else:
+                blocked_reasons.append(f"{item.get('reviewer_id', 'reviewer')}: reviewer vetoed the change")
         if not bool(item.get("test_complete", False)):
             blocked_reasons.append(f"{item.get('reviewer_id', 'reviewer')}: test completeness failed")
     blocked_reasons = [reason for reason in blocked_reasons if reason]

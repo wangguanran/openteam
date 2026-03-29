@@ -19,6 +19,33 @@ from app.domains.delivery_studio import review_gate  # noqa: E402
 
 
 class DeliveryStudioReviewGateTests(unittest.TestCase):
+    def test_block_decision_without_explicit_issues_still_blocks_gate(self) -> None:
+        result = review_gate.evaluate_review_gate(
+            reviewer_outputs=[
+                {
+                    "reviewer_id": "reviewer-a",
+                    "decision": "PASS",
+                    "blocking_issues": [],
+                    "test_complete": True,
+                },
+                {
+                    "reviewer_id": "reviewer-b",
+                    "decision": "BLOCK",
+                    "blocking_issues": [],
+                    "test_complete": True,
+                },
+                {
+                    "reviewer_id": "reviewer-c",
+                    "decision": "PASS",
+                    "blocking_issues": [],
+                    "test_complete": True,
+                },
+            ]
+        )
+        self.assertEqual(result["review_gate"], "Blocked")
+        self.assertEqual(result["blocking_gate"], "failure")
+        self.assertIn("reviewer-b", result["blocked_reason"])
+
     def test_any_blocking_reviewer_fails_gate(self) -> None:
         result = review_gate.evaluate_review_gate(
             reviewer_outputs=[
