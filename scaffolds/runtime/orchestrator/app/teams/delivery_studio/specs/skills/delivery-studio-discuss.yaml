@@ -1,0 +1,18 @@
+skill_id: team.delivery-studio-discuss
+handler_id: team.delivery-studio.noop
+display_name_zh: 交付工作室讨论技能
+description: Resolve the delivery-studio discussion skill via the shared no-op handler contract.
+category: discussion
+idempotent: true
+supports_dry_run: true
+inputs_schema:
+  answer: string
+outputs_schema:
+  handled: boolean
+  team_id: string
+  skill_id: string
+  handler_id: string
+  inputs: object
+tags:
+  - delivery-studio
+  - discussion

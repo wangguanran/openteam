@@ -30,6 +30,28 @@ class SkillLibraryTests(unittest.TestCase):
         self.assertIn("team.claim-discussion", ids)
         self.assertIn("team.run-coding-pipeline", ids)
 
+    def test_delivery_studio_team_local_skill_specs_are_loaded_from_team_specs(self) -> None:
+        ids = {spec.skill_id for spec in skill_registry.list_skill_specs(team_id="delivery-studio")}
+        self.assertIn("team.delivery-studio-discuss", ids)
+        self.assertIn("team.delivery-studio-review", ids)
+
+    def test_execute_skill_uses_team_local_delivery_studio_handler(self) -> None:
+        context = SimpleNamespace(
+            project_id="openteam",
+            target_id="demo-target",
+            force=False,
+            workflow=SimpleNamespace(team_id="delivery-studio", lane="discussion"),
+            extra={},
+            task_id="moderate_requirement",
+        )
+        out = skill_executor.execute_skill("team.delivery-studio-discuss", context=context, inputs={"answer": "yes"}, state={})
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["outputs"]["skill_id"], "team.delivery-studio-discuss")
+        self.assertEqual(out["outputs"]["handler_id"], "team.delivery-studio.noop")
+        self.assertEqual(out["outputs"]["team_id"], "delivery-studio")
+        self.assertEqual(out["outputs"]["inputs"], {"answer": "yes"})
+
     def test_execute_skill_uses_registered_handler(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
