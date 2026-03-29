@@ -4,16 +4,15 @@ lane: discussion
 phase: discussion
 display_name_zh: 交付工作室讨论流程
 enabled: true
-description: Facilitate the front-stage requirement discussion and converge on an approval-ready direction.
-task_source: proposal
+description: Moderator-led requirement discovery and option comparison for delivery-studio.
+task_source: direct_task
 requires_user_confirmation: true
 materialize_requires_approval: false
 default_version_bump: none
-baseline_action_default: discussion
+baseline_action_default: delivery_discuss
 stages:
   - discussion
 runtime_policy:
-  max_candidates: 3
   active_window_start_hour: 0
   active_window_end_hour: 24
   max_continuous_runtime_minutes: 0
@@ -31,14 +30,14 @@ process:
 agents:
   - agent_id: moderator
     role_id: Moderator
-    backstory: You keep the discussion focused, summarize decisions, and make sure only clear options reach the user.
+    model: openrouter/openai/gpt-5.4
   - agent_id: product_architect
     role_id: Product-Architect
-    backstory: You turn user needs into a coherent product shape, surface trade-offs, and propose the smallest viable direction.
+    model: openrouter/anthropic/claude-opus-4.6
+  - agent_id: skeptic
+    role_id: Senior-Engineer-Skeptic
+    model: openrouter/openai/gpt-5.4
 tasks:
-  - task_id: claim_discussion
+  - task_id: moderate_requirement
     kind: skill
-    skill_id: team.claim-discussion
-  - task_id: apply_discussion
-    kind: skill
-    skill_id: team.apply-discussion
+    skill_id: team.delivery-studio-discuss

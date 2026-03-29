@@ -1,21 +1,3 @@
 stage_id: delivery
-display_name_zh: 交付阶段
-members:
-  - role_id: Senior-Engineer-Skeptic
-    state: RUNNING
-    current_action: driving the implementation and challenging weak assumptions
-  - role_id: App-UI-Designer
-    state: RUNNING
-    current_action: implementing and refining the App UI surface
-  - role_id: Admin-Web-Designer
-    state: RUNNING
-    current_action: implementing and refining the Admin Web surface
-  - role_id: Backend-Architect
-    state: RUNNING
-    current_action: implementing backend contracts and integration points
-  - role_id: Test-Architect
-    state: RUNNING
-    current_action: preparing executable validation and coverage
-  - role_id: Review-Moderator
-    state: RUNNING
-    current_action: keeping review feedback scoped and actionable
+display_name_zh: 多线实施
+summary: Delivery Lead coordinates parallel mobile, admin, backend, and contract workstreams.
