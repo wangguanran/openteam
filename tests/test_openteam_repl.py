@@ -22,6 +22,10 @@ import openteam_cli.team as _team
 
 class TeamosReplTests(unittest.TestCase):
 
+    def test_cockpit_subcommand_dispatches(self) -> None:
+        parser = openteam_cli.main(["cockpit", "--help"])
+        self.assertEqual(parser, 0)
+
     def test_main_no_args_auto_enters_repl_from_runtime_workspace_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "runtime_root"

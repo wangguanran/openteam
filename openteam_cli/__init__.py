@@ -17,6 +17,7 @@ from .workspace import cmd_workspace_init, cmd_workspace_show, cmd_workspace_doc
 from .project import cmd_project_list, cmd_project_config_init, cmd_project_config_show, cmd_project_config_set, cmd_project_config_validate, cmd_project_agents_inject, _project_repl
 from .status import cmd_status, cmd_focus, cmd_agents, cmd_tasks
 from .panel import cmd_panel_show, cmd_panel_open, cmd_panel_health, cmd_panel_sync
+from .cockpit import cmd_cockpit
 from .cluster import cmd_cluster_status, cmd_cluster_qualify, cmd_node_add, cmd_node_join_script
 from .hub import cmd_hub_init, cmd_hub_up, cmd_hub_down, cmd_hub_status, cmd_hub_logs, cmd_hub_migrate, cmd_hub_expose, cmd_hub_backup, cmd_hub_restore, cmd_hub_export_config, cmd_hub_push_config
 from .team import cmd_team_list, cmd_team_run, cmd_team_watch, cmd_team_proposals, cmd_team_decide, cmd_team_discussions_sync, cmd_team_coding_run, cmd_team_coding_tasks, cmd_team_logs, cmd_team_bug_scan_live
@@ -177,6 +178,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     ps.add_argument("--full", action="store_true")
     ps.add_argument("--dry-run", action="store_true")
     ps.set_defaults(fn=cmd_panel_sync)
+
+    cp = sp.add_parser("cockpit", help="Terminal delivery-studio cockpit")
+    cp.add_argument("--project", default="")
+    cp.add_argument("--team", default="delivery-studio")
+    cp.set_defaults(fn=cmd_cockpit)
 
     cl = sp.add_parser("cluster", help="Multi-node cluster status (Brain/Assistant)")
     cl_sp = cl.add_subparsers(dest="subcmd", required=True)
@@ -565,7 +571,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     ocsw.add_argument("--json", action="store_true")
     ocsw.set_defaults(fn=cmd_openclaw_sweep)
 
-    args = p.parse_args(argv)
+    try:
+        args = p.parse_args(argv)
+    except SystemExit as e:
+        return int(e.code)
     try:
         args.fn(args)
         return 0
