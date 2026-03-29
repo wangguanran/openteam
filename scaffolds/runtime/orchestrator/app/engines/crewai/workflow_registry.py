@@ -499,13 +499,15 @@ def workflow_for_lane_phase(lane: str, phase: str, *, team_id: str = "", project
     normalized_lane = str(lane or "").strip().lower() or "bug"
     normalized_phase = str(phase or PHASE_FINDING).strip().lower() or PHASE_FINDING
     resolved_team_id = str(team_id or "").strip() or _default_team_id()
-    if normalized_phase == PHASE_CODING:
-        return workflow_for_phase(PHASE_CODING, team_id=resolved_team_id, project_id=project_id)
     workflows = list_workflows(team_id=resolved_team_id, project_id=project_id)
     # Exact match
     for spec in workflows:
         if spec.lane == normalized_lane and spec.phase == normalized_phase:
             return spec
+    if normalized_phase == PHASE_CODING:
+        for spec in workflows:
+            if spec.phase == PHASE_CODING:
+                return spec
     # Fallback: "review" lane covers all finding lanes (bug/feature/quality/process)
     if normalized_phase == PHASE_FINDING:
         for spec in workflows:

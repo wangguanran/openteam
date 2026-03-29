@@ -28,6 +28,22 @@ def _safe_target_from_context(context: Any) -> dict[str, Any]:
     )
 
 
+@register_skill("team.delivery-studio.noop")
+def delivery_studio_noop_skill(*, context: Any, inputs: dict[str, Any], state: dict[str, Any], spec: Any) -> dict[str, Any]:
+    _ = state
+    team_id = _team_id_from_context(context)
+    return {
+        "ok": True,
+        "outputs": {
+            "handled": True,
+            "team_id": team_id,
+            "skill_id": str(getattr(spec, "skill_id", "") or "").strip(),
+            "handler_id": str(getattr(spec, "handler_id", "") or "").strip(),
+            "inputs": dict(inputs or {}),
+        },
+    }
+
+
 def _repo_context_outputs(*, target: dict[str, Any], workflow: Any, force: bool) -> dict[str, Any]:
     project_id = team_workflow_runtime.safe_project_id(str(target.get("project_id") or "openteam"))
     target_id = str(target.get("target_id") or "").strip() or "openteam"

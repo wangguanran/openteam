@@ -27,7 +27,6 @@ class WorkflowRegistryTests(unittest.TestCase):
 
     def test_workflow_spec_returns_delivery_studio_discuss_workflow(self):
         spec = workflow_registry.workflow_spec("delivery-studio-discuss", team_id="delivery-studio", project_id="openteam")
-        raw = workflow_registry.spec_loader.team_workflow_doc("delivery-studio", "delivery-studio-discuss")
 
         self.assertEqual(spec.workflow_id, "delivery-studio-discuss")
         self.assertEqual(spec.lane, "discussion")
@@ -40,8 +39,6 @@ class WorkflowRegistryTests(unittest.TestCase):
         self.assertTrue(any(agent.agent_id == "skeptic" for agent in spec.agents))
         self.assertTrue(any(task.task_id == "moderate_requirement" for task in spec.tasks))
         self.assertTrue(any(task.skill_id == "team.delivery-studio-discuss" for task in spec.tasks))
-        self.assertNotIn("runtime_policy", raw)
-        self.assertNotIn("loop", raw)
 
     def test_list_workflows_loads_delivery_studio_agents_tasks_and_loop_config(self):
         workflows = workflow_registry.list_workflows(team_id="delivery-studio", project_id="openteam")
@@ -88,6 +85,20 @@ class WorkflowRegistryTests(unittest.TestCase):
         self.assertTrue(any(task.task_id == "review_gate" for task in review.tasks))
         self.assertTrue(any(task.skill_id == "team.delivery-studio-review" for task in review.tasks))
         self.assertIn("verification", review.stages)
+
+    def test_workflow_for_lane_phase_prefers_exact_match_for_delivery_lane(self):
+        spec = workflow_registry.workflow_for_lane_phase("delivery", workflow_registry.PHASE_CODING, team_id="delivery-studio", project_id="openteam")
+
+        self.assertEqual(spec.workflow_id, "delivery-studio-coding")
+        self.assertEqual(spec.lane, "delivery")
+        self.assertEqual(spec.phase, workflow_registry.PHASE_CODING)
+
+    def test_workflow_for_lane_phase_returns_review_workflow_for_review_lane_coding_phase(self):
+        spec = workflow_registry.workflow_for_lane_phase("review", workflow_registry.PHASE_CODING, team_id="delivery-studio", project_id="openteam")
+
+        self.assertEqual(spec.workflow_id, "delivery-studio-review")
+        self.assertEqual(spec.lane, "review")
+        self.assertEqual(spec.phase, workflow_registry.PHASE_CODING)
 
     def test_delivery_studio_workflow_docs_do_not_include_runtime_policy_or_loop_blocks(self):
         for workflow_id in ("delivery-studio-discuss", "delivery-studio-coding", "delivery-studio-review"):
