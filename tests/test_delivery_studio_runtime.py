@@ -244,6 +244,33 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             self.assertEqual(locked["stage"], "Locked")
             self.assertFalse(locked["needs_you"])
 
+    def test_awaiting_approval_route_rejects_whitespace_final_proposal(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need three UI options before coding.",
+                created_by="user",
+            )
+
+            with self.assertRaises(HTTPException) as ctx:
+                app_main.v1_team_request_mark_awaiting_approval(
+                    "delivery-studio",
+                    req["request_id"],
+                    app_main.DeliveryAwaitingApprovalIn(
+                        project_id="demo",
+                        final_proposal="   ",
+                    ),
+                )
+
+            self.assertEqual(ctx.exception.status_code, 400)
+            persisted = delivery_store.load_request("demo", req["request_id"])
+            self.assertEqual(persisted["stage"], "Discussing")
+            self.assertNotIn("approval_draft", persisted.get("artifacts", {}))
+
     def test_change_request_creates_new_request_linked_to_parent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")

@@ -15,6 +15,10 @@ class DeliveryStudioStageError(ValueError):
     pass
 
 
+class DeliveryStudioInputError(ValueError):
+    pass
+
+
 def _request_id() -> str:
     return f"REQ-{uuid4().hex[:8].upper()}"
 
@@ -47,9 +51,17 @@ def _require_request_stage(*, doc: dict[str, object], expected_stage: str, actio
         raise DeliveryStudioStageError(f"{action} requires stage '{expected_stage}' but request is '{current_stage or 'unknown'}'")
 
 
+def _require_nonblank_text(*, value: str, field_name: str, action: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise DeliveryStudioInputError(f"{action} requires non-empty {field_name}")
+    return text
+
+
 def mark_awaiting_approval(*, project_id: str, request_id: str, final_proposal: str) -> dict[str, object]:
     doc = store.load_request(project_id, request_id)
     _require_request_stage(doc=doc, expected_stage="Discussing", action="mark_awaiting_approval")
+    final_proposal = _require_nonblank_text(value=final_proposal, field_name="final_proposal", action="mark_awaiting_approval")
     doc["stage"] = "Awaiting Approval"
     doc["needs_you"] = True
     artifact_dir = workspace_store.delivery_request_artifacts_dir(project_id, request_id)

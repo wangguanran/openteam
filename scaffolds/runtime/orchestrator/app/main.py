@@ -3255,6 +3255,8 @@ def v1_team_request_mark_awaiting_approval(team_id: str, request_id: str, payloa
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioInputError as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid_final_proposal", "message": str(exc)}) from exc
     except delivery_studio_runtime.DeliveryStudioStageError as exc:
         raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
 
