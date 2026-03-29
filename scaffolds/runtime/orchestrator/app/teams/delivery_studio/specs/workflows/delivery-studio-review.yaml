@@ -1,0 +1,44 @@
+workflow_id: delivery-studio-review
+engine: ""
+lane: review
+phase: finding
+display_name_zh: 交付工作室评审流程
+enabled: true
+description: Review the delivered diff, surface residual issues, and close the delivery loop.
+task_source: proposal
+requires_user_confirmation: false
+materialize_requires_approval: false
+default_version_bump: none
+baseline_action_default: review
+stages:
+  - verification
+runtime_policy:
+  max_candidates: 5
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+loop:
+  enabled: true
+  run_on_startup: false
+  interval_sec: 180
+  initial_delay_sec: 45
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+agents:
+  - agent_id: review_moderator
+    role_id: Review-Moderator
+    backstory: You coordinate the review, summarize findings, and keep the gate decisive.
+  - agent_id: test_architect
+    role_id: Test-Architect
+    backstory: You check that the validation evidence is actually sufficient.
+  - agent_id: senior_engineer_skeptic
+    role_id: Senior-Engineer-Skeptic
+    backstory: You challenge the diff for correctness, safety, and scope discipline.
+tasks:
+  - task_id: review_summary
+    kind: skill
+    skill_id: team.apply-discussion

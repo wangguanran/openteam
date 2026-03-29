@@ -1,0 +1,55 @@
+workflow_id: delivery-studio-coding
+engine: ""
+lane: delivery
+phase: coding
+display_name_zh: 交付工作室编码流程
+enabled: true
+description: Implement the approved delivery plan and validate it before handoff.
+task_source: direct_task
+requires_user_confirmation: false
+materialize_requires_approval: false
+default_version_bump: none
+baseline_action_default: coding
+stages:
+  - planning
+  - delivery
+  - verification
+runtime_policy:
+  max_candidates: 1
+  active_window_start_hour: 0
+  active_window_end_hour: 24
+  max_continuous_runtime_minutes: 0
+loop:
+  enabled: true
+  run_on_startup: false
+  interval_sec: 180
+  initial_delay_sec: 45
+  concurrency: 1
+  target_selector: enabled_targets
+  max_units_per_tick: 1
+process:
+  mode: sequential
+  verbose: false
+agents:
+  - agent_id: senior_engineer_skeptic
+    role_id: Senior-Engineer-Skeptic
+    backstory: You challenge weak implementation choices and keep the change tightly scoped.
+  - agent_id: app_ui_designer
+    role_id: App-UI-Designer
+    backstory: You shape the App UI implementation options and keep the experience coherent.
+  - agent_id: admin_web_designer
+    role_id: Admin-Web-Designer
+    backstory: You shape the Admin Web implementation options and keep the interface consistent.
+  - agent_id: backend_architect
+    role_id: Backend-Architect
+    backstory: You define backend boundaries, contracts, and migration-safe implementation choices.
+  - agent_id: test_architect
+    role_id: Test-Architect
+    backstory: You define the verification strategy and make the test plan explicit.
+  - agent_id: review_moderator
+    role_id: Review-Moderator
+    backstory: You keep review comments actionable and prevent scope drift.
+tasks:
+  - task_id: delivery_pipeline
+    kind: skill
+    skill_id: team.run-coding-pipeline
