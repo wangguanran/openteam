@@ -3,17 +3,23 @@ from __future__ import annotations
 from typing import Any
 
 
+def _reviewer_blocking_reasons(item: dict[str, Any]) -> list[str]:
+    blocked_reasons: list[str] = []
+    if str(item.get("decision") or "").upper() == "BLOCK":
+        issues = [str(x) for x in (item.get("blocking_issues") or []) if str(x).strip()]
+        if issues:
+            blocked_reasons.extend(issues)
+        else:
+            blocked_reasons.append(f"{item.get('reviewer_id', 'reviewer')}: reviewer vetoed the change")
+    if not bool(item.get("test_complete", False)):
+        blocked_reasons.append(f"{item.get('reviewer_id', 'reviewer')}: test completeness failed")
+    return blocked_reasons
+
+
 def evaluate_review_gate(*, reviewer_outputs: list[dict[str, Any]]) -> dict[str, Any]:
     blocked_reasons: list[str] = []
     for item in reviewer_outputs:
-        if str(item.get("decision") or "").upper() == "BLOCK":
-            issues = [str(x) for x in (item.get("blocking_issues") or []) if str(x).strip()]
-            if issues:
-                blocked_reasons.extend(issues)
-            else:
-                blocked_reasons.append(f"{item.get('reviewer_id', 'reviewer')}: reviewer vetoed the change")
-        if not bool(item.get("test_complete", False)):
-            blocked_reasons.append(f"{item.get('reviewer_id', 'reviewer')}: test completeness failed")
+        blocked_reasons.extend(_reviewer_blocking_reasons(item))
     blocked_reasons = [reason for reason in blocked_reasons if reason]
     if blocked_reasons:
         return {
@@ -37,12 +43,13 @@ def build_check_runs(*, request_id: str, reviewer_outputs: list[dict[str, Any]])
     gate = evaluate_review_gate(reviewer_outputs=reviewer_outputs)
     checks = []
     for item in reviewer_outputs:
+        reviewer_reasons = _reviewer_blocking_reasons(item)
         checks.append(
             {
                 "name": f"panel-review/{item['reviewer_id']}",
                 "status": "completed",
-                "conclusion": "failure" if str(item.get("decision") or "").upper() == "BLOCK" else "success",
-                "output": {"title": request_id, "summary": "; ".join(item.get("blocking_issues") or []) or "PASS"},
+                "conclusion": "failure" if reviewer_reasons else "success",
+                "output": {"title": request_id, "summary": "; ".join(reviewer_reasons) or "PASS"},
             }
         )
     checks.append(

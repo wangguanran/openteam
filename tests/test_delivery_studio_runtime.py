@@ -113,6 +113,7 @@ _install_main_import_stubs()
 
 from fastapi import HTTPException  # noqa: E402
 from app.domains.delivery_studio import runtime as delivery_runtime  # noqa: E402
+from app.domains.delivery_studio import store as delivery_store  # noqa: E402
 from app import main as app_main  # noqa: E402
 from app import workspace_store  # noqa: E402
 
@@ -233,6 +234,65 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
                 )
 
             self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_finalize_route_returns_success_when_optional_check_emission_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Ready for review.",
+                created_by="user",
+            )
+
+            original_require = app_main._require_leader_write
+            original_enabled = app_main.github_checks_client.checks_writes_enabled
+            original_token = app_main.resolve_github_token
+            original_create = app_main.github_checks_client.create_check_run
+            try:
+                app_main._require_leader_write = lambda: {"leader_instance_id": "local"}
+                app_main.github_checks_client.checks_writes_enabled = lambda: True
+                app_main.resolve_github_token = lambda: "token"
+
+                def _boom(**kwargs):
+                    _ = kwargs
+                    raise RuntimeError("github checks unavailable")
+
+                app_main.github_checks_client.create_check_run = _boom
+
+                result = app_main.v1_team_request_review_finalize(
+                    "delivery-studio",
+                    req["request_id"],
+                    app_main.DeliveryReviewFinalizeIn(
+                        project_id="demo",
+                        reviewer_outputs=[
+                            {
+                                "reviewer_id": "reviewer-a",
+                                "decision": "PASS",
+                                "blocking_issues": [],
+                                "test_complete": True,
+                            }
+                        ],
+                        repo_full_name="octo/demo",
+                        head_sha="abc123",
+                    ),
+                )
+            finally:
+                app_main._require_leader_write = original_require
+                app_main.github_checks_client.checks_writes_enabled = original_enabled
+                app_main.resolve_github_token = original_token
+                app_main.github_checks_client.create_check_run = original_create
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["request"]["stage"], "CI Running")
+            self.assertTrue(result["warnings"])
+            self.assertIn("github checks unavailable", result["warnings"][0]["error"])
+
+            persisted = delivery_store.load_request("demo", req["request_id"])
+            self.assertEqual(persisted["stage"], "CI Running")
+            self.assertEqual(persisted["review_gate"], "Passed")
 
 
 if __name__ == "__main__":

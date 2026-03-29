@@ -129,6 +129,41 @@ class DeliveryStudioReviewGateTests(unittest.TestCase):
         self.assertIn("panel-review/reviewer-c", names)
         self.assertIn("panel-review/blocking-gate", names)
 
+    def test_incomplete_reviewer_check_fails_and_reports_test_gap(self) -> None:
+        payloads = review_gate.build_check_runs(
+            request_id="REQ-1234",
+            reviewer_outputs=[
+                {
+                    "reviewer_id": "reviewer-a",
+                    "decision": "PASS",
+                    "blocking_issues": [],
+                    "test_complete": False,
+                }
+            ],
+        )
+
+        reviewer_check = next(item for item in payloads if item["name"] == "panel-review/reviewer-a")
+        self.assertEqual(reviewer_check["conclusion"], "failure")
+        self.assertIn("test completeness", reviewer_check["output"]["summary"])
+
+    def test_blocking_reviewer_without_issue_list_does_not_report_pass(self) -> None:
+        payloads = review_gate.build_check_runs(
+            request_id="REQ-1234",
+            reviewer_outputs=[
+                {
+                    "reviewer_id": "reviewer-a",
+                    "decision": "BLOCK",
+                    "blocking_issues": [],
+                    "test_complete": True,
+                }
+            ],
+        )
+
+        reviewer_check = next(item for item in payloads if item["name"] == "panel-review/reviewer-a")
+        self.assertEqual(reviewer_check["conclusion"], "failure")
+        self.assertNotEqual(reviewer_check["output"]["summary"], "PASS")
+        self.assertIn("vetoed", reviewer_check["output"]["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

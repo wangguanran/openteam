@@ -3251,18 +3251,29 @@ def v1_team_request_review_finalize(team_id: str, request_id: str, payload: Deli
 
     repo_full_name = str(payload.repo_full_name or "").strip()
     head_sha = str(payload.head_sha or "").strip()
+    warnings: list[dict[str, str]] = []
     if github_checks_client.checks_writes_enabled() and repo_full_name and head_sha:
-        token = resolve_github_token()
-        for item in delivery_studio_runtime.review_gate.build_check_runs(
-            request_id=request_id,
-            reviewer_outputs=list(payload.reviewer_outputs or []),
-        ):
-            github_checks_client.create_check_run(
-                repo_full_name=repo_full_name,
-                token=token,
-                payload={**item, "head_sha": head_sha},
+        try:
+            token = resolve_github_token()
+            for item in delivery_studio_runtime.review_gate.build_check_runs(
+                request_id=request_id,
+                reviewer_outputs=list(payload.reviewer_outputs or []),
+            ):
+                github_checks_client.create_check_run(
+                    repo_full_name=repo_full_name,
+                    token=token,
+                    payload={**item, "head_sha": head_sha},
+                )
+        except Exception as exc:
+            warnings.append(
+                {
+                    "source": "github_checks",
+                    "repo_full_name": repo_full_name,
+                    "head_sha": head_sha,
+                    "error": str(exc),
+                }
             )
-    return {"ok": True, "request": out}
+    return {"ok": True, "request": out, "warnings": warnings}
 
 
 @app.post("/v1/teams/{team_id}/coding/run")
