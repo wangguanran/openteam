@@ -1,19 +1,36 @@
 # Delivery Studio Runbook
 
+`delivery-studio` 是 OpenTeam 当前优先交付路径。默认从本机 cockpit 进入，不再要求任何 Hub、Cluster 或远程节点前置操作。
+
 ## Operator Flow
 
-Current surface today: `openteam cockpit --team delivery-studio --project <project_id>` opens the terminal-first cockpit shell. The command sequence below is the canonical delivery-studio operator contract; do not read it as a guarantee that every slash command is already wired in this branch.
+```bash
+openteam cockpit --team delivery-studio --project <project_id>
+```
 
-1. `openteam cockpit --team delivery-studio --project <project_id>`
-2. `/new`
-3. wait for `Awaiting Approval`
-4. `/approve`
-5. `/plan`
-6. `/start`
-7. `/review`
-8. merge only after `panel-review/blocking-gate` and CI are green
+建议流程：
 
-Post-lock changes are new change requests. Do not edit the frozen request in place.
+1. 进入 cockpit
+2. 创建新请求或导入变更
+3. 等待进入审批或 blocking gate
+4. 生成计划并开始执行
+5. 走 review
+6. 仅在 `panel-review/blocking-gate` 与仓库 CI 通过后合并
+
+约束：
+
+- lock 之后的修改必须作为新的 change request
+- 交付真相源始终位于 Workspace，而不是仓库
+
+```text
+~/.openteam/workspace/projects/<project_id>/state/delivery_studio
+```
+
+## 本地依赖面
+
+- 本地 Control Plane：`http://127.0.0.1:8787`
+- 本地状态接口：`GET /v1/status`
+- 本地运行态数据库：`~/.openteam/runtime/default/state/runtime.db`
 
 ## GitHub Projects Fields
 
@@ -30,17 +47,10 @@ Post-lock changes are new change requests. Do not edit the frozen request in pla
 - Blocked Reason
 - Needs You
 
-## Manual Branch Protection
+## Branch Protection
 
-Current reality: `panel-review/blocking-gate` is the delivery-studio review gate confirmed in this code path. The broader repo CI still uses generic job names.
-
-Target delivery-studio protection: require these checks before merge once the delivery-studio pipeline is fully mapped to repository branch protection.
+当前已确认的 review gate 是：
 
 - `panel-review/blocking-gate`
-- `ci/contracts`
-- `ci/backend-tests`
-- `ci/admin-tests`
-- `ci/mobile-tests`
-- `ci/integration-tests`
 
-If the repo host cannot yet enforce the target names directly, keep the branch protection on the actual existing CI status checks and add the delivery-studio-specific checks when they are published.
+其余 CI check 以仓库当前实际发布的 job 名称为准。若 repo host 还没有单独发布 delivery-studio 命名的 checks，就继续使用现有 CI checks，并在这些 checks 可用后再补齐 branch protection。

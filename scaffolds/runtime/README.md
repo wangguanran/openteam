@@ -1,245 +1,109 @@
-# OpenTeam Runtime Config
+# OpenTeam Runtime Scaffold
 
-单机运行时环境（Docker Compose），用于 24/7 跑：
+本目录描述的是 OpenTeam 当前的单节点本地运行时模板，不是 Hub/Cluster 部署模板。
 
-- Control Plane（Python + FastAPI + CrewAI orchestrator）
-- OpenHands Agent Server（隔离执行平面）
-- Postgres（运行时元数据）
+运行时 contract：
 
-## 安全提示 (先读)
+- 本地 CLI：`./openteam`
+- 本地启动器：`./run.sh [start|status|stop|restart|doctor]`
+- 本地 Control Plane：`127.0.0.1:8787`
+- 本地 runtime root：`~/.openteam/runtime/default`
+- 本地 SQLite：`~/.openteam/runtime/default/state/runtime.db`
+- 项目真相源：`~/.openteam/workspace/projects/<project_id>/...`
 
-- 本目录仅提交 `.env.example`，真实 `.env` 不得入库。
-- `openhands-agent-server` 默认挂载 Docker socket（高风险能力）。不要暴露到公网；任何公网暴露属于审批项。
-- Control Plane 默认通过挂载 `${HOME}/.codex` 复用 Codex OAuth 登录态（本机文件，不入库）。如未登录：先执行 `codex login` 或 `codex login --device-auth`。
+## 启动顺序
 
-## Repo vs Workspace（硬隔离）
-
-OpenTeam 有两个层级的“真相源”：
-
-- **OpenTeam 自身**（scope=`openteam`）：业务真相源可落盘在 `openteam/` git 仓库（例如 `docs/product/openteam/requirements`）。
-- **运行态文件**（runtime state/db/ledger/logs/cluster）：统一保存在 Docker named volumes（不再写入 `openteam/.openteam`，也不要求单独的 `openteam-runtime/` 目录）。
-- **任何项目**（scope=`project:<id>`）：必须落盘在 **Workspace**（不在 `openteam/` 目录树内）。
-
-默认 Workspace 路径：
-
-- `~/.openteam/workspace`
-
-Runtime 会挂载宿主机 Workspace 到容器内：
-
-- host: `${HOME}/.openteam/workspace`
-- container: `/openteam-workspace`
-- env: `OPENTEAM_WORKSPACE_ROOT=/openteam-workspace`
-
-在启动 runtime 前，建议先初始化 Workspace：
+先在仓库根目录初始化本地环境：
 
 ```bash
-cd ../openteam
+./openteam config init
 ./openteam workspace init
 ./openteam workspace doctor
 ```
 
-## 启动/停止
+启动单节点运行时：
 
 ```bash
-cd ~/.openteam/runtime-config/default
-cp .env.example .env
-# 外部数据库：填写 OPENTEAM_DB_URL
-# 本地数据库：保持 OPENTEAM_DB_URL 为空；按需覆盖 POSTGRES_PASSWORD
-# 按需填写 OPENTEAM_LLM_API_KEY
-make up
-make ps
+./run.sh start
+./run.sh status
 ```
 
-如需把 CrewAI 的思考强度拉满，设置：
+检查健康状态：
 
 ```bash
-export OPENTEAM_CREWAI_REASONING_EFFORT=xhigh
+curl -fsS http://127.0.0.1:8787/healthz
+curl -fsS http://127.0.0.1:8787/v1/status
 ```
 
-当前 runtime 默认使用 `openrouter/openai/gpt-5.4`，并将 `OPENTEAM_LLM_MODEL` 设为该值，同时将 `OPENTEAM_CREWAI_REASONING_EFFORT` 设为 `xhigh`。
-
-Repo-improvement 的 background workflow loop 不再由 `OPENTEAM_TEAM_WORKFLOW_*` 环境变量控制；具体的 `bug-finding`、`feature-discussion`、`coding` 等 workflow 配置都定义在 `scaffolds/runtime/orchestrator/app/teams/repo_improvement/specs/workflows/*.yaml`。Runtime 侧只保留全局开关 `OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED`。
-
-Team 目录现在只保留配置；workflow 里的 `kind: skill` 节点会通过 `scaffolds/runtime/orchestrator/app/skill_library/specs/*.yaml` 描述的技能库执行，具体实现位于通用 runtime skill/domain 模块，而不是 team 目录脚本。
-
-如需让本地 runtime 自动跟随 GHCR 上的新 `control-plane` 镜像，设置：
+停止或重启：
 
 ```bash
-OPENTEAM_CONTROL_PLANE_AUTO_UPDATE=1
-OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_INTERVAL_SEC=300
-OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=0
+./run.sh stop
+./run.sh restart
 ```
 
-启用后：
+## Delivery Studio First
 
-- `make up` 会自动拉起本地镜像 watcher
-- watcher 会周期性执行 `docker compose pull control-plane`
-- 检测到本地镜像更新后，会自动重建 `control-plane`
-- 如需只在空闲时更新，可设置 `OPENTEAM_CONTROL_PLANE_AUTO_UPDATE_ONLY_IF_IDLE=1`
-- 日志落在 `auto_update/watcher.log`
-
-手动查看/控制：
+当前优先操作路径是：
 
 ```bash
-make auto-update-status
-make auto-update-check
-make auto-update-stop
-make auto-update-start
+./openteam cockpit --team delivery-studio --project <project_id>
 ```
 
-停止：
+使用这个入口来处理需求、审批、计划、执行和 review gate。`delivery-studio` 对应的项目真相源在 Workspace：
 
-```bash
-cd ~/.openteam/runtime-config/default
-make down
+```text
+~/.openteam/workspace/projects/<project_id>/state/delivery_studio
+```
+
+## Runtime Layout
+
+```text
+~/.openteam/
+  runtime/
+    default/
+      state/
+        runtime.db
+        ledger/
+        logs/
+        audits/
+  workspace/
+    projects/
+      <project_id>/
+        repo/
+        state/
+          delivery_studio/
+          ledger/
+          logs/
+          requirements/
+          prompts/
+          kb/
+          plan/
 ```
 
 说明：
 
-- `make up`：只使用 GitHub CI 发布的 `OPENTEAM_CONTROL_PLANE_IMAGE` 镜像启动；本地不允许构建 control-plane 镜像
-- `control-plane` 会以 `/openteam/scaffolds/runtime/orchestrator` 作为工作目录运行，因此优先执行当前挂载的 OpenTeam 仓库源码，而不是镜像内打包的旧 `/app/app`
-- `docker-compose.yml` 默认总会启动本地 `postgres` 容器
-- 当 `OPENTEAM_DB_URL` 为空时，control-plane 连接本地 `postgres`
-- 当 `OPENTEAM_DB_URL` 非空时，control-plane 改为直连外部数据库；本地 `postgres` 仍会随 compose 启动
-- runtime state/hub/cache/tmp/worktrees 默认持久化在 Docker named volumes
-- 宿主机默认只保留 runtime 配置目录：`~/.openteam/runtime-config/default`
+- `runtime.db` 是本地 SQLite 运行态数据库
+- `ledger/`、`logs/`、`audits/` 存放 OpenTeam 自身的本地任务与审计痕迹
+- 任何 `project:<id>` 真相源都必须留在 Workspace，不写回仓库
 
-## 镜像化启动（推荐给新机器）
-
-如果只想直接拉镜像启动，不需要本地构建：
+## 常用命令
 
 ```bash
-cd ../openteam
-./scripts/runtime_up_image.sh
-# 或者指定外部数据库：
-./scripts/runtime_up_image.sh --db-url 'postgresql://user:password@host:5432/openteam'
-```
-
-默认会：
-
-- 初始化 `~/.openteam/runtime-config/default`
-- 生成/更新 `.env`
-- 拉取 `ghcr.io/openteam-dev/openteam-control-plane:main`
-- 启动统一的 `docker-compose.yml`
-- 若 `.env` 中启用了 `OPENTEAM_CONTROL_PLANE_AUTO_UPDATE=1`，同步拉起本地镜像 watcher
-
-数据库模式：
-
-- 传入 `--db-url`：写入 `OPENTEAM_DB_URL`，control-plane 直连外部数据库
-- 不传 `--db-url`：保持 `OPENTEAM_DB_URL` 为空，control-plane 使用本地 `postgres`
-
-构建期和运行期网络是分离的：
-
-- 镜像构建默认不走代理
-- Node/npm/PyPI/apt 构建源默认指向国内镜像
-- runtime 容器联网单独由 `OPENTEAM_RUNTIME_HTTP_PROXY` 等变量控制
-- 若使用 `oauth_codex` + `openai-codex/*`，请确保 `OPENTEAM_RUNTIME_NO_PROXY` 包含 `chatgpt.com,.chatgpt.com,api.openai.com,.openai.com`，否则模型调用可能被代理链路上的 Cloudflare challenge 挡住
-- 默认会在 `oauth_codex` 调用期临时撤掉 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY`，由 `OPENTEAM_CREWAI_DISABLE_PROXY_FOR_OAUTH_CODEX=1` 控制
-
-镜像化 runtime 默认：
-
-- 持久真相源使用 `OPENTEAM_DB_URL`
-- 本地只保留 Docker volume 中的 runtime 临时状态；项目真相源继续在 `~/.openteam/workspace`
-- 继续复用宿主机 `${HOME}/.codex` 和 `${HOME}/.openclaw`
-- 不会隐式把镜像内 `/openteam` 快照当作默认 target 扫描；新部署会先空转等待 target 注册
-
-## 日志与健康检查
-
-```bash
-cd ~/.openteam/runtime-config/default
-make logs
-```
-
-Control Plane health：
-
-```bash
-curl -fsS http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/healthz
-curl -fsS http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/status
-```
-
-注册一个 improvement target：
-
-```bash
-curl -fsS -X POST http://127.0.0.1:${CONTROL_PLANE_PORT:-8787}/v1/improvement/targets \
-  -H 'content-type: application/json' \
-  -d '{
-    "project_id": "demo",
-    "target_id": "demo-openteam",
-    "display_name": "Demo OpenTeam",
-    "repo_url": "https://github.com/openteam-dev/openteam.git",
-    "repo_locator": "openteam-dev/openteam",
-    "workstream_id": "general"
-  }'
-```
-
-OpenHands Agent Server health（若暴露到宿主）：
-
-```bash
-curl -fsS http://127.0.0.1:${OPENHANDS_AGENT_SERVER_PORT:-18000}/alive
-```
-
-## Makefile
-
-- `make up` / `make down`
-- 本地不再支持 `make build` / `make up-build`；如需新镜像，请等待 GitHub CI 发布后再 `make up`
-- `make pull`
-- `make ps`
-- `make logs`
-- `make doctor`
-
-## openteam CLI（在 openteam 仓库）
-
-```bash
-cd ../openteam
-./openteam config init
 ./openteam status
-./openteam chat --project openteam
-./openteam panel show --project demo
-./openteam panel sync --project demo --dry-run --full
+./openteam doctor
+./openteam panel show --project <project_id>
+./openteam panel sync --project <project_id> --dry-run
+./openteam cockpit --team delivery-studio --project <project_id>
 ```
 
-## GitHub Projects 面板（可选）
+## Secrets
 
-1) 配置映射文件（真相源仍在本仓库；Projects 是视图层）：
+- 本目录只提交模板与说明，不提交真实 `.env`
+- 真实凭据只放本机环境变量、系统钥匙串或本地 runtime 配置
+- 如需 GitHub Projects 视图层同步，先在本机执行 `gh auth login`，再通过环境变量注入 token
 
-- `integrations/github_projects/mapping.yaml`
+## Known Limits
 
-2) 配置 GitHub Token（推荐 OAuth）：
-
-```bash
-# 推荐：从 gh 取 OAuth token（不要写入 git）
-export GITHUB_TOKEN="$(gh auth token -h github.com)"
-```
-
-3) 启用后台同步（会对 GitHub Projects 写入 item/字段，属于“视图层变更”）：
-
-在 `~/.openteam/runtime-config/default/.env` 中设置：
-
-```bash
-OPENTEAM_PANEL_GH_WRITE_ENABLED=1
-OPENTEAM_PANEL_GH_AUTO_SYNC=1
-```
-
-## Hub APIs
-
-Control Plane now exposes hub APIs for presentation/orchestration layers:
-
-- `GET /v1/hub/status`
-- `GET /v1/hub/migrations`
-- `GET /v1/hub/locks`
-- `GET /v1/hub/approvals`
-- `GET /v1/runs`
-- `POST /v1/runs/start`
-- `POST /v1/repo_improvement/run`（旧别名仍保留用于兼容）
-- `GET /v1/repo_improvement/proposals`
-- `POST /v1/repo_improvement/proposals/decide`
-
-Default behavior:
-
-- `control-plane` startup triggers one CrewAI repo-improvement run for the current `openteam` repo.
-- `control-plane` also keeps a continuous repo-improvement loop running for the current repo.
-- The repo-improvement run can also target another local repo via `repo_path`.
-- Bug findings are materialized immediately.
-- Feature findings become proposals, wait for user confirmation, and respect a 1 hour cooldown before materialization.
-- Process optimizations collect telemetry for 24 hours before materialization.
-- Findings are recorded into OpenTeam task ledgers and, when GitHub auth is available, mirrored to GitHub issues plus the configured GitHub Project panel.
+- 这里描述的是单节点主路径，不为多节点、集群选主、远程节点引导背书
+- 仓库里仍可能存在迁移期代码或脚本，但不属于当前 operator 文档 contract

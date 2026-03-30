@@ -1,164 +1,124 @@
-# 变更治理 (Governance)
+# 变更治理
 
-本文件是 **OpenTeam 的治理真相源**：定义“任务=更新单位”、风险闸门、决定性产物策略，以及 Repo/Workspace 边界。
+本文件定义 OpenTeam 当前单节点产品形态下的治理规则：任务是更新单位，运行态在本地 runtime，项目真相源在 Workspace，所有高风险动作都要留下审批与证据。
 
-## 1. 定义 (DoR/DoD)
+## 1. DoR / DoD
 
-### DoR (Definition of Ready)
+### DoR
 
 一个任务进入实施前至少满足：
 
-- 台账已创建：`~/.openteam/runtime/default/state/ledger/tasks/<TASK_ID>.yaml`（或 `OPENTEAM_RUNTIME_ROOT/state/ledger/tasks/<TASK_ID>.yaml`）
-- `00~02` 日志存在并有初始内容
-- 风险等级与闸门明确（R2/R3 有审批计划）
-- 依赖、验收标准、回滚策略（若涉及发布）已记录
+- 台账已创建：`~/.openteam/runtime/default/state/ledger/tasks/<TASK_ID>.yaml`
+- `00~02` 阶段日志已落盘
+- 风险等级与审批点明确
+- 验收标准、依赖、回滚策略已记录
 
-### DoD (Definition of Done)
+### DoD
 
 一个任务关闭前至少满足：
 
-- `03~07` 日志补齐（按适用程度可合并，但必须说明）
+- `03~07` 阶段日志补齐
 - 测试证据与验收结果已记录
-- 变更与回滚信息已记录（若涉及发布）
-- Retro 已产出，并生成 Self-Improve 条目（若存在改进点）
-- `./openteam task close <TASK_ID>` 通过（该命令会执行 policy/repo purity/tests 等闸门）
+- 变更摘要与剩余风险已记录
+- 如有改进点，已产出 retro
+- `./openteam task close <TASK_ID>` 通过
 
-## 2. 更新单位（Update Unit）与 Git 纪律
+## 2. 更新单位与 Git 纪律
 
-- **一个 Update Unit = 一个任务**（`TASK_ID`）。
-- **分支可选**：不再强制“每任务一分支”。默认允许直接在 `main` 上完成任务并推送；如需协作/评审，可使用工作分支并按需创建 PR。
-- **先 close 再提交**：必须先 `./openteam task close <TASK_ID>` 通过，才允许 `git commit`/`git push`。
-- **推荐 ship 命令**：`./openteam task ship <TASK_ID> --summary "<...>"`（close→闸门→commit→push；push 失败标记 BLOCKED）
-- **提交信息**：`<TASK_ID>: <short summary>`
-- **推送失败即阻塞**：若无 remote/无权限/网络失败，必须在任务日志 `03_work.md` 记录原因与修复步骤，并将任务标记为 `BLOCKED`（由脚本完成）。
+- 一个 Update Unit = 一个任务
+- 分支不是强制项，但任务边界必须清晰
+- 先 `task close`，再 `git commit` / `git push`
+- 推荐使用：`./openteam task ship <TASK_ID> --summary "<summary>"`
+- 提交信息：`<TASK_ID>: <short summary>`
 
-## 3. 风险与审批策略
+## 3. 风险与审批
 
-- R0/R1：默认无需审批（仍需日志与证据）
-- R2：执行前审批（尤其是网络端口、docker socket、依赖升级）
-- R3：必须审批，且需要明确回滚/应急预案
+- R0 / R1：默认无需审批，仍需日志与证据
+- R2：执行前审批
+- R3：必须审批，并明确回滚/应急预案
 
-审批记录必须写入任务日志（建议写在 `01_plan.md` 与 `05_release.md`）。
+审批记录必须出现在任务日志中。当前单节点模式下，审批与审计证据默认记录在本地 runtime：
 
-实现约束（确定性）：
+- `~/.openteam/runtime/default/state/runtime.db`
+- `~/.openteam/runtime/default/state/audits/`
 
-- 高风险动作必须先走 approvals 引擎（risk classifier + policy）再执行。
-- 集群模式：由 Brain(leader) 按策略自动 approve/deny，并优先写入 Postgres（`OPENTEAM_DB_URL`）。
-- 单机模式：需要人工确认（交互式 YES）后才可执行；无 DB 时写入 Workspace 审计文件作为待同步证据。
-- 查看审批记录：`./openteam approvals list`（DB 优先；否则输出 fallback 审计路径）。
+查看审批记录：
 
-## 4. 决定性产物策略（脚本优先）
+```bash
+./openteam approvals list
+```
 
-- 任何可重复/可程序化的产物必须由 Python pipelines 生成，并通过 schema 校验后写入真相源。
-- Agent/LLM 只能输出建议/草案；不得直接写入或手改真相源文件。
-- 典型真相源写入口（决定性、可重建）：
-  - Requirements（Raw-First）：`./openteam req add|verify|rebuild`
-  - Prompt：`./openteam prompt compile`
-  - Projects/Panel：`./openteam panel sync`
+## 4. 决定性产物策略
+
+- 任何可程序化产物都必须通过脚本或 pipeline 生成
+- Agent/LLM 只能给建议或草案，不得手改真相源
+- 典型入口：
+  - `./openteam req add|verify|rebuild`
+  - `./openteam prompt compile`
+  - `./openteam panel sync`
 
 ## 5. 评审策略
 
-建议的评审清单：
+建议至少覆盖以下维度：
 
-- 设计评审：架构、边界、数据流、失败模式
-- 安全评审：secrets、权限、网络暴露、供应链
+- 设计评审：边界、数据流、失败模式
+- 安全评审：secrets、权限、对外写入
 - QA 评审：测试覆盖、回归范围、验收标准
-- 运维评审：可观测性、可回滚性、备份恢复
+- 运维评审：可观测性、恢复、回滚
 
-## 6. 双轨并行
+## 6. Repo / Workspace / Runtime 边界
 
-- 业务仓库与 OpenTeam 仓库可以并行演进。
-- OpenTeam 的改动通过 Self-Improve 工作流管理，避免干扰业务交付节奏。
-
-## 7. Repo Purity（硬隔离：Repo vs Workspace）
-
-硬规则：
-
-- `openteam/` git 仓库只允许 scope=`openteam` 的文件（OpenTeam 自身：代码/模板/策略/文档/evals/集成适配器等）。
-- 任何 scope=`project:<id>` 的真相源文件（requirements/冲突报告/ledger/logs/prompts/plan/项目 repo workdir 等）必须落在 Workspace（默认 `~/.openteam/workspace`），不得出现在 `openteam/` 目录树内。
+- Repo：平台代码、模板、文档、测试
+- Workspace：任何 `project:<id>` 真相源
+- Runtime：OpenTeam 自身 ledger、logs、audits、`runtime.db`
 
 强制执行：
 
-- `./openteam doctor` 必须检查并在违规时失败
-- 回归测试必须覆盖 repo_purity（见 `evals/test_repo_purity.py`）
+- `./openteam doctor` 必须拦截 repo purity 违规
+- 回归测试必须覆盖文档契约与 repo purity
 
-违规处理：
-
-1. 先看迁移计划（不改动文件）：
+若仓库中残留了项目态文件，先做 dry-run：
 
 ```bash
-cd openteam
 ./openteam workspace migrate --from-repo
 ```
 
-2. 迁移执行属于高风险动作（会移动仓库内文件到 Workspace；数据不会丢，但会产生 git deletions），需人工确认后执行：
+真正迁移属于高风险动作：
 
 ```bash
-cd openteam
 ./openteam workspace migrate --from-repo --force
 ```
 
-## 8. 需求处理协议 v3（Raw‑First + Feasibility + Sidecar Assessments）
+## 7. 需求处理原则
 
-核心原则：
+- Raw input 只记录用户原文
+- Expanded requirements 由决定性生成器维护
+- 冲突、漂移、不可行项必须显式进入决策
+- 关键写入口必须具备锁与幂等保证
+- 每次 Expanded 更新都要留下 changelog 与证据引用
 
-- **Baseline 不可覆盖**：`baseline/original_description_v1.md` 创建后不得覆盖，只能新增版本（v2/v3...）。
-- **Raw Input 只允许用户原文**：`raw_inputs.jsonl` 仅包含“用户输入原文 + 必要元数据”（append-only），严禁写入评估结论/扩展内容/self-improve 内容。
-- **Raw 的评估不污染 Raw**：可行性评估结果通过旁路索引 `raw_assessments.jsonl`（append-only）关联 `raw_id -> outcome + report_path`。
-- **Feasibility 必做**：每条 Raw 都必须生成决定性可行性报告 `feasibility/<raw_id>.md`，并落盘 outcome（`FEASIBLE|PARTIALLY_FEASIBLE|NOT_FEASIBLE|NEEDS_INFO`）。
-- **Raw‑First**：任何“新增用户需求输入”（CLI/API/chat 的 `NEW_REQUIREMENT`）必须先落盘 Raw，再允许生成/更新 Expanded。
-- **Expanded 禁止手改**：`requirements.yaml` / `REQUIREMENTS.md` 由生成器维护；手工修改会被判定为 drift，并应通过 `rebuild` 恢复决定性渲染。
-- **冲突与漂移必须显式决策**：
-  - 新输入与既有 Expanded 冲突：生成 `conflicts/*.md` 并进入 `NEED_PM_DECISION`
-  - Expanded 与 Baseline 漂移（drift）：生成 `conflicts/*-DRIFT.md` 并进入 `NEED_PM_DECISION`
-- **可行性闸门**：
-  - `NEEDS_INFO` / `NOT_FEASIBLE`：必须进入 `NEED_PM_DECISION`，不得把不可执行内容写入可执行 Expanded 条目。
-  - `PARTIALLY_FEASIBLE`：允许写入可行部分，同时把不可行部分作为风险/限制/待决策进入冲突/决策项。
-- **Self‑Improve 与 Raw 分离**：Self‑Improve 的提案写入 `.openteam/ledger/self_improve/*.md`，并通过系统通道更新 Expanded；禁止写入 `raw_inputs.jsonl`。
-- **并发安全**：关键写入口必须先获取锁（repo lock + scope lock）。返回 `LOCK_BUSY` 时不得并发写入同 scope，按诊断信息等待或重试。
-- **幂等与可追溯**：每次 Expanded 更新必须写入 `CHANGELOG.md`，并引用 `raw_id`/报告路径作为证据。
+## 8. 项目仓库 AGENTS.md 注入
 
-强制执行（工具链）：
+项目仓库根的 `AGENTS.md` 注入只允许脚本执行，必须保留原仓库内容，并使用固定标记区块：
 
-- CLI：
-  - `openteam req add`：写入 Raw（用户原文）+ 生成可行性报告 + 更新 Expanded（自动 drift/conflict 检测）
-  - `openteam req verify`：仅校验（drift/conflict）
-  - `openteam req rebuild`：决定性重渲染（禁止手改时用于恢复）
-  - `openteam req baseline set-v2`：baseline v2 提案（默认进入 `NEED_PM_DECISION`）
-- Control Plane：
-  - 写操作必须 leader-only（非 leader 返回 409 + leader 信息，CLI 自动转发到 leader）
-
-## 9. 项目仓库 AGENTS.md 注入（Team-OS 项目操作手册）
-
-目标：任何被 Team-OS 管理/接入的项目仓库根目录 `AGENTS.md` 必须包含 Team-OS 项目操作手册区块，便于在项目仓库内工作的成员（Codex/人类）遵守边界并正确操作 Workspace 真相源。
-
-强制规则：
-
-- 注入区块只允许脚本写入/更新（幂等，反复执行不重复插入，不破坏原有内容）。
-- 使用固定标记替换，保留项目原有内容：
-  - `<!-- OPENTEAM_MANUAL_START -->`
-  - `<!-- OPENTEAM_MANUAL_END -->`
+- `<!-- OPENTEAM_MANUAL_START -->`
+- `<!-- OPENTEAM_MANUAL_END -->`
 
 入口：
 
 ```bash
-cd openteam
 ./openteam project agents inject --project <project_id>
 ```
 
-挂钩（自动触发，leader-only 写入）：
+## 9. 高风险动作示例
 
-- `./openteam project config init|validate --project <id>`
-- `./openteam req add|import|rebuild --scope project:<id>`
-- `./openteam task new --scope project:<id> --mode bootstrap|upgrade`
+以下动作默认都需要审批：
 
-## Hub Risk Additions
+- 打开公网端口或配置公网反向代理
+- 删除、覆盖或迁移真相源数据
+- 旋转、导出、写入真实 secrets
+- 对 GitHub 或其他外部系统执行写操作
+- 修改审批策略、弱化审计、绕过日志要求
+- 使用 `workspace migrate --from-repo --force`
 
-The following actions are HIGH risk and must use approvals:
-
-- `openteam hub expose ...`
-- `openteam hub restore --file ...`
-- `openteam hub push-config ...` (contains connection secrets)
-- `openteam node add --execute ...` with remote password mode
-
-Redis default is enabled but bound locally by default. Remote Redis exposure must be explicitly approved.
+不再把 Hub、Cluster、Node 相关命令作为 operator 指南的一部分。

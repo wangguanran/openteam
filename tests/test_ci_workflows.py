@@ -75,6 +75,54 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("`.openteam/logs/tasks/<TASK_ID>/07_retro.md`", text)
         self.assertNotIn("`.openteam/ledger/openteam_issues_pending/`", text)
 
+    def test_single_node_docs_make_delivery_studio_the_primary_story(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("single-node local system", readme)
+        self.assertIn("openteam cockpit --team delivery-studio --project <project_id>", readme)
+        self.assertIn("~/.openteam/runtime/default/state/runtime.db", readme)
+        self.assertIn("local control plane", readme)
+        self.assertNotIn("openteam hub init", readme)
+        self.assertNotIn("GET /v1/hub/status", readme)
+        self.assertNotIn("Docker named volumes", readme)
+
+    def test_runtime_and_execution_docs_drop_hub_cluster_runtime_story(self) -> None:
+        runtime_readme = (ROOT / "scaffolds" / "runtime" / "README.md").read_text(encoding="utf-8")
+        execution = (ROOT / "docs" / "runbooks" / "EXECUTION_RUNBOOK.md").read_text(encoding="utf-8")
+
+        for text in (runtime_readme, execution):
+            self.assertIn("~/.openteam/runtime/default/state/runtime.db", text)
+            self.assertIn("openteam cockpit --team delivery-studio --project <project_id>", text)
+            self.assertNotIn("/v1/hub/", text)
+            self.assertNotIn("openteam hub ", text)
+            self.assertNotIn("openteam node ", text)
+            self.assertNotIn("docker compose", text.lower())
+            self.assertNotIn("postgres", text.lower())
+            self.assertNotIn("redis", text.lower())
+
+    def test_governance_security_and_repo_understanding_drop_obsolete_operator_guidance(self) -> None:
+        governance = (ROOT / "docs" / "product" / "GOVERNANCE.md").read_text(encoding="utf-8")
+        security = (ROOT / "docs" / "product" / "SECURITY.md").read_text(encoding="utf-8")
+        repo_understanding = (ROOT / "docs" / "product" / "openteam" / "REPO_UNDERSTANDING.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("openteam hub expose", governance)
+        self.assertNotIn("openteam hub restore", governance)
+        self.assertNotIn("openteam hub push-config", governance)
+        self.assertNotIn("openteam node add", governance)
+
+        self.assertNotIn("openteam hub expose", security)
+        self.assertNotIn("Postgres + Redis enabled", security)
+
+        self.assertIn("single-node local system", repo_understanding)
+        self.assertIn("runtime/default/state/runtime.db", repo_understanding)
+        self.assertNotIn("/v1/hub/status", repo_understanding)
+        self.assertNotIn("/v1/cluster/status", repo_understanding)
+
+    def test_obsolete_hub_cluster_runbooks_are_removed(self) -> None:
+        self.assertFalse((ROOT / "docs" / "runbooks" / "HUB_RUNBOOK.md").exists())
+        self.assertFalse((ROOT / "docs" / "runbooks" / "CLUSTER_RUNBOOK.md").exists())
+        self.assertFalse((ROOT / "docs" / "runbooks" / "NODE_BOOTSTRAP.md").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
