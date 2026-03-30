@@ -27,6 +27,14 @@ class TeamosReplTests(unittest.TestCase):
         parser = openteam_cli.main(["cockpit", "--help"])
         self.assertEqual(parser, 0)
 
+    def test_removed_hub_cluster_and_node_commands_are_absent(self) -> None:
+        parser = openteam_cli.main(["cockpit", "--help"])
+        self.assertEqual(parser, 0)
+
+        self.assertEqual(openteam_cli.main(["hub", "--help"]), 2)
+        self.assertEqual(openteam_cli.main(["cluster", "--help"]), 2)
+        self.assertEqual(openteam_cli.main(["node", "--help"]), 2)
+
     def test_cmd_cockpit_passes_project_and_team_to_app(self) -> None:
         args = argparse.Namespace(project="proj-123", team="delivery-studio")
         calls = []
