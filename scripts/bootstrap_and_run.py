@@ -252,6 +252,23 @@ def _ensure_local_runtime_db(runtime_root: Path) -> dict[str, Any]:
     return {"ok": True, "path": str(db_path)}
 
 
+def _default_team_from_status_payload(status: dict[str, Any]) -> dict[str, Any]:
+    teams = status.get("teams") if isinstance(status, dict) else {}
+    default_team_id = str(status.get("default_team_id") or "").strip()
+    if not default_team_id and isinstance(teams, dict) and teams:
+        default_team_id = sorted(str(key) for key in teams.keys() if str(key).strip())[0]
+    if not default_team_id or not isinstance(teams, dict):
+        return {}
+    team_state = teams.get(default_team_id)
+    if not isinstance(team_state, dict):
+        return {}
+    out = dict(team_state)
+    if not str(out.get("team_id") or "").strip():
+        out["team_id"] = default_team_id
+    out["default_team_id"] = default_team_id
+    return out
+
+
 def _http_json(method: str, url: str, payload: Optional[dict[str, Any]] = None, timeout_sec: int = 5) -> dict[str, Any]:
     data = None
     headers = {"Accept": "application/json"}
@@ -616,15 +633,14 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
     cp_running = _pid_alive(cp_pid)
 
     control: dict[str, Any] = {"running": cp_running, "pid": cp_pid, "base_url": base_url}
+    default_team: dict[str, Any] = {}
     if cp_running:
         try:
             control["healthz"] = _http_json("GET", base_url + "/healthz", None, timeout_sec=3)
             control["status"] = _http_json("GET", base_url + "/v1/status", None, timeout_sec=3)
+            default_team = _default_team_from_status_payload(control["status"]) if isinstance(control.get("status"), dict) else {}
         except Exception as e:
             control["health_error"] = str(e)[:300]
-
-    team_state = _read_default_team_state(runtime_root, base_url=base_url)
-    team_last = (team_state.get("last_run") or {}) if isinstance(team_state.get("last_run"), dict) else {}
 
     return {
         "ok": True,
@@ -633,10 +649,7 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "workspace_root": str(workspace_root),
         "llm": _llm_config(),
         "control_plane": control,
-        "default_team": {
-            "last_run": team_last,
-            "state_backend": "control_plane_status",
-        },
+        "default_team": {**default_team, "state_backend": "control_plane_status"},
     }
 
 
@@ -685,7 +698,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
                 "control_plane": control_plane,
                 "crewai_ready": crew_ready,
                 "team_bootstrap": team_bootstrap,
-                "resume": recovered,
+                "recovery": recovered,
             }
         }
     )

@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 import sys
+import sqlite3
 from pathlib import Path
 from unittest import mock
 
@@ -102,6 +103,21 @@ class BootstrapAndRunTests(unittest.TestCase):
 
         self.assertEqual(archive_url, "https://codeload.github.com/example/crewAI/tar.gz/refs/heads/main")
 
+    def test_ensure_local_runtime_db_creates_bootstrap_probe_table(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_root = Path(td) / "openteam-runtime"
+
+            out = self.mod._ensure_local_runtime_db(runtime_root)
+
+            db_path = Path(str(out.get("path") or ""))
+            self.assertTrue(bool(out.get("ok")))
+            self.assertTrue(db_path.exists())
+            with sqlite3.connect(str(db_path)) as conn:
+                row = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='bootstrap_probe'"
+                ).fetchone()
+            self.assertEqual(row, ("bootstrap_probe",))
+
     def test_start_flow_requires_repo_improvement_actual_execution(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -174,6 +190,7 @@ class BootstrapAndRunTests(unittest.TestCase):
 
             def fake_deps(*args, **kwargs):
                 _ = args, kwargs
+                calls.append("deps")
                 return {"ok": True, "python": sys.executable}
 
             def fake_cp(*args, **kwargs):
@@ -228,6 +245,7 @@ class BootstrapAndRunTests(unittest.TestCase):
                     "layout",
                     "llm",
                     "local_db",
+                    "deps",
                     "control_plane",
                     "crewai_ready",
                     "team_bootstrap",
@@ -235,6 +253,8 @@ class BootstrapAndRunTests(unittest.TestCase):
                     "snapshot",
                 ],
             )
+            self.assertIn("recovery", out.get("startup") or {})
+            self.assertNotIn("resume", out.get("startup") or {})
 
 
 if __name__ == "__main__":

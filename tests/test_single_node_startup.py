@@ -38,6 +38,40 @@ class SingleNodeStartupTests(unittest.TestCase):
             self.assertNotIn("hub", out)
             self.assertEqual(out["control_plane"]["running"], False)
 
+    def test_status_snapshot_uses_control_plane_default_team_payload(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "runtime"
+            workspace_root = runtime_root / "workspace"
+            repo.mkdir(parents=True, exist_ok=True)
+            runtime_root.mkdir(parents=True, exist_ok=True)
+
+            team_payload = {
+                "team_id": "repo-improvement",
+                "display_name_zh": "仓库改进",
+                "last_run": {"ts": "2026-03-30T00:00:00Z", "status": "DONE"},
+                "proposal_counts": {"total": 2, "pending": 1},
+                "coding": {"summary": {"active": 0}},
+            }
+            status_payload = {"default_team_id": "repo-improvement", "teams": {"repo-improvement": team_payload}}
+
+            with mock.patch.object(self.mod, "_read_pid", return_value=4321), mock.patch.object(
+                self.mod, "_pid_alive", return_value=True
+            ), mock.patch.object(self.mod, "_llm_config", return_value={"ok": True, "model": "openai/codex"}), mock.patch.object(
+                self.mod, "_http_json", side_effect=[
+                    {"status": "ok"},
+                    status_payload,
+                ],
+            ), mock.patch.object(self.mod, "_read_default_team_state", side_effect=AssertionError("helper should not be used")):
+                out = self.mod._status_snapshot(repo, runtime_root, workspace_root, "http://127.0.0.1:8787")
+
+            self.assertEqual(out["control_plane"]["status"], status_payload)
+            self.assertEqual(out["default_team"]["team_id"], "repo-improvement")
+            self.assertEqual(out["default_team"]["display_name_zh"], "仓库改进")
+            self.assertEqual(out["default_team"]["proposal_counts"], {"total": 2, "pending": 1})
+            self.assertEqual(out["default_team"]["last_run"], {"ts": "2026-03-30T00:00:00Z", "status": "DONE"})
+            self.assertEqual(out["default_team"]["state_backend"], "control_plane_status")
+
 
 if __name__ == "__main__":
     unittest.main()
