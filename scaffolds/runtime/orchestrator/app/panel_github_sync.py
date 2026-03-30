@@ -1,12 +1,10 @@
-import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import yaml
 
-from . import improvement_store
+from . import improvement_store, workspace_store
 from .github_projects_client import (
     ADD_DRAFT_ISSUE_MUTATION,
     CREATE_FIELD_MUTATION,
@@ -18,7 +16,6 @@ from .github_projects_client import (
     UPDATE_ITEM_FIELD_MUTATION,
     UPDATE_DRAFT_ISSUE_MUTATION,
     GitHubAPIError,
-    GitHubAuthError,
     GitHubGraphQL,
     pick_project_from_number_query,
     resolve_github_token,
@@ -26,7 +23,7 @@ from .github_projects_client import (
 from .panel_mapping import MappingDoc, PanelMappingError, get_project_cfg, load_mapping
 from .plan_store import list_milestones
 from .runtime_db import RuntimeDB
-from .state_store import ledger_tasks_dir, load_focus, runtime_state_root, openteam_root, openteam_requirements_dir
+from .state_store import ledger_tasks_dir, load_focus, openteam_root, openteam_requirements_dir
 from .workspace_store import ensure_project_scaffold, ledger_tasks_dir as ws_ledger_tasks_dir, requirements_dir as ws_requirements_dir
 
 
@@ -36,22 +33,11 @@ class PanelSyncError(Exception):
 
 @dataclass(frozen=True)
 class DesiredItem:
-    key: str  # stored in Task ID field for stable mapping
-    kind: str  # TASK|DECISION|MILESTONE
+    key: str
+    kind: str
     title: str
     body: str
-    workstreams: list[str]
-    status_key: str  # OpenTeam Status option key (e.g. TODO)
-    risk_key: str  # Risk option key (e.g. LOW)
-    need_pm: bool
-    focus: str
-    active_agents: int
-    last_heartbeat: str  # ISO-8601 or ""
-    start_date: str  # YYYY-MM-DD or ""
-    target_date: str  # YYYY-MM-DD or ""
-    links_text: str
-    repo_locator: str
-    repo_mode: str
+    field_values: dict[str, Any]
 
 
 def _norm(s: str) -> str:
@@ -215,6 +201,13 @@ def _desired_items(
         k = rm.get(str(risk or "").strip().upper())
         return str(k or "LOW")
 
+    def option_name(field_key: str, option_key: str, fallback: str) -> str:
+        fields = cfg.get("fields") or {}
+        field_cfg = fields.get(field_key) or {}
+        options = field_cfg.get("options") or {}
+        opt = options.get(option_key) or {}
+        return str(opt.get("name") or fallback)
+
     items: list[DesiredItem] = []
 
     # Tasks
@@ -223,11 +216,15 @@ def _desired_items(
         team_workflow_doc = t.get("team_workflow")
         if not isinstance(team_workflow_doc, dict):
             team_workflow_doc = {}
+        execution_policy = t.get("execution_policy")
+        if not isinstance(execution_policy, dict):
+            execution_policy = {}
+        module = str((team_workflow_doc or {}).get("module") or execution_policy.get("module") or "")
         title = _panel_item_title(
             str(t.get("title") or "").strip(),
             kind=str((team_workflow_doc or {}).get("kind") or ""),
             lane=str((team_workflow_doc or {}).get("lane") or ""),
-            module=str((team_workflow_doc or {}).get("module") or (((t.get("execution_policy") or {}) if isinstance(t.get("execution_policy"), dict) else {}).get("module")) or ""),
+            module=module,
         )
         state = str(t.get("status") or t.get("state") or "").strip()
         wsid = str(t.get("workstream_id") or "general").strip()
@@ -261,18 +258,21 @@ def _desired_items(
                     ]
                 ).strip()
                 + "\n",
-                workstreams=[wsid],
-                status_key=status_key_from_ledger(state),
-                risk_key=risk_key_from_ledger(risk),
-                need_pm=need_pm,
-                focus=focus_obj,
-                active_agents=len(assigned),
-                last_heartbeat=last_hb,
-                start_date=_parse_date_from_iso(str(t.get("start_date") or "")),
-                target_date=_parse_date_from_iso(str(t.get("target_date") or "")),
-                links_text=links_text,
-                repo_locator=repo_locator,
-                repo_mode=repo_mode,
+                field_values={
+                    "task_id": tid,
+                    "openteam_status": option_name("openteam_status", status_key_from_ledger(state), status_key_from_ledger(state)),
+                    "workstreams": wsid,
+                    "risk": option_name("risk", risk_key_from_ledger(risk), risk_key_from_ledger(risk)),
+                    "need_pm_decision": option_name("need_pm_decision", "YES" if need_pm else "NO", "Yes" if need_pm else "No"),
+                    "current_focus": focus_obj,
+                    "active_agents": len(assigned),
+                    "last_heartbeat": last_hb,
+                    "start_date": _parse_date_from_iso(str(t.get("start_date") or "")),
+                    "target_date": _parse_date_from_iso(str(t.get("target_date") or "")),
+                    "links": links_text,
+                    "repo_locator": repo_locator,
+                    "repo_mode": repo_mode,
+                },
             )
         )
 
@@ -310,18 +310,25 @@ def _desired_items(
                     ]
                 ).strip()
                 + "\n",
-                workstreams=[str(x) for x in ws],
-                status_key=status_key,
-                risk_key="LOW",
-                need_pm=(st in ("CONFLICT",)),
-                focus=focus_obj,
-                active_agents=0,
-                last_heartbeat="",
-                start_date="",
-                target_date="",
-                links_text="",
-                repo_locator="",
-                repo_mode="",
+                field_values={
+                    "task_id": f"REQ:{rid}",
+                    "openteam_status": option_name("openteam_status", status_key, status_key),
+                    "workstreams": ",".join(str(x) for x in ws),
+                    "risk": option_name("risk", "LOW", "LOW"),
+                    "need_pm_decision": option_name(
+                        "need_pm_decision",
+                        "YES" if st in ("CONFLICT",) else "NO",
+                        "Yes" if st in ("CONFLICT",) else "No",
+                    ),
+                    "current_focus": focus_obj,
+                    "active_agents": 0,
+                    "last_heartbeat": "",
+                    "start_date": "",
+                    "target_date": "",
+                    "links": "",
+                    "repo_locator": "",
+                    "repo_mode": "",
+                },
             )
         )
 
@@ -349,18 +356,21 @@ def _desired_items(
                     ]
                 ).strip()
                 + "\n",
-                workstreams=[str(x) for x in ws],
-                status_key="BLOCKED",
-                risk_key="MED",
-                need_pm=True,
-                focus=focus_obj,
-                active_agents=0,
-                last_heartbeat="",
-                start_date="",
-                target_date="",
-                links_text=links_text,
-                repo_locator="",
-                repo_mode="",
+                field_values={
+                    "task_id": f"DECISION:{rid}",
+                    "openteam_status": option_name("openteam_status", "BLOCKED", "BLOCKED"),
+                    "workstreams": ",".join(str(x) for x in ws),
+                    "risk": option_name("risk", "MED", "MED"),
+                    "need_pm_decision": option_name("need_pm_decision", "YES", "Yes"),
+                    "current_focus": focus_obj,
+                    "active_agents": 0,
+                    "last_heartbeat": "",
+                    "start_date": "",
+                    "target_date": "",
+                    "links": links_text,
+                    "repo_locator": "",
+                    "repo_mode": "",
+                },
             )
         )
 
@@ -401,18 +411,21 @@ def _desired_items(
                     ]
                 ).strip()
                 + "\n",
-                workstreams=[str(p.get("workstream_id") or "general").strip() or "general"],
-                status_key=status_key,
-                risk_key="MED",
-                need_pm=True,
-                focus=focus_obj,
-                active_agents=0,
-                last_heartbeat=str(p.get("discussion_reply_updated_at") or p.get("updated_at") or ""),
-                start_date="",
-                target_date=_parse_date_from_iso(str(p.get("cooldown_until") or "")),
-                links_text=links_text,
-                repo_locator=str(p.get("repo_locator") or "").strip(),
-                repo_mode="proposal",
+                field_values={
+                    "task_id": f"FEATURE_PROPOSAL:{proposal_id}",
+                    "openteam_status": option_name("openteam_status", status_key, status_key),
+                    "workstreams": str(p.get("workstream_id") or "general").strip() or "general",
+                    "risk": option_name("risk", "MED", "MED"),
+                    "need_pm_decision": option_name("need_pm_decision", "YES", "Yes"),
+                    "current_focus": focus_obj,
+                    "active_agents": 0,
+                    "last_heartbeat": str(p.get("discussion_reply_updated_at") or p.get("updated_at") or ""),
+                    "start_date": "",
+                    "target_date": _parse_date_from_iso(str(p.get("cooldown_until") or "")),
+                    "links": links_text,
+                    "repo_locator": str(p.get("repo_locator") or "").strip(),
+                    "repo_mode": "proposal",
+                },
             )
         )
 
@@ -436,7 +449,7 @@ def _desired_items(
                         m.objective or "",
                         "",
                         (
-                            f"Plan: docs/plans/openteam/plan.yaml"
+                            "Plan: docs/plans/openteam/plan.yaml"
                             if str(project_id) == "openteam"
                             else f"Plan: <WORKSPACE>/projects/{project_id}/state/plan/plan.yaml"
                         ),
@@ -446,21 +459,116 @@ def _desired_items(
                     ]
                 ).strip()
                 + "\n",
-                workstreams=[str(x) for x in (m.workstreams or [])] or ["general"],
-                status_key=_milestone_status_key(m.state),
-                risk_key="LOW",
-                need_pm=False,
-                focus=focus_obj,
-                active_agents=0,
-                last_heartbeat="",
-                start_date=_parse_date_from_iso(m.start_date),
-                target_date=_parse_date_from_iso(m.target_date),
-                links_text=links_text,
-                repo_locator="",
-                repo_mode="",
+                field_values={
+                    "task_id": f"MILESTONE:{m.milestone_id}",
+                    "openteam_status": option_name("openteam_status", _milestone_status_key(m.state), _milestone_status_key(m.state)),
+                    "workstreams": ",".join(str(x) for x in (m.workstreams or [])) or "general",
+                    "risk": option_name("risk", "LOW", "LOW"),
+                    "need_pm_decision": option_name("need_pm_decision", "NO", "No"),
+                    "current_focus": focus_obj,
+                    "active_agents": 0,
+                    "last_heartbeat": "",
+                    "start_date": _parse_date_from_iso(m.start_date),
+                    "target_date": _parse_date_from_iso(m.target_date),
+                    "links": links_text,
+                    "repo_locator": "",
+                    "repo_mode": "",
+                },
             )
         )
 
+    items.extend(_delivery_request_items(project_id=project_id, mapping=mapping, db=db))
+
+    return items
+
+
+def _delivery_request_items(*, project_id: str, mapping: MappingDoc, db: RuntimeDB) -> list[DesiredItem]:
+    _ = db
+    cfg = get_project_cfg(mapping, project_id) or {}
+    fields = cfg.get("fields") or {}
+
+    def option_name(field_key: str, option_key: str, fallback: str) -> str:
+        field_cfg = fields.get(field_key) or {}
+        options = field_cfg.get("options") or {}
+        opt = options.get(option_key) or {}
+        return str(opt.get("name") or fallback)
+
+    def stage_key(raw: str) -> str:
+        aliases = {
+            "discussing": "DISCUSSING",
+            "awaiting approval": "AWAITING_APPROVAL",
+            "locked": "LOCKED",
+            "docs updating": "DOCS_UPDATING",
+            "plan ready": "PLAN_READY",
+            "implementing": "IMPLEMENTING",
+            "in review": "IN_REVIEW",
+            "changes requested": "CHANGES_REQUESTED",
+            "ci running": "CI_RUNNING",
+            "ready to merge": "READY_TO_MERGE",
+            "merged": "MERGED",
+        }
+        value = _norm(raw)
+        if not value:
+            return "DISCUSSING"
+        return aliases.get(value.lower(), value.upper().replace(" ", "_"))
+
+    items: list[DesiredItem] = []
+    for request_path in sorted(workspace_store.delivery_requests_dir(project_id).glob("*/request.yaml")):
+        doc = yaml.safe_load(request_path.read_text(encoding="utf-8")) or {}
+        request_id = str(doc.get("request_id") or "").strip()
+        if not request_id:
+            continue
+        items.append(
+            DesiredItem(
+                key=request_id,
+                kind="REQUEST",
+                title=f"[REQ] {request_id} {str(doc.get('title') or '').strip()}".strip(),
+                body="\n".join(
+                    [
+                        f"Request ID: {request_id}",
+                        f"Project: {doc.get('project_id','')}",
+                        "",
+                        str(doc.get("text") or "").strip(),
+                    ]
+                ).strip()
+                + "\n",
+                field_values={
+                    "request_id": request_id,
+                    "project_name": str(doc.get("project_id") or ""),
+                    "priority": option_name("priority", str(doc.get("priority") or "P1"), str(doc.get("priority") or "P1")),
+                    "stage": option_name("stage", stage_key(str(doc.get("stage") or "")), str(doc.get("stage") or "Discussing")),
+                    "spec_approved": option_name(
+                        "spec_approved",
+                        "YES" if bool(doc.get("spec_approved")) else "NO",
+                        "Yes" if bool(doc.get("spec_approved")) else "No",
+                    ),
+                    "change_request": str(doc.get("change_request_of") or ""),
+                    "review_gate": option_name(
+                        "review_gate",
+                        str(doc.get("review_gate") or "Pending").upper().replace(" ", "_"),
+                        str(doc.get("review_gate") or "Pending"),
+                    ),
+                    "ci": option_name(
+                        "ci",
+                        str(doc.get("ci") or "Pending").upper().replace(" ", "_"),
+                        str(doc.get("ci") or "Pending"),
+                    ),
+                    "release_ready": option_name(
+                        "release_ready",
+                        "YES" if bool(doc.get("release_ready")) else "NO",
+                        "Yes" if bool(doc.get("release_ready")) else "No",
+                    ),
+                    "owner": str(doc.get("owner") or ""),
+                    "blocked_reason": str(doc.get("blocked_reason") or ""),
+                    "needs_you": option_name(
+                        "needs_you",
+                        "YES" if bool(doc.get("needs_you")) else "NO",
+                        "Yes" if bool(doc.get("needs_you")) else "No",
+                    ),
+                    "pr": str(doc.get("pr") or ""),
+                },
+            )
+        )
     return items
 
 
@@ -485,7 +593,14 @@ def _required_field_specs(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return [x for x in out if x["name"] and x["type"]]
 
 
-def _field_value_input(field_type: str, *, text: str = "", number: Optional[float] = None, date: str = "", single_select_option_id: str = "") -> dict[str, Any]:
+def _field_value_input(
+    field_type: str,
+    *,
+    text: str = "",
+    number: Optional[float] = None,
+    date: str = "",
+    single_select_option_id: str = "",
+) -> dict[str, Any]:
     ft = (field_type or "").upper()
     if ft == "TEXT":
         return {"text": text}
@@ -555,10 +670,14 @@ class GitHubProjectsPanelSync:
 
         try:
             mapping = load_mapping()
-        except PanelMappingError as e:
+        except PanelMappingError:
             # Still allow dry-run without mapping file by returning a minimal plan.
             if dry_run:
-                mapping = MappingDoc(path=openteam_root() / "integrations" / "github_projects" / "mapping.yaml", sha256="missing", data={"projects": {}})
+                mapping = MappingDoc(
+                    path=openteam_root() / "integrations" / "github_projects" / "mapping.yaml",
+                    sha256="missing",
+                    data={"projects": {}},
+                )
             else:
                 raise
 
@@ -574,14 +693,7 @@ class GitHubProjectsPanelSync:
                         "key": it.key,
                         "kind": it.kind,
                         "title": it.title,
-                        "workstreams": it.workstreams,
-                        "status": it.status_key,
-                        "risk": it.risk_key,
-                        "need_pm_decision": it.need_pm,
-                        "active_agents": it.active_agents,
-                        "last_heartbeat": it.last_heartbeat,
-                        "start_date": it.start_date,
-                        "target_date": it.target_date,
+                        "field_values": dict(it.field_values),
                     }
                 )
             return {
@@ -661,7 +773,13 @@ class GitHubProjectsPanelSync:
                         "id": fid,
                         "name": name,
                         "dataType": str(cfg_node.get("dataType") or ""),
-                        "options_by_name": {str(o.get("name") or ""): {"id": str(o.get("id") or ""), "name": str(o.get("name") or "")} for o in (cfg_node.get("options") or [])},
+                        "options_by_name": {
+                            str(o.get("name") or ""): {
+                                "id": str(o.get("id") or ""),
+                                "name": str(o.get("name") or ""),
+                            }
+                            for o in (cfg_node.get("options") or [])
+                        },
                         "raw": cfg_node,
                     }
                 except GitHubAPIError as e:
@@ -671,13 +789,20 @@ class GitHubProjectsPanelSync:
                 create_errors.append(f"missing_field name={name} key={key}")
                 continue
 
-            resolved_fields[key] = {"id": fid, "name": name, "type": ftype, "options_by_name": (by_name.get(name) or {}).get("options_by_name") or {}}
+            resolved_fields[key] = {
+                "id": fid,
+                "name": name,
+                "type": ftype,
+                "options_by_name": (by_name.get(name) or {}).get("options_by_name") or {},
+            }
 
         if create_errors:
             raise PanelSyncError("Field mapping incomplete: " + "; ".join(create_errors[:5]))
 
         # Fetch existing items
         existing_by_key: dict[str, dict[str, Any]] = {}
+        key_field_ids = {str(meta.get("id") or "").strip() for key, meta in resolved_fields.items() if key.endswith("_id")}
+        key_field_ids = {fid for fid in key_field_ids if fid}
         after = None
         while True:
             idata = gh.graphql(PROJECT_ITEMS_QUERY, {"projectId": project_node_id, "after": after})
@@ -686,20 +811,18 @@ class GitHubProjectsPanelSync:
             nodes = items_conn.get("nodes") or []
             for it in nodes:
                 fv_nodes = (((it.get("fieldValues") or {}).get("nodes")) or [])
-                # Find Task ID field value (text)
-                key_val = ""
-                task_id_field_id = resolved_fields["task_id"]["id"]
                 for fv in fv_nodes:
                     f = fv.get("field") or {}
                     fid = str(f.get("id") or "").strip()
-                    if fid != task_id_field_id:
+                    if fid not in key_field_ids:
                         continue
+                    key_val = ""
                     if fv.get("__typename") == "ProjectV2ItemFieldTextValue":
                         key_val = str(fv.get("text") or "").strip()
                     elif fv.get("__typename") == "ProjectV2ItemFieldSingleSelectValue":
                         key_val = str(fv.get("name") or "").strip()
-                if key_val:
-                    existing_by_key[key_val] = it
+                    if key_val:
+                        existing_by_key[key_val] = it
             pi = (items_conn.get("pageInfo") or {})
             if not pi.get("hasNextPage"):
                 break
@@ -743,60 +866,21 @@ class GitHubProjectsPanelSync:
 
             # Prepare values
             try:
-                # Task ID (mapping key)
-                set_field(item_id, "task_id", _field_value_input("TEXT", text=it.key))
-
-                # Status
-                status_field = resolved_fields["openteam_status"]
-                opt = status_field["options_by_name"].get(str((cfg.get("fields") or {}).get("openteam_status", {}).get("options", {}).get(it.status_key, {}).get("name") or it.status_key))
-                # Fallback by option key -> name
-                if not opt:
-                    # try direct match on option name
-                    for oname, o in status_field["options_by_name"].items():
-                        if oname.strip().lower() == it.status_key.strip().lower():
-                            opt = o
-                            break
-                if opt and opt.get("id"):
-                    set_field(item_id, "openteam_status", _field_value_input("SINGLE_SELECT", single_select_option_id=str(opt["id"])))
-
-                # Workstreams (text for MVP; comma-separated)
-                set_field(item_id, "workstreams", _field_value_input("TEXT", text=",".join(sorted(set(it.workstreams)))))
-
-                # Risk (single select)
-                risk_field = resolved_fields["risk"]
-                risk_name = str((cfg.get("fields") or {}).get("risk", {}).get("options", {}).get(it.risk_key, {}).get("name") or it.risk_key)
-                opt = risk_field["options_by_name"].get(risk_name)
-                if opt and opt.get("id"):
-                    set_field(item_id, "risk", _field_value_input("SINGLE_SELECT", single_select_option_id=str(opt["id"])))
-
-                # Need PM Decision (single select Yes/No)
-                npm_field = resolved_fields["need_pm_decision"]
-                yn_key = "YES" if it.need_pm else "NO"
-                yn_name = str((cfg.get("fields") or {}).get("need_pm_decision", {}).get("options", {}).get(yn_key, {}).get("name") or ("Yes" if it.need_pm else "No"))
-                opt = npm_field["options_by_name"].get(yn_name)
-                if opt and opt.get("id"):
-                    set_field(item_id, "need_pm_decision", _field_value_input("SINGLE_SELECT", single_select_option_id=str(opt["id"])))
-
-                # Focus
-                set_field(item_id, "current_focus", _field_value_input("TEXT", text=it.focus))
-
-                # Agents + heartbeat
-                set_field(item_id, "active_agents", _field_value_input("NUMBER", number=float(it.active_agents)))
-                if it.last_heartbeat:
-                    set_field(item_id, "last_heartbeat", _field_value_input("TEXT", text=it.last_heartbeat))
-
-                # Roadmap dates
-                if it.start_date:
-                    set_field(item_id, "start_date", _field_value_input("DATE", date=it.start_date))
-                if it.target_date:
-                    set_field(item_id, "target_date", _field_value_input("DATE", date=it.target_date))
-
-                # Links
-                set_field(item_id, "links", _field_value_input("TEXT", text=it.links_text))
-
-                # Repo locator + mode (operational context)
-                set_field(item_id, "repo_locator", _field_value_input("TEXT", text=it.repo_locator))
-                set_field(item_id, "repo_mode", _field_value_input("TEXT", text=it.repo_mode))
+                for field_key, raw_value in it.field_values.items():
+                    field_meta = resolved_fields.get(field_key)
+                    if not field_meta:
+                        continue
+                    ftype = str(field_meta["type"]).upper()
+                    if ftype == "TEXT":
+                        set_field(item_id, field_key, _field_value_input("TEXT", text=str(raw_value)))
+                    elif ftype == "NUMBER":
+                        set_field(item_id, field_key, _field_value_input("NUMBER", number=float(raw_value or 0)))
+                    elif ftype == "DATE" and str(raw_value).strip():
+                        set_field(item_id, field_key, _field_value_input("DATE", date=str(raw_value)))
+                    elif ftype == "SINGLE_SELECT":
+                        option = field_meta["options_by_name"].get(str(raw_value))
+                        if option and option.get("id"):
+                            set_field(item_id, field_key, _field_value_input("SINGLE_SELECT", single_select_option_id=str(option["id"])))
 
                 stats["updated"] += 0 if is_new else 1
             except Exception as e:

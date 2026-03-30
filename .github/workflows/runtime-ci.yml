@@ -61,4 +61,9 @@ jobs:
             tests.test_panel_github_sync \
             tests.test_improvement_store \
             tests.test_openclaw_reporter \
+            tests.test_delivery_studio_runtime \
+            tests.test_delivery_studio_panel_projection \
+            tests.test_delivery_studio_review_gate \
+            tests.test_cockpit_state \
+            tests.test_openteam_repl \
             tests.test_bootstrap_and_run

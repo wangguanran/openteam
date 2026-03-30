@@ -181,6 +181,27 @@ def conversations_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
     return project_state_dir(project_id, root=root) / "ledger" / "conversations" / _safe_project_id(project_id)
 
 
+def delivery_studio_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
+    return project_state_dir(project_id, root=root) / "delivery_studio"
+
+
+def delivery_requests_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
+    return delivery_studio_dir(project_id, root=root) / "requests"
+
+
+def _delivery_request_key(request_id: str) -> str:
+    return _safe_project_id(request_id.lower().replace(":", "-"))
+
+
+def delivery_request_dir(project_id: str, request_id: str, *, root: Optional[Path] = None) -> Path:
+    safe_request_id = _delivery_request_key(request_id)
+    return delivery_requests_dir(project_id, root=root) / safe_request_id
+
+
+def delivery_request_artifacts_dir(project_id: str, request_id: str, *, root: Optional[Path] = None) -> Path:
+    return logs_tasks_dir(project_id, root=root) / _delivery_request_key(request_id)
+
+
 def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> dict[str, Any]:
     """
     Create per-project directories (idempotent).
@@ -206,6 +227,7 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     (s / "prompts").mkdir(parents=True, exist_ok=True)
     (s / "kb").mkdir(parents=True, exist_ok=True)
     (s / "cluster").mkdir(parents=True, exist_ok=True)
+    (s / "delivery_studio" / "requests").mkdir(parents=True, exist_ok=True)
 
     # Minimal prompt skeleton (project-scoped, lives in workspace).
     mp = s / "prompts" / "MASTER_PROMPT.md"

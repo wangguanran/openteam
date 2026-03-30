@@ -15,12 +15,33 @@ if str(_REPO_ROOT) not in sys.path:
 
 import openteam_cli
 import openteam_cli._shared as _shared
+import openteam_cli.cockpit as _cockpit
 import openteam_cli.http as _http
 import openteam_cli.project as _project
 import openteam_cli.team as _team
 
 
 class TeamosReplTests(unittest.TestCase):
+
+    def test_cockpit_subcommand_dispatches(self) -> None:
+        parser = openteam_cli.main(["cockpit", "--help"])
+        self.assertEqual(parser, 0)
+
+    def test_cmd_cockpit_passes_project_and_team_to_app(self) -> None:
+        args = argparse.Namespace(project="proj-123", team="delivery-studio")
+        calls = []
+
+        class _FakeApp:
+            def __init__(self, *, project: str, team: str) -> None:
+                calls.append(("init", project, team))
+
+            def run(self) -> None:
+                calls.append(("run",))
+
+        with mock.patch("openteam_cli.cockpit.DeliveryCockpitApp", _FakeApp):
+            _cockpit.cmd_cockpit(args)
+
+        self.assertEqual(calls, [("init", "proj-123", "delivery-studio"), ("run",)])
 
     def test_main_no_args_auto_enters_repl_from_runtime_workspace_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as td:

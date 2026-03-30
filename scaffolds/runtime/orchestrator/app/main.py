@@ -21,6 +21,7 @@ _log = get_logger("openteam.control_plane")
 
 from . import codex_llm
 from .demo_seed import seed_mock_data
+from . import github_checks_client
 from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraphQL, RATE_LIMIT_QUERY, resolve_github_token
 from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
@@ -42,6 +43,7 @@ from . import engine_runtime
 from . import improvement_store
 from . import openclaw_reporter
 from . import crew_tools
+from .domains.delivery_studio import runtime as delivery_studio_runtime
 from .engines.crewai import workflow_registry as team_workflow_registry
 from . import team_registry
 from . import team_runtime_registry
@@ -1690,6 +1692,29 @@ class TeamProposalDecisionIn(BaseModel):
     version_bump: Optional[str] = None
 
 
+class DeliveryRequestCreateIn(BaseModel):
+    project_id: str
+    title: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1)
+
+
+class DeliveryApprovalIn(BaseModel):
+    project_id: str
+    selected_option: str = Field(..., min_length=1)
+
+
+class DeliveryAwaitingApprovalIn(BaseModel):
+    project_id: str
+    final_proposal: str = Field(..., min_length=1)
+
+
+class DeliveryReviewFinalizeIn(BaseModel):
+    project_id: str
+    reviewer_outputs: list[dict[str, Any]]
+    repo_full_name: str = ""
+    head_sha: str = ""
+
+
 class OpenClawConfigIn(BaseModel):
     enabled: Optional[bool] = None
     channel: Optional[str] = None
@@ -3184,6 +3209,103 @@ def v1_team_coding_tasks(
         "tasks": tasks,
         "summary": team_runtime.delivery_summary_fn(project_id=project_id, target_id=target_id),
     }
+
+
+@app.post("/v1/teams/{team_id}/requests")
+def v1_team_request_create(team_id: str, payload: DeliveryRequestCreateIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    return delivery_studio_runtime.create_request(
+        project_id=str(payload.project_id).strip(),
+        title=str(payload.title).strip(),
+        text=str(payload.text).strip(),
+        created_by="user",
+    )
+
+
+@app.post("/v1/teams/{team_id}/requests/{request_id}/approve")
+def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryApprovalIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    try:
+        return delivery_studio_runtime.approve_request(
+            project_id=str(payload.project_id).strip(),
+            request_id=request_id,
+            approved_by="user",
+            selected_option=str(payload.selected_option).strip(),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioInputError as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid_selected_option", "message": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioStageError as exc:
+        raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
+
+
+@app.post("/v1/teams/{team_id}/requests/{request_id}/awaiting-approval")
+def v1_team_request_mark_awaiting_approval(team_id: str, request_id: str, payload: DeliveryAwaitingApprovalIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    try:
+        return delivery_studio_runtime.mark_awaiting_approval(
+            project_id=str(payload.project_id).strip(),
+            request_id=request_id,
+            final_proposal=str(payload.final_proposal).strip(),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioInputError as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid_final_proposal", "message": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioStageError as exc:
+        raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
+
+
+@app.post("/v1/teams/{team_id}/requests/{request_id}/review/finalize")
+def v1_team_request_review_finalize(team_id: str, request_id: str, payload: DeliveryReviewFinalizeIn):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    _require_leader_write()
+    try:
+        out = delivery_studio_runtime.finalize_review(
+            project_id=str(payload.project_id).strip(),
+            request_id=request_id,
+            reviewer_outputs=list(payload.reviewer_outputs or []),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+    except delivery_studio_runtime.DeliveryStudioStageError as exc:
+        raise HTTPException(status_code=409, detail={"error": "request_stage_conflict", "message": str(exc)}) from exc
+    except delivery_studio_runtime.review_gate.DeliveryStudioReviewError as exc:
+        raise HTTPException(status_code=400, detail={"error": "reviewer_outputs_invalid", "message": str(exc)}) from exc
+
+    repo_full_name = str(payload.repo_full_name or "").strip()
+    head_sha = str(payload.head_sha or "").strip()
+    warnings: list[dict[str, str]] = []
+    if github_checks_client.checks_writes_enabled() and repo_full_name and head_sha:
+        try:
+            token = resolve_github_token()
+            for item in delivery_studio_runtime.review_gate.build_check_runs(
+                request_id=request_id,
+                reviewer_outputs=list(payload.reviewer_outputs or []),
+            ):
+                github_checks_client.create_check_run(
+                    repo_full_name=repo_full_name,
+                    token=token,
+                    payload={**item, "head_sha": head_sha},
+                )
+        except Exception as exc:
+            warnings.append(
+                {
+                    "source": "github_checks",
+                    "repo_full_name": repo_full_name,
+                    "head_sha": head_sha,
+                    "error": str(exc),
+                }
+            )
+    return {"ok": True, "request": out, "warnings": warnings}
 
 
 @app.post("/v1/teams/{team_id}/coding/run")

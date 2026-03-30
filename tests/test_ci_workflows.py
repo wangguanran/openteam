@@ -29,10 +29,34 @@ class CiWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("|| true", text)
 
-    def test_runtime_ci_references_existing_runtime_auto_update_test(self) -> None:
+    def test_ci_workflow_runs_delivery_coverage_gate(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("check_delivery_coverage.py", workflow)
+        self.assertIn("coverage run -m pytest", workflow)
+        self.assertIn("tests/test_cockpit_state.py", workflow)
+        self.assertIn("tests/test_openteam_repl.py", workflow)
+
+    def test_runtime_ci_runs_delivery_studio_suite(self) -> None:
         text = (ROOT / ".github" / "workflows" / "runtime-ci.yml").read_text(encoding="utf-8")
         self.assertIn("tests.test_runtime_auto_update", text)
+        self.assertIn("tests.test_improvement_store", text)
+        self.assertIn("tests.test_openclaw_reporter", text)
+        self.assertIn("tests.test_delivery_studio_runtime", text)
+        self.assertIn("tests.test_delivery_studio_panel_projection", text)
+        self.assertIn("tests.test_delivery_studio_review_gate", text)
+        self.assertIn("tests.test_cockpit_state", text)
+        self.assertIn("tests.test_openteam_repl", text)
         self.assertNotIn("tests.test_crewai_self_upgrade", text)
+
+    def test_runtime_requirements_keep_coverage_for_task_5_contract(self) -> None:
+        text = (ROOT / "scaffolds" / "runtime" / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("coverage>=7.6", text)
+
+    def test_runtime_dockerfile_filters_test_only_coverage_from_runtime_install(self) -> None:
+        text = (ROOT / "tooling" / "docker" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn('line.strip().startswith("crewai")', text)
+        self.assertIn('line.strip().startswith("coverage")', text)
+        self.assertIn("pip install --no-cache-dir -r /tmp/requirements-base.txt", text)
 
     def test_repo_understanding_gate_uses_runtime_state_for_openteam_task_artifacts(self) -> None:
         mod = _load_repo_understanding_gate()

@@ -72,7 +72,7 @@ from pathlib import Path
 
 req = Path("/app/requirements.txt").read_text(encoding="utf-8").splitlines()
 for line in req:
-    if line.strip().startswith("crewai"):
+    if line.strip().startswith("crewai") or line.strip().startswith("coverage"):
         continue
     print(line)
 PY

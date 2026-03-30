@@ -49,6 +49,15 @@ curl -fsS http://127.0.0.1:8787/v1/status | jq '.repo_improvement'
 ./openteam repo-improvement-decide <proposal_id> approve
 ```
 
+## Delivery Studio (V1)
+
+Use `openteam cockpit --team delivery-studio --project <project_id>` to open the terminal-first delivery cockpit.
+
+- truth source: Workspace `projects/<project_id>/state/delivery_studio`
+- view layer: GitHub Projects main card per requirement
+- hard gates: `panel-review/blocking-gate` plus CI checks
+- any post-lock change becomes a new change request
+
 ## Repo vs Workspace（硬隔离）
 
 `openteam/` git 仓库必须**只包含 OpenTeam 自身相关文件**（代码/模板/策略/文档/evals/集成适配器等）。

@@ -35,7 +35,7 @@
   - tasks 状态（RUNNING/BLOCKED/WAITING_PM 等）
   - NEED_PM_DECISION（冲突/决策点）
   - milestones（项目：`<WORKSPACE>/projects/<id>/state/plan/plan.yaml`；OpenTeam 自身：`docs/plans/openteam/plan.yaml`）
-- **真相源分层（Repo vs Workspace）**：
+  - **真相源分层（Repo vs Workspace）**：
   - scope=`openteam`：真相源允许落盘在 `openteam/` git 仓库内（用于 OpenTeam 自我升级与 Roadmap）
   - scope=`project:<id>`：真相源必须落盘在 **Workspace**（不在 `openteam/` 目录树内）
     - requirements：`<WORKSPACE>/projects/<id>/state/requirements/**`
@@ -43,11 +43,19 @@
     - prompts/plan/kb：`<WORKSPACE>/projects/<id>/state/prompts|plan|kb/**`
     - repo workdir：`<WORKSPACE>/projects/<id>/repo/**`
   - Control Plane 运行态状态与缓存：Docker named volumes（容器内 `/openteam-runtime/*`）
-- Panel 必须可随时从真相源 **全量重建/重同步**：
-  - 通过 Control Plane 的 `POST /v1/panel/github/sync`（`mode=full`）实现
-  - 字段/状态/workstream 映射以 `integrations/github_projects/mapping.yaml` 为准
+  - Panel 必须可随时从真相源 **全量重建/重同步**：
+    - 通过 Control Plane 的 `POST /v1/panel/github/sync`（`mode=full`）实现
+    - 字段/状态/workstream 映射以 `integrations/github_projects/mapping.yaml` 为准
 
-### 1.6 集群（Multi-node Cluster，进行中）
+### 1.6 Delivery Studio（V1）
+
+- primary surface: terminal cockpit
+- front-stage panel: Moderator / Product-Architect / Senior-Engineer-Skeptic
+- optional panel expansion: App-UI-Designer / Admin-Web-Designer / Backend-Architect
+- no coding before approval, docs, changelog, design package, contract baseline, and master plan
+- request truth lives in Workspace, never in repo-local runtime-looking paths
+
+### 1.7 集群（Multi-node Cluster，进行中）
 
 - 多机协作采用 GitHub-first 控制总线（Issue Lease + Node Registry + Task Lease）
 - 目标：Brain/Assistant 可选主接管、异构能力路由、断点续跑恢复
