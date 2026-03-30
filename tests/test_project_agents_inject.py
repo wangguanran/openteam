@@ -1,11 +1,33 @@
 import json
+import importlib.machinery
+import importlib.util
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class TestProjectAgentsInject(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        pipelines_dir = repo / "scripts" / "pipelines"
+        script = pipelines_dir / "project_agents_inject.py"
+        sys_path = str(pipelines_dir)
+        import sys
+
+        sys.path.insert(0, sys_path)
+        try:
+            loader = importlib.machinery.SourceFileLoader("project_agents_inject_test_module", str(script))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            assert spec is not None
+            mod = importlib.util.module_from_spec(spec)
+            loader.exec_module(mod)
+            cls.mod = mod
+        finally:
+            sys.path.pop(0)
+
     def _repo_root(self) -> Path:
         # tests/ is under the openteam repo root
         return Path(__file__).resolve().parents[1]
@@ -131,7 +153,25 @@ class TestProjectAgentsInject(unittest.TestCase):
             self.assertNotIn("OLD CONTENT", new_agents)
             self.assertIn("manual_version: v1", new_agents)
 
+    def test_leader_status_uses_single_node_status_only(self) -> None:
+        calls: list[str] = []
+
+        def fake_http(url: str, *, timeout_sec: int = 5):
+            calls.append(url)
+            if url.endswith("/v1/status"):
+                return {"instance_id": "local-1"}
+            raise AssertionError(f"unexpected url: {url}")
+
+        with mock.patch.object(self.mod, "_http_json", side_effect=fake_http):
+            out = self.mod._leader_status(base_url="http://127.0.0.1:8787")
+
+        self.assertEqual(calls, ["http://127.0.0.1:8787/v1/status"])
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["instance_id"], "local-1")
+        self.assertEqual(out["leader_instance_id"], "local-1")
+        self.assertTrue(out["is_leader"])
+        self.assertEqual(out["backend"], "local")
+
 
 if __name__ == "__main__":
     unittest.main()
-

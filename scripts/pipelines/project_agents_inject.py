@@ -78,17 +78,15 @@ def _load_base_url(*, profile: str = "") -> str:
 
 def _leader_status(*, base_url: str) -> dict[str, Any]:
     st = _http_json(base_url + "/v1/status", timeout_sec=5)
-    cs = _http_json(base_url + "/v1/cluster/status", timeout_sec=5)
     me = str(st.get("instance_id") or "").strip()
-    leader = (cs.get("leader") or {}) if isinstance(cs.get("leader"), dict) else {}
-    leader_id = str(leader.get("leader_instance_id") or "").strip()
-    is_leader = bool(me and leader_id and me == leader_id)
+    leader_id = me
     return {
         "ok": True,
         "base_url": base_url,
         "instance_id": me,
         "leader_instance_id": leader_id,
-        "is_leader": is_leader,
+        "is_leader": bool(me),
+        "backend": "local",
     }
 
 

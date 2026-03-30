@@ -2635,44 +2635,16 @@ def cmd_metrics_bootstrap(args: argparse.Namespace) -> None:
 
 def cmd_cluster_status(args: argparse.Namespace) -> None:
     base, prof = _base_url(args)
-    out = _http_json("GET", base + "/v1/cluster/status", timeout_sec=10)
-    leader = out.get("leader") or {}
-    nodes = out.get("nodes") or []
+    out = _team_status_doc(base_url=base)
+    instance_id = _norm(out.get("instance_id"))
     pending = out.get("pending_decisions") or []
-    llm = out.get("llm_profile") or {}
-    qual = out.get("leader_qualification") or {}
     print(f"profile={prof['name']} base_url={base}")
-    print(f"leader.instance_id={leader.get('leader_instance_id','')}")
-    print(f"leader.backend={leader.get('backend','')}")
-    if llm:
-        if llm.get("provider"):
-            print(f"llm.provider={llm.get('provider')}")
-        if llm.get("model_id"):
-            print(f"llm.model_id={llm.get('model_id')}")
-        if llm.get("auth_mode"):
-            print(f"llm.auth_mode={llm.get('auth_mode')}")
-    if qual:
-        print(f"leader_qualification.qualified={qual.get('qualified')}")
-        if qual.get("reason"):
-            print(f"leader_qualification.reason={qual.get('reason')}")
-    if leader.get("leader_base_url"):
-        print(f"leader.base_url={leader.get('leader_base_url')}")
+    print(f"leader.instance_id={instance_id}")
+    print("leader.backend=local")
+    if base:
+        print(f"leader.base_url={base}")
     if pending:
         print(f"PENDING_DECISIONS={len(pending)}")
-    print(f"nodes={len(nodes)}")
-    if nodes:
-        rows = []
-        for n in nodes[:50]:
-            rows.append(
-                [
-                    str(n.get("instance_id", ""))[:8],
-                    str(n.get("role_preference", "")),
-                    str(n.get("heartbeat_at", "")),
-                    ",".join(n.get("capabilities") or [])[:30],
-                    ",".join(n.get("tags") or [])[:30],
-                ]
-            )
-        print(_fmt_table(["node", "role_pref", "heartbeat", "capabilities", "tags"], rows))
 
 
 def cmd_cluster_qualify(args: argparse.Namespace) -> None:
