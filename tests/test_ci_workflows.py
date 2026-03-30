@@ -123,6 +123,23 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertFalse((ROOT / "docs" / "runbooks" / "CLUSTER_RUNBOOK.md").exists())
         self.assertFalse((ROOT / "docs" / "runbooks" / "NODE_BOOTSTRAP.md").exists())
 
+    def test_single_node_docs_do_not_leak_local_absolute_paths(self) -> None:
+        doc_paths = [
+            ROOT / "README.md",
+            ROOT / "scaffolds" / "runtime" / "README.md",
+            ROOT / "docs" / "runbooks" / "EXECUTION_RUNBOOK.md",
+            ROOT / "docs" / "runbooks" / "DELIVERY_STUDIO.md",
+            ROOT / "docs" / "product" / "GOVERNANCE.md",
+            ROOT / "docs" / "product" / "SECURITY.md",
+            ROOT / "docs" / "product" / "openteam" / "REPO_UNDERSTANDING.md",
+        ]
+
+        for path in doc_paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("/home/", text, path.as_posix())
+            self.assertNotIn("/Users/", text, path.as_posix())
+            self.assertNotIn(".worktrees/single-node-cutover", text, path.as_posix())
+
 
 if __name__ == "__main__":
     unittest.main()

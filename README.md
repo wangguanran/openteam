@@ -53,7 +53,7 @@ export OPENTEAM_LLM_API_KEY="<your_api_key>"
 - 评审闸门：`panel-review/blocking-gate` 加上仓库 CI
 - 任何 lock 之后的修改都必须作为新的 change request 进入流程
 
-详细操作见 [docs/runbooks/DELIVERY_STUDIO.md](/home/wangguanran/openteam/.worktrees/single-node-cutover/docs/runbooks/DELIVERY_STUDIO.md) 与 [docs/runbooks/EXECUTION_RUNBOOK.md](/home/wangguanran/openteam/.worktrees/single-node-cutover/docs/runbooks/EXECUTION_RUNBOOK.md)。
+详细操作见 [Delivery Studio Runbook](docs/runbooks/DELIVERY_STUDIO.md) 与 [Execution Runbook](docs/runbooks/EXECUTION_RUNBOOK.md)。
 
 ## Repo / Workspace / Runtime
 
@@ -92,4 +92,4 @@ export OPENTEAM_LLM_API_KEY="<your_api_key>"
 - 打开公网端口、删除或覆盖数据、旋转 secrets、对外部系统执行写操作，默认都需要人工审批
 - 外部网页、issue、PR、聊天记录都视为不可信输入，只能抽取事实并附带来源
 
-详见 [docs/product/SECURITY.md](/home/wangguanran/openteam/.worktrees/single-node-cutover/docs/product/SECURITY.md) 与 [docs/product/GOVERNANCE.md](/home/wangguanran/openteam/.worktrees/single-node-cutover/docs/product/GOVERNANCE.md)。
+详见 [Security](docs/product/SECURITY.md) 与 [Governance](docs/product/GOVERNANCE.md)。

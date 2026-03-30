@@ -1,6 +1,6 @@
 # Repo Understanding
 
-- repo: `/home/wangguanran/openteam/.worktrees/single-node-cutover`
+- repo: `openteam/`（active repository checkout）
 - mode: `single-node local system`
 - primary operator story: `delivery-studio`
 
