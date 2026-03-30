@@ -15,7 +15,6 @@ from typing import Any, Optional
 import yaml
 from openteam_common import utc_now_iso as _utc_now_iso
 
-from app import cluster_manager
 from app import agent_factory
 from app.engines.base import parse_structured_output
 from app import role_registry
@@ -284,14 +283,6 @@ def _delivery_lease_key(*, project_id: str, task_id: str) -> str:
 def _delivery_lease_settings() -> dict[str, int]:
     ttl = 600
     renew = 300
-    try:
-        cfg = cluster_manager.load_cluster_config()
-        cluster_cfg = (cfg.get("cluster") or {}) if isinstance(cfg.get("cluster"), dict) else {}
-        task_cfg = (cluster_cfg.get("task_lease") or {}) if isinstance(cluster_cfg.get("task_lease"), dict) else {}
-        ttl = max(30, int(task_cfg.get("lease_ttl_sec") or ttl))
-        renew = max(15, int(task_cfg.get("renew_interval_sec") or renew))
-    except Exception:
-        pass
     heartbeat = max(15, min(renew, max(15, ttl // 3)))
     return {"ttl_sec": ttl, "renew_interval_sec": renew, "heartbeat_interval_sec": heartbeat}
 

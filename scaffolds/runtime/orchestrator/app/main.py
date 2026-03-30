@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,7 +26,6 @@ from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
 from .panel_mapping import PanelMappingError, load_mapping
 from .plan_store import list_milestones
 from . import observability
-from . import redis_bus
 from .requirements_store import (
     RequirementsError,
     add_requirement_raw_first,
@@ -36,7 +34,6 @@ from .requirements_store import (
     propose_baseline_v2,
 )
 from .runtime_db import RunRow, RuntimeDB
-from . import cluster_manager
 from . import orchestrator
 from . import role_registry
 from . import engine_runtime
@@ -429,59 +426,6 @@ def _task_run_sync_summary(*, tasks: list[dict[str, Any]], runs: list[dict[str, 
     }
 
 
-def _hub_root() -> Path:
-    return (runtime_root() / "hub").resolve()
-
-
-def _hub_env() -> dict[str, str]:
-    p = _hub_root() / "env" / ".env"
-    out: dict[str, str] = {}
-    if not p.exists():
-        return out
-    for raw in p.read_text(encoding="utf-8", errors="replace").splitlines():
-        s = raw.strip()
-        if not s or s.startswith("#") or "=" not in s:
-            continue
-        k, v = s.split("=", 1)
-        out[str(k).strip()] = str(v).strip()
-    return out
-
-
-def _db_rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
-    if not dsn:
-        return []
-    try:
-        import psycopg  # type: ignore
-        from psycopg.rows import dict_row  # type: ignore
-
-        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3) as conn:
-            with conn.cursor() as cur:
-                rows = cur.execute(sql, params).fetchall()
-            out: list[dict[str, Any]] = []
-            for r in rows or []:
-                d = dict(r)
-                for k, v in list(d.items()):
-                    if hasattr(v, "isoformat"):
-                        try:
-                            d[k] = v.isoformat()
-                        except Exception:
-                            d[k] = str(v)
-                out.append(d)
-            return out
-    except Exception as exc:
-        _log.warning("db_rows query failed", sql=sql[:200], error=str(exc))
-        return []
-
-
-def _tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:
-    try:
-        with socket.create_connection((host, int(port)), timeout=timeout):
-            return True
-    except Exception:
-        return False
-
-
 def _openteam_checks(openteam_path: str) -> dict[str, Any]:
     p = Path(openteam_path)
     specs_workflows_dir = p / "specs" / "workflows"
@@ -654,59 +598,18 @@ def _local_base_url() -> str:
     return str(os.getenv("OPENTEAM_BASE_URL") or os.getenv("CONTROL_PLANE_BASE_URL") or "http://127.0.0.1:8787").strip()
 
 
-def _publish_redis_event(*, event_type: str, actor: str, project_id: str, workstream_id: str, payload: dict[str, Any]) -> None:
-    # Best-effort pubsub: never block or fail control-plane writes.
-    try:
-        redis_bus.publish_event(
-            channel="",
-            payload={
-                "event_type": event_type,
-                "actor": actor,
-                "project_id": project_id,
-                "workstream_id": workstream_id,
-                "payload": payload,
-                "ts": _utc_now_iso(),
-            },
-        )
-    except Exception:
-        pass
-
-
 def _require_leader_write() -> dict[str, Any]:
-    """
-    Enforce leader-only writes (Brain-only).
-    If cluster is enabled and another leader holds the lease, return HTTP 409 with leader info.
-    """
     instance_id = ensure_instance_id()
-    cfg = cluster_manager.load_cluster_config()
-    if not cluster_manager.cluster_enabled(cfg):
-        return {"leader_instance_id": instance_id, "leader_base_url": _local_base_url(), "backend": "local", "lease_expires_at": ""}
-
-    cur = cluster_manager.read_leader(cfg)
-    if cur and cur.leader_instance_id and (cur.leader_instance_id != instance_id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "NOT_LEADER",
-                "instance_id": instance_id,
-                "leader_instance_id": cur.leader_instance_id,
-                "leader_base_url": cur.leader_base_url,
-                "lease_expires_at": cur.lease_expires_at,
-                "backend": cur.backend,
-                "issue_url": cur.issue_url,
-            },
-        )
-    return cur.__dict__ if cur else {"leader_instance_id": instance_id, "leader_base_url": _local_base_url(), "backend": "local", "lease_expires_at": ""}
+    return {
+        "leader_instance_id": instance_id,
+        "leader_base_url": _local_base_url(),
+        "backend": "local",
+        "lease_expires_at": "",
+    }
 
 
 def _leader_write_allowed() -> bool:
-    try:
-        _require_leader_write()
-        return True
-    except HTTPException as exc:
-        if int(getattr(exc, "status_code", 500)) == 409:
-            return False
-        raise
+    return True
 
 
 def _iso_age_seconds(ts: Any) -> float:
@@ -1571,18 +1474,6 @@ def _startup_background_threads() -> None:
     oct = threading.Thread(target=_openclaw_reporting_loop, name="openclaw-reporting-loop", daemon=True)
     oct.start()
 
-    # Startup indicator for optional Redis runtime bus.
-    try:
-        DB.add_event(
-            event_type="REDIS_BUS_STATUS",
-            actor="control-plane",
-            project_id=_default_project_id(),
-            workstream_id=_default_workstream_id(),
-            payload=redis_bus.describe(),
-        )
-    except Exception:
-        pass
-
 
 def _seed_if_enabled() -> None:
     if os.getenv("OPENTEAM_DEMO_SEED", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
@@ -1778,20 +1669,6 @@ class ImprovementTargetIn(BaseModel):
     workstream_id: str = "general"
 
 
-class NodeRegisterIn(BaseModel):
-    instance_id: str
-    role_preference: str = "auto"  # brain|assistant|auto
-    base_url: str = ""
-    capabilities: list[str] = Field(default_factory=list)
-    resources: dict[str, Any] = Field(default_factory=dict)
-    agent_policy: dict[str, Any] = Field(default_factory=dict)
-    tags: list[str] = Field(default_factory=list)
-
-
-class NodeHeartbeatIn(BaseModel):
-    instance_id: str
-
-
 class TaskNewIn(BaseModel):
     title: str = Field(..., min_length=1)
     project_id: str
@@ -1833,7 +1710,7 @@ def healthz(response: Response):
         db["error"] = str(e)[:200]
     if not ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"status": "ok" if ok else "degraded", "checks": checks, "crewai": crewai_info, "db": db, "redis_bus": redis_bus.describe()}
+    return {"status": "ok" if ok else "degraded", "checks": checks, "crewai": crewai_info, "db": db}
 
 
 @app.get("/v1/status")
@@ -1957,7 +1834,6 @@ def v1_status():
         "improvement_target_summaries": target_summaries,
         "openclaw": openclaw_status,
         "pending_decisions": pending,
-        "redis_bus": redis_bus.describe(),
     }
 
 
@@ -2567,174 +2443,6 @@ def v1_requirements_list(project_id: str):
     return {"project_id": project_id, "requirements_dir": str(req_dir), "requirements": data.get("requirements") or []}
 
 
-@app.get("/v1/hub/status")
-def v1_hub_status():
-    env = _hub_env()
-    pg_host = str(env.get("PG_BIND_IP") or "127.0.0.1")
-    pg_port = int(str(env.get("PG_PORT") or "5432"))
-    redis_enabled = str(env.get("HUB_REDIS_ENABLED") or "1") == "1"
-    redis_host = str(env.get("REDIS_BIND_IP") or "127.0.0.1")
-    redis_port = int(str(env.get("REDIS_PORT") or "6379"))
-    mig_rows = _db_rows("SELECT version, applied_at FROM schema_migrations ORDER BY version DESC LIMIT 20")
-    return {
-        "hub_root": str(_hub_root()),
-        "postgres": {
-            "bind_ip": pg_host,
-            "port": pg_port,
-            "tcp_open": _tcp_open(pg_host, pg_port),
-            "connections": _db_rows("SELECT count(*)::int AS count FROM pg_stat_activity"),
-        },
-        "redis": {
-            "enabled": redis_enabled,
-            "bind_ip": redis_host,
-            "port": redis_port,
-            "tcp_open": _tcp_open(redis_host, redis_port) if redis_enabled else False,
-        },
-        "migrations": mig_rows,
-        "approvals_pending": _db_rows("SELECT count(*)::int AS count FROM approvals WHERE status='REQUESTED'"),
-        "locks_held": _db_rows("SELECT count(*)::int AS count FROM locks WHERE state='HELD'"),
-    }
-
-
-@app.get("/v1/hub/migrations")
-def v1_hub_migrations():
-    rows = _db_rows("SELECT version, applied_at FROM schema_migrations ORDER BY version ASC")
-    return {"migrations": rows}
-
-
-@app.get("/v1/hub/locks")
-def v1_hub_locks(limit: int = Query(default=100, ge=1, le=500)):
-    rows = _db_rows("SELECT lock_key, backend, holder, lease_ttl_sec, acquired_at, heartbeat_at, expires_at, state FROM locks ORDER BY heartbeat_at DESC LIMIT %s", (int(limit),))
-    return {"locks": rows}
-
-
-@app.get("/v1/hub/approvals")
-def v1_hub_approvals(limit: int = Query(default=100, ge=1, le=500)):
-    rows = _db_rows(
-        """
-        SELECT approval_id, task_id, action_kind, action_summary, risk_level, category, status, requested_by, requested_at, decided_by, decided_at, decision_engine
-        FROM approvals
-        ORDER BY requested_at DESC
-        LIMIT %s
-        """,
-        (int(limit),),
-    )
-    return {"approvals": rows}
-
-
-@app.get("/v1/nodes")
-def v1_nodes():
-    return {"nodes": [n.__dict__ for n in DB.list_nodes()]}
-
-
-@app.post("/v1/nodes/register")
-def v1_nodes_register(payload: NodeRegisterIn):
-    DB.upsert_node(
-        instance_id=str(payload.instance_id),
-        role_preference=str(payload.role_preference or "auto"),
-        base_url=str(payload.base_url or ""),
-        capabilities=list(payload.capabilities or []),
-        resources=dict(payload.resources or {}),
-        agent_policy=dict(payload.agent_policy or {}),
-        tags=list(payload.tags or []),
-    )
-    DB.add_event(
-        event_type="NODE_REGISTERED",
-        actor="node",
-        project_id=_default_project_id(),
-        workstream_id=_default_workstream_id(),
-        payload={"instance_id": payload.instance_id, "role_preference": payload.role_preference, "capabilities": payload.capabilities, "tags": payload.tags},
-    )
-    # Best-effort: update GitHub nodes registry (remote write gated by cluster config/env).
-    try:
-        cfg = cluster_manager.load_cluster_config()
-        y = yaml.safe_dump(
-            {
-                "instance_id": payload.instance_id,
-                "role_preference": payload.role_preference,
-                "heartbeat_at": _utc_now_iso(),
-                "capabilities": payload.capabilities,
-                "resources": payload.resources,
-                "agent_policy": payload.agent_policy,
-                "tags": payload.tags,
-            },
-            sort_keys=False,
-            allow_unicode=True,
-        )
-        cluster_manager.upsert_node_registry_comment(cfg, instance_id=payload.instance_id, body_yaml=y)
-    except Exception:
-        pass
-    return {"ok": True, "instance_id": payload.instance_id}
-
-
-@app.post("/v1/nodes/heartbeat")
-def v1_nodes_heartbeat(payload: NodeHeartbeatIn):
-    DB.heartbeat_node(instance_id=str(payload.instance_id))
-    DB.add_event(
-        event_type="NODE_HEARTBEAT",
-        actor="node",
-        project_id=_default_project_id(),
-        workstream_id=_default_workstream_id(),
-        payload={"instance_id": payload.instance_id},
-    )
-    # Best-effort: refresh GitHub nodes registry heartbeat (remote write gated).
-    try:
-        cfg = cluster_manager.load_cluster_config()
-        y = yaml.safe_dump({"instance_id": payload.instance_id, "heartbeat_at": _utc_now_iso()}, sort_keys=False, allow_unicode=True)
-        cluster_manager.upsert_node_registry_comment(cfg, instance_id=payload.instance_id, body_yaml=y)
-    except Exception:
-        pass
-    return {"ok": True}
-
-
-@app.get("/v1/cluster/status")
-def v1_cluster_status():
-    instance_id = ensure_instance_id()
-    base_url = os.getenv("CONTROL_PLANE_BASE_URL", "").strip()
-    leader: dict[str, Any] = {"leader_instance_id": instance_id, "leader_base_url": base_url, "backend": "local", "lease_expires_at": ""}
-    try:
-        cfg = cluster_manager.load_cluster_config()
-        cur = cluster_manager.read_leader(cfg)
-        if cur and cur.leader_instance_id:
-            leader = cur.__dict__
-    except Exception:
-        pass
-    nodes = [n.__dict__ for n in DB.list_nodes()]
-    llm_profile: dict[str, Any] = {}
-    leader_qualification: dict[str, Any] = {}
-    try:
-        llm_profile = cluster_manager.local_llm_profile()
-        allow = cluster_manager.load_central_model_allowlist()
-        leader_qualification = cluster_manager.qualify_leader(allowlist=allow, profile=llm_profile)
-    except Exception:
-        pass
-    return {
-        "leader": leader,
-        "llm_profile": llm_profile,
-        "leader_qualification": leader_qualification,
-        "nodes": nodes,
-        "active_agents": [a.__dict__ for a in DB.list_agents()],
-        "active_tasks": _load_tasks_summary(),
-        "focus": load_focus(),
-        "pending_decisions": _pending_decisions(),
-        "panel": {"github_projects_mapping": str(github_projects_mapping_path())},
-    }
-
-
-@app.post("/v1/cluster/elect/attempt")
-def v1_cluster_elect_attempt():
-    instance_id = ensure_instance_id()
-    cfg = cluster_manager.load_cluster_config()
-    base_url = os.getenv("CONTROL_PLANE_BASE_URL", "").strip()
-    try:
-        out = cluster_manager.attempt_elect(cfg, instance_id=instance_id, base_url=base_url)
-        DB.add_event(event_type="CLUSTER_ELECT_ATTEMPT", actor="control-plane", project_id="openteam", workstream_id=_default_workstream_id(), payload=out)
-        return out
-    except Exception as e:
-        DB.add_event(event_type="CLUSTER_ELECT_FAILED", actor="control-plane", project_id="openteam", workstream_id=_default_workstream_id(), payload={"error": str(e)[:300]})
-        return {"success": False, "reason": str(e)[:300], "leader": {"leader_instance_id": instance_id, "backend": "local"}}
-
-
 def _ts_compact_utc() -> str:
     return _utc_now_iso().replace(":", "").replace("-", "")
 
@@ -2784,13 +2492,6 @@ def v1_tasks_new(payload: TaskNewIn):
         "evidence": "truth-source writes are delegated to scripts/pipelines/task_create.py",
     }
     DB.add_event(
-        event_type="TASK_NEW",
-        actor="user",
-        project_id=payload.project_id,
-        workstream_id=wsid,
-        payload=event_payload,
-    )
-    _publish_redis_event(
         event_type="TASK_NEW",
         actor="user",
         project_id=payload.project_id,

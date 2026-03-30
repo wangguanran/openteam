@@ -8,7 +8,6 @@ from . import crew_tools
 from . import improvement_store
 from . import team_runtime_registry
 from .state_store import openteam_root
-from . import redis_bus
 
 
 @dataclass(frozen=True)
@@ -25,24 +24,6 @@ class RunSpec:
     dry_run: bool = False
     force: bool = False
     trigger: str = ""
-
-
-def _publish_redis_run_event(*, event_type: str, actor: str, spec: RunSpec, payload: dict[str, Any]) -> None:
-    # Best-effort only; must never fail run execution.
-    try:
-        redis_bus.publish_event(
-            channel="",
-            payload={
-                "event_type": event_type,
-                "actor": actor,
-                "project_id": spec.project_id,
-                "workstream_id": spec.workstream_id,
-                "payload": payload,
-            },
-        )
-    except Exception:
-        pass
-
 
 def _persist_team_run_logs_best_effort(*, db: Any, run_id: str) -> dict[str, str]:
     target_run_id = str(run_id or "").strip()
@@ -82,12 +63,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             workstream_id=spec.workstream_id,
             payload=err_payload,
         )
-        _publish_redis_run_event(
-            event_type="RUN_FAILED",
-            actor=actor,
-            spec=spec,
-            payload=err_payload,
-        )
         log_paths = _persist_team_run_logs_best_effort(db=db, run_id=run_id) if crew_tools.is_native_crewai_flow(flow) else {}
         return {
             "ok": False,
@@ -121,12 +96,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
                 "write_delegate": write_delegate,
             },
         )
-        _publish_redis_run_event(
-            event_type="RUN_STARTED",
-            actor=actor,
-            spec=spec,
-            payload={"run_id": run_id, "flow": flow, "task_id": task_id, "crewai": crewai_info, "write_delegate": write_delegate},
-        )
         try:
             out = team_runtime_registry.team_runtime_adapter(crew_tools.native_team_id(flow)).run_once_fn(
                 db=db,
@@ -150,12 +119,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
                 actor=actor,
                 project_id=spec.project_id,
                 workstream_id=spec.workstream_id,
-                payload=err_payload,
-            )
-            _publish_redis_run_event(
-                event_type="RUN_FAILED",
-                actor=actor,
-                spec=spec,
                 payload=err_payload,
             )
             log_paths = _persist_team_run_logs_best_effort(db=db, run_id=run_id)
@@ -190,12 +153,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             workstream_id=spec.workstream_id,
             payload=payload,
         )
-        _publish_redis_run_event(
-            event_type="RUN_FINISHED" if bool(out.get("ok")) else "RUN_FAILED",
-            actor=actor,
-            spec=spec,
-            payload=payload,
-        )
         log_paths = _persist_team_run_logs_best_effort(db=db, run_id=run_id)
         report_path = str(out.get("report_path") or log_paths.get("markdown_path") or "")
         return {**out, "run_id": run_id, "flow": flow, "task_id": task_id, "log_paths": log_paths, "report_path": report_path}
@@ -220,12 +177,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             actor=actor,
             project_id=spec.project_id,
             workstream_id=spec.workstream_id,
-            payload=err_payload,
-        )
-        _publish_redis_run_event(
-            event_type="RUN_FAILED",
-            actor=actor,
-            spec=spec,
             payload=err_payload,
         )
         return {
@@ -256,19 +207,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
             "pipelines": pipelines,
             "write_delegate": write_delegate,
             "evidence": "truth-source writes are delegated to deterministic pipeline scripts",
-        },
-    )
-    _publish_redis_run_event(
-        event_type="RUN_STARTED",
-        actor=actor,
-        spec=spec,
-        payload={
-            "run_id": run_id,
-            "flow": flow,
-            "task_id": task_id,
-            "crewai": crewai_info,
-            "pipelines": pipelines,
-            "write_delegate": write_delegate,
         },
     )
 
@@ -321,20 +259,6 @@ def run_once(*, db, spec: RunSpec, actor: str = "orchestrator") -> dict[str, Any
         actor=actor,
         project_id=spec.project_id,
         workstream_id=spec.workstream_id,
-        payload={
-            "run_id": run_id,
-            "flow": flow,
-            "task_id": task_id,
-            "crewai": crewai_info,
-            "pipelines": pipelines,
-            "steps": step_results,
-            "write_delegate": write_delegate,
-        },
-    )
-    _publish_redis_run_event(
-        event_type="RUN_FINISHED" if ok else "RUN_FAILED",
-        actor=actor,
-        spec=spec,
         payload={
             "run_id": run_id,
             "flow": flow,

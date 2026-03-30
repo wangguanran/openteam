@@ -2,7 +2,7 @@
 Observability module for OpenTeam Control Plane.
 
 Provides real-time metrics aggregation, workflow health monitoring,
-cost tracking, and alerting via Redis pub/sub or webhooks.
+cost tracking, and local alert generation.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from . import redis_bus
 from .runtime_db import EventRow, RunRow, AgentRow
 
 
@@ -339,15 +338,5 @@ def check_alerts() -> list[dict[str, Any]]:
                 }
                 _add_alert(**alert)
                 new_alerts.append(alert)
-
-    # Publish alerts via Redis (best-effort)
-    for alert in new_alerts:
-        try:
-            redis_bus.publish_event(
-                channel="openteam.alerts",
-                payload=alert,
-            )
-        except Exception:
-            pass
 
     return new_alerts

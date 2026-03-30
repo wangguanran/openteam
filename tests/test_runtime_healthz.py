@@ -70,6 +70,29 @@ class RuntimeHealthzTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(response.status_code, 200)
 
+    def test_healthz_no_longer_reports_redis_bus(self) -> None:
+        os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)
+        response = app_main.Response()
+        with (
+            mock.patch.object(app_main.engine_runtime, "probe_crewai", return_value={"importable": True, "version": "test"}),
+            mock.patch.object(app_main.DB, "list_events", return_value=[]),
+        ):
+            payload = app_main.healthz(response)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertNotIn("redis_bus", payload)
+
+    def test_status_no_longer_reports_redis_bus(self) -> None:
+        with (
+            mock.patch.object(app_main, "_active_projects_summary", return_value=[]),
+            mock.patch.object(app_main, "_load_tasks_summary", return_value=[]),
+            mock.patch.object(app_main.DB, "list_runs", return_value=[]),
+            mock.patch.object(app_main.DB, "list_agents", return_value=[]),
+        ):
+            payload = app_main.v1_status()
+
+        self.assertNotIn("redis_bus", payload)
+
     def test_openteam_requirements_dir_uses_product_docs_path(self) -> None:
         os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)
         req_dir = state_store.openteam_requirements_dir()
