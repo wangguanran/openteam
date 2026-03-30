@@ -324,7 +324,16 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     repo = resolve_repo_root(args)
-    ws = str(getattr(args, "workspace_root", "") or os.getenv("OPENTEAM_WORKSPACE_ROOT") or (Path.home() / ".openteam" / "workspace"))
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
+    if home:
+        default_workspace = Path(home).expanduser().resolve() / "workspace"
+    else:
+        runtime_root = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
+        if runtime_root:
+            default_workspace = Path(runtime_root).expanduser().resolve() / "workspace"
+        else:
+            default_workspace = (Path.home() / ".openteam").resolve() / "workspace"
+    ws = str(getattr(args, "workspace_root", "") or os.getenv("OPENTEAM_WORKSPACE_ROOT") or default_workspace)
 
     if args.cmd == "add":
         out = cmd_add(

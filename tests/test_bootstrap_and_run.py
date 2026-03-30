@@ -31,13 +31,46 @@ class BootstrapAndRunTests(unittest.TestCase):
             self.mod._ensure_runtime_layout(rt)
             self.mod._ensure_runtime_layout(rt)
             self.assertTrue((rt / "state" / "audit").exists())
-            self.assertTrue((rt / "workspace" / "projects").exists())
-            self.assertTrue((rt / "workspace" / "shared" / "cache").exists())
-            self.assertTrue((rt / "workspace" / "shared" / "tmp").exists())
-            self.assertTrue((rt / "workspace" / "config").exists())
+            self.assertFalse((rt / "workspace").exists())
             self.assertFalse((rt / "hub").exists())
             self.assertTrue((rt / "tmp").exists())
             self.assertTrue((rt / "cache").exists())
+
+    def test_workspace_layout_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            workspace_root = Path(td) / "workspace"
+
+            self.mod._ensure_workspace_layout(workspace_root)
+            self.mod._ensure_workspace_layout(workspace_root)
+
+            self.assertTrue((workspace_root / "projects").exists())
+            self.assertTrue((workspace_root / "shared" / "cache").exists())
+            self.assertTrue((workspace_root / "shared" / "tmp").exists())
+            self.assertTrue((workspace_root / "config").exists())
+
+    def test_workspace_root_defaults_to_openteam_home_workspace(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(
+            os.environ,
+            {"OPENTEAM_HOME": str(Path(td) / "openteam-home")},
+            clear=True,
+        ):
+            runtime_root = self.mod._runtime_root(Path(td) / "repo")
+
+            workspace_root = self.mod._workspace_root(runtime_root)
+
+        self.assertEqual(workspace_root, Path(td) / "openteam-home" / "workspace")
+
+    def test_workspace_root_falls_back_to_runtime_root_workspace_when_only_runtime_root_is_set(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(
+            os.environ,
+            {"OPENTEAM_RUNTIME_ROOT": str(Path(td) / "runtime-alt")},
+            clear=True,
+        ):
+            runtime_root = self.mod._runtime_root(Path(td) / "repo")
+
+            workspace_root = self.mod._workspace_root(runtime_root)
+
+        self.assertEqual(workspace_root, Path(td) / "runtime-alt" / "workspace")
 
     def test_quarantine_legacy_openteam_dir(self):
         with tempfile.TemporaryDirectory() as td:
@@ -124,12 +157,32 @@ class BootstrapAndRunTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(row, ("bootstrap_probe",))
 
-    def test_missing_python_modules_can_skip_hub_era_packages(self):
-        missing = self.mod._missing_python_modules(Path(sys.executable), require_redis=False, require_psycopg=False)
+    def test_missing_python_modules_only_checks_single_node_packages(self):
+        missing = self.mod._missing_python_modules(Path(sys.executable))
         missing_names = {name for name, _ in missing}
 
         self.assertNotIn("redis", missing_names)
         self.assertNotIn("psycopg", missing_names)
+
+    def test_doctor_uses_requested_control_plane_base_url(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            workspace_root = Path(td) / "workspace"
+            repo.mkdir(parents=True, exist_ok=True)
+            workspace_root.mkdir(parents=True, exist_ok=True)
+            captured: dict[str, object] = {}
+
+            def fake_run_json(cmd, **kwargs):
+                captured["cmd"] = list(cmd)
+                captured["kwargs"] = kwargs
+                return {"ok": True}
+
+            with mock.patch.object(self.mod, "_run_json", side_effect=fake_run_json):
+                out = self.mod._doctor(repo, workspace_root, base_url="http://127.0.0.1:8878")
+
+            self.assertTrue(bool(out.get("ok")))
+            self.assertIn("--base-url", captured["cmd"])
+            self.assertIn("http://127.0.0.1:8878", captured["cmd"])
 
     def test_start_flow_requires_repo_improvement_actual_execution(self):
         with tempfile.TemporaryDirectory() as td:
@@ -186,7 +239,7 @@ class BootstrapAndRunTests(unittest.TestCase):
             def fake_deps(*args, **kwargs):
                 _ = args, kwargs
                 calls.append("deps")
-                self.assertEqual(kwargs, {"require_redis": False, "require_psycopg": False})
+                self.assertEqual(kwargs, {})
                 return {"ok": True, "python": sys.executable}
 
             def fake_cp(*args, **kwargs):

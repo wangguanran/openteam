@@ -6,7 +6,6 @@ import json
 import os
 import signal
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -44,11 +43,22 @@ def _runtime_root(repo: Path) -> Path:
     return (Path.home() / ".openteam" / "runtime" / "default").resolve()
 
 
+def _openteam_home() -> Path:
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
+    if home:
+        return Path(home).expanduser().resolve()
+    return (Path.home() / ".openteam").resolve()
+
+
 def _workspace_root(runtime_root: Path) -> Path:
     v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if v:
         return Path(v).expanduser().resolve()
-    return runtime_root / "workspace"
+    if str(os.getenv("OPENTEAM_HOME") or "").strip():
+        return (_openteam_home() / "workspace").resolve()
+    if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip():
+        return (runtime_root / "workspace").resolve()
+    return ((Path.home() / ".openteam").resolve() / "workspace").resolve()
 
 
 def _chmod_best_effort(path: Path, mode: int) -> None:
@@ -67,13 +77,21 @@ def _ensure_runtime_layout(runtime_root: Path) -> None:
         runtime_root / "state" / "runs",
         runtime_root / "state" / "openteam",
         runtime_root / "state" / "kb" / "sources",
-        runtime_root / "workspace",
-        runtime_root / "workspace" / "projects",
-        runtime_root / "workspace" / "shared" / "cache",
-        runtime_root / "workspace" / "shared" / "tmp",
-        runtime_root / "workspace" / "config",
         runtime_root / "tmp",
         runtime_root / "cache",
+    ]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+        _chmod_best_effort(d, 0o700)
+
+
+def _ensure_workspace_layout(workspace_root: Path) -> None:
+    dirs = [
+        workspace_root,
+        workspace_root / "projects",
+        workspace_root / "shared" / "cache",
+        workspace_root / "shared" / "tmp",
+        workspace_root / "config",
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -95,8 +113,19 @@ def _append_audit(runtime_root: Path, line: str) -> None:
         f.write(f"[{_utc_now_iso()}] {line.rstrip()}\n")
 
 
-def _run_json(cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[str, str]] = None, timeout_sec: int = 300) -> dict[str, Any]:
-    p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout_sec, check=False)
+def _run_json(
+    cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[str, str]] = None, timeout_sec: int = 300
+) -> dict[str, Any]:
+    p = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_sec,
+        check=False,
+    )
     out = (p.stdout or "").strip()
     err = (p.stderr or "").strip()
     if p.returncode != 0:
@@ -111,8 +140,19 @@ def _run_json(cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[
     return obj if isinstance(obj, dict) else {}
 
 
-def _run(cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[str, str]] = None, timeout_sec: int = 300) -> tuple[int, str, str]:
-    p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout_sec, check=False)
+def _run(
+    cmd: list[str], *, cwd: Optional[Path] = None, env: Optional[dict[str, str]] = None, timeout_sec: int = 300
+) -> tuple[int, str, str]:
+    p = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_sec,
+        check=False,
+    )
     return p.returncode, (p.stdout or ""), (p.stderr or "")
 
 
@@ -158,12 +198,7 @@ def _crewai_pip_spec() -> str:
     return f"crewai @ {_crewai_archive_url()}#subdirectory=lib/crewai"
 
 
-def _missing_python_modules(
-    python_exe: Path,
-    *,
-    require_redis: bool = True,
-    require_psycopg: bool = True,
-) -> list[tuple[str, str]]:
+def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
     required: list[tuple[str, str]] = [
         ("uvicorn", "uvicorn"),
         ("fastapi", "fastapi"),
@@ -172,10 +207,6 @@ def _missing_python_modules(
         ("yaml", "PyYAML"),
         ("crewai", _crewai_pip_spec()),
     ]
-    if require_redis:
-        required.insert(5, ("redis", "redis"))
-    if require_psycopg:
-        required.insert(6 if require_redis else 5, ("psycopg", "psycopg[binary]"))
     code = (
         "import importlib.util,json,sys;"
         "req=json.loads(sys.argv[1]);"
@@ -196,12 +227,7 @@ def _missing_python_modules(
         return required
 
 
-def _ensure_python_dependencies(
-    runtime_root: Path,
-    *,
-    require_redis: bool = True,
-    require_psycopg: bool = True,
-) -> dict[str, Any]:
+def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
     venv_py = _venv_python(runtime_root)
     if not venv_py.exists():
         venv_dir = venv_py.parent.parent
@@ -210,7 +236,7 @@ def _ensure_python_dependencies(
             msg = (err or out or "").strip()
             raise BootstrapError(f"failed to create python venv at {venv_dir}: {msg[:800]}")
 
-    missing = _missing_python_modules(venv_py, require_redis=require_redis, require_psycopg=require_psycopg)
+    missing = _missing_python_modules(venv_py)
     if not missing:
         return {"ok": True, "installed": [], "missing": [], "python": str(venv_py)}
 
@@ -232,7 +258,7 @@ def _ensure_python_dependencies(
         msg = (err or out or "").strip()
         raise BootstrapError(f"failed to install python dependencies into bootstrap venv {pkgs}: {msg[:800]}")
 
-    still = _missing_python_modules(venv_py, require_redis=require_redis, require_psycopg=require_psycopg)
+    still = _missing_python_modules(venv_py)
     if still:
         raise BootstrapError(f"python dependencies still missing in bootstrap venv: {[m for m, _ in still]}")
 
@@ -487,6 +513,8 @@ def _start_control_plane(
     env["OPENTEAM_PIPELINE_PYTHON"] = str(sys.executable)
     env["OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED"] = "0"
     env.setdefault("CREWAI_TRACING_ENABLED", "false")
+    env.pop("OPENTEAM_DB_URL", None)
+    env.pop("OPENTEAM_REDIS_URL", None)
     py_path = str(orch_dir) + os.pathsep + str(repo)
     if str(env.get("PYTHONPATH") or "").strip():
         py_path = py_path + os.pathsep + str(env.get("PYTHONPATH"))
@@ -525,6 +553,13 @@ def _ensure_crewai_ready(base_url: str) -> dict[str, Any]:
 
 
 def _default_team_id(base_url: str) -> str:
+    try:
+        status = _http_json("GET", base_url + "/v1/status", None, timeout_sec=5)
+        team_id = str(status.get("default_team_id") or "").strip()
+        if team_id:
+            return team_id
+    except Exception:
+        pass
     teams = _http_json("GET", base_url + "/v1/teams", None, timeout_sec=5)
     items = list(teams.get("teams") or []) if isinstance(teams, dict) else []
     for item in items:
@@ -633,7 +668,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     _append_audit(runtime_root, "llm config check passed")
     local_db = _ensure_local_runtime_db(runtime_root)
     _append_audit(runtime_root, "local runtime db ready")
-    python_deps = _ensure_python_dependencies(runtime_root, require_redis=False, require_psycopg=False)
+    python_deps = _ensure_python_dependencies(runtime_root)
     _append_audit(runtime_root, "python dependencies ready")
     control_plane = _start_control_plane(
         repo,
@@ -682,20 +717,19 @@ def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path) -> dict[str
     return {"ok": True, "default_team": {"ok": True, "mode": "single_node"}, "control_plane": cp_stop}
 
 
-def _doctor(repo: Path, workspace_root: Path) -> dict[str, Any]:
-    return _run_json(
-        [
-            sys.executable,
-            str(repo / "scripts" / "pipelines" / "doctor.py"),
-            "--repo-root",
-            str(repo),
-            "--workspace-root",
-            str(workspace_root),
-            "--json",
-        ],
-        cwd=repo,
-        timeout_sec=180,
-    )
+def _doctor(repo: Path, workspace_root: Path, *, base_url: str = "") -> dict[str, Any]:
+    cmd = [
+        sys.executable,
+        str(repo / "scripts" / "pipelines" / "doctor.py"),
+        "--repo-root",
+        str(repo),
+        "--workspace-root",
+        str(workspace_root),
+        "--json",
+    ]
+    if str(base_url or "").strip():
+        cmd.extend(["--base-url", str(base_url).strip()])
+    return _run_json(cmd, cwd=repo, timeout_sec=180)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -712,6 +746,7 @@ def main(argv: list[str] | None = None) -> int:
     # secrets/runtime safety default
     os.umask(0o077)
     _ensure_runtime_layout(runtime_root)
+    _ensure_workspace_layout(workspace_root)
 
     try:
         if args.action == "start":
@@ -734,7 +769,7 @@ def main(argv: list[str] | None = None) -> int:
             base_url = f"http://127.0.0.1:{int(args.control_plane_port)}"
             out = {
                 "ok": True,
-                "doctor": _doctor(repo, workspace_root),
+                "doctor": _doctor(repo, workspace_root, base_url=base_url),
                 "status": _status_snapshot(repo, runtime_root, workspace_root, base_url),
             }
     except BootstrapError as e:

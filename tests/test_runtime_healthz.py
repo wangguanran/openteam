@@ -82,6 +82,19 @@ class RuntimeHealthzTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertNotIn("redis_bus", payload)
 
+    def test_healthz_runtime_db_backend_is_always_sqlite(self) -> None:
+        os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)
+        os.environ["OPENTEAM_DB_URL"] = "postgresql://obsolete-user:obsolete-pass@127.0.0.1:15432/openteam"
+        response = app_main.Response()
+        with (
+            mock.patch.object(app_main.engine_runtime, "probe_crewai", return_value={"importable": True, "version": "test"}),
+            mock.patch.object(app_main.DB, "list_events", return_value=[]),
+        ):
+            payload = app_main.healthz(response)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["db"]["backend"], "sqlite")
+
     def test_status_no_longer_reports_redis_bus(self) -> None:
         with (
             mock.patch.object(app_main, "_active_projects_summary", return_value=[]),
@@ -92,6 +105,7 @@ class RuntimeHealthzTests(unittest.TestCase):
             payload = app_main.v1_status()
 
         self.assertNotIn("redis_bus", payload)
+        self.assertEqual(payload["runtime_db"]["backend"], "sqlite")
 
     def test_openteam_requirements_dir_uses_product_docs_path(self) -> None:
         os.environ["OPENTEAM_REPO_PATH"] = str(self.repo_root)

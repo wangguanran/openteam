@@ -47,13 +47,13 @@ class SingleNodeStartupTests(unittest.TestCase):
             runtime_root.mkdir(parents=True, exist_ok=True)
 
             team_payload = {
-                "team_id": "repo-improvement",
-                "display_name_zh": "仓库改进",
-                "last_run": {"ts": "2026-03-30T00:00:00Z", "status": "DONE"},
-                "proposal_counts": {"total": 2, "pending": 1},
+                "team_id": "delivery-studio",
+                "display_name_zh": "交付工作室",
+                "last_run": {"ts": "2026-03-30T00:00:00Z", "status": "READY"},
+                "proposal_counts": {"total": 0, "pending": 0},
                 "coding": {"summary": {"active": 0}},
             }
-            status_payload = {"default_team_id": "repo-improvement", "teams": {"repo-improvement": team_payload}}
+            status_payload = {"default_team_id": "delivery-studio", "teams": {"delivery-studio": team_payload}}
 
             with mock.patch.object(self.mod, "_read_pid", return_value=4321), mock.patch.object(
                 self.mod, "_pid_alive", return_value=True
@@ -66,10 +66,10 @@ class SingleNodeStartupTests(unittest.TestCase):
                 out = self.mod._status_snapshot(repo, runtime_root, workspace_root, "http://127.0.0.1:8787")
 
             self.assertEqual(out["control_plane"]["status"], status_payload)
-            self.assertEqual(out["default_team"]["team_id"], "repo-improvement")
-            self.assertEqual(out["default_team"]["display_name_zh"], "仓库改进")
-            self.assertEqual(out["default_team"]["proposal_counts"], {"total": 2, "pending": 1})
-            self.assertEqual(out["default_team"]["last_run"], {"ts": "2026-03-30T00:00:00Z", "status": "DONE"})
+            self.assertEqual(out["default_team"]["team_id"], "delivery-studio")
+            self.assertEqual(out["default_team"]["display_name_zh"], "交付工作室")
+            self.assertEqual(out["default_team"]["proposal_counts"], {"total": 0, "pending": 0})
+            self.assertEqual(out["default_team"]["last_run"], {"ts": "2026-03-30T00:00:00Z", "status": "READY"})
             self.assertEqual(out["default_team"]["state_backend"], "control_plane_status")
 
     def test_stop_flow_is_single_node_and_skips_hub_down(self):
@@ -127,6 +127,51 @@ class SingleNodeStartupTests(unittest.TestCase):
             env = captured["env"]
             assert isinstance(env, dict)
             self.assertEqual(out["pid"], 9876)
+            self.assertNotIn("OPENTEAM_DB_URL", env)
+            self.assertNotIn("OPENTEAM_REDIS_URL", env)
+
+    def test_start_control_plane_strips_legacy_db_and_redis_env_from_host_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "runtime"
+            workspace_root = runtime_root / "workspace"
+            orch_dir = repo / "scaffolds" / "runtime" / "orchestrator"
+            orch_dir.mkdir(parents=True, exist_ok=True)
+            captured: dict[str, object] = {}
+
+            class _FakeProcess:
+                pid = 9876
+
+            def fake_popen(cmd, cwd=None, stdout=None, stderr=None, env=None, start_new_session=None):
+                _ = cmd, cwd, start_new_session
+                captured["env"] = dict(env or {})
+                if stdout is not None:
+                    stdout.close()
+                if stderr is not None and stderr is not stdout:
+                    stderr.close()
+                return _FakeProcess()
+
+            with mock.patch.dict(
+                self.mod.os.environ,
+                {
+                    "OPENTEAM_DB_URL": "postgresql://example/db",
+                    "OPENTEAM_REDIS_URL": "redis://example/0",
+                },
+                clear=False,
+            ), mock.patch.object(self.mod.subprocess, "Popen", side_effect=fake_popen), mock.patch.object(
+                self.mod, "_wait_http_ready", return_value={"ok": True}
+            ):
+                self.mod._start_control_plane(
+                    repo,
+                    runtime_root,
+                    workspace_root,
+                    base_url="http://127.0.0.1:8787",
+                    port=8787,
+                    python_exec="/usr/bin/python3",
+                )
+
+            env = captured["env"]
+            assert isinstance(env, dict)
             self.assertNotIn("OPENTEAM_DB_URL", env)
             self.assertNotIn("OPENTEAM_REDIS_URL", env)
 

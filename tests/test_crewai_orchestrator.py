@@ -53,8 +53,28 @@ class _FakeDB:
 
 
 class CrewOrchestratorTests(unittest.TestCase):
+    def test_crew_tools_workspace_root_follows_openteam_home(self):
+        with mock.patch.dict(
+            os.environ,
+            {"OPENTEAM_HOME": "/tmp/openteam-home"},
+            clear=True,
+        ):
+            self.assertEqual(crew_tools.workspace_root(), Path("/tmp/openteam-home/workspace"))
+
+    def test_crew_tools_workspace_root_falls_back_to_runtime_root_workspace(self):
+        with mock.patch.dict(
+            os.environ,
+            {"OPENTEAM_RUNTIME_ROOT": "/tmp/runtime-alt"},
+            clear=True,
+        ):
+            self.assertEqual(crew_tools.workspace_root(), Path("/tmp/runtime-alt/workspace"))
+
     def test_flow_alias_maps_to_deterministic_pipeline_chain(self):
-        self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor", "db_migrate"])
+        self.assertEqual(crew_tools.flow_to_pipelines("maintenance"), ["doctor"])
+
+    def test_removed_migration_flow_alias_is_rejected(self):
+        with self.assertRaises(crew_tools.CrewToolsError):
+            crew_tools.flow_to_pipelines("migration")
 
     def test_team_flow_is_native_crewai_flow(self):
         self.assertEqual(crew_tools.normalize_flow("team:repo-improvement"), "team:repo-improvement")
@@ -71,9 +91,13 @@ class CrewOrchestratorTests(unittest.TestCase):
         with self.assertRaises(crew_tools.CrewToolsError):
             crew_tools.flow_to_pipelines("pipeline:task_create")
 
-    def test_run_request_legacy_pipeline_field_routes_to_pipeline_mode(self):
-        flow = crew_tools.resolve_run_request_flow(flow=None, pipeline="db_migrate")
-        self.assertEqual(flow, "pipeline:db_migrate")
+    def test_run_request_legacy_pipeline_field_routes_supported_pipeline_to_pipeline_mode(self):
+        flow = crew_tools.resolve_run_request_flow(flow=None, pipeline="doctor")
+        self.assertEqual(flow, "pipeline:doctor")
+
+    def test_direct_pipeline_allowlist_rejects_removed_db_migrate_pipeline(self):
+        with self.assertRaises(crew_tools.CrewToolsError):
+            crew_tools.flow_to_pipelines("pipeline:db_migrate")
 
     def test_run_once_emits_explicit_pipeline_write_delegation_evidence(self):
         db = _FakeDB()
@@ -81,7 +105,12 @@ class CrewOrchestratorTests(unittest.TestCase):
 
         with mock.patch(
             "app.orchestrator.engine_runtime.require_crewai_importable",
-            return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
+            return_value={
+                "importable": True,
+                "version": "test",
+                "module_path": "/tmp/crewai/__init__.py",
+                "source_path": "/tmp/crewai-src",
+            },
         ), mock.patch("app.orchestrator.openteam_root", return_value=Path("/tmp/openteam")), mock.patch(
             "app.orchestrator.crew_tools.workspace_root", return_value=Path("/tmp/ws")
         ), mock.patch(
@@ -115,7 +144,12 @@ class CrewOrchestratorTests(unittest.TestCase):
         spec = RunSpec(project_id="openteam", workstream_id="general", objective="bad request", flow="pipeline:task_create")
         with mock.patch(
             "app.orchestrator.engine_runtime.require_crewai_importable",
-            return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
+            return_value={
+                "importable": True,
+                "version": "test",
+                "module_path": "/tmp/crewai/__init__.py",
+                "source_path": "/tmp/crewai-src",
+            },
         ):
             out = run_once(db=db, spec=spec, actor="test")
         self.assertFalse(out["ok"])
@@ -126,7 +160,13 @@ class CrewOrchestratorTests(unittest.TestCase):
 
     def test_run_once_team_workflow_uses_team_runtime_adapter(self):
         db = _FakeDB()
-        spec = RunSpec(project_id="openteam", workstream_id="general", objective="upgrade", flow="team:repo-improvement", repo_path="/tmp/openteam")
+        spec = RunSpec(
+            project_id="openteam",
+            workstream_id="general",
+            objective="upgrade",
+            flow="team:repo-improvement",
+            repo_path="/tmp/openteam",
+        )
         adapter = SimpleNamespace(
             run_once_fn=mock.Mock(
                 return_value={
@@ -142,7 +182,12 @@ class CrewOrchestratorTests(unittest.TestCase):
 
         with mock.patch(
             "app.orchestrator.engine_runtime.require_crewai_importable",
-            return_value={"importable": True, "version": "test", "module_path": "/tmp/crewai/__init__.py", "source_path": "/tmp/crewai-src"},
+            return_value={
+                "importable": True,
+                "version": "test",
+                "module_path": "/tmp/crewai/__init__.py",
+                "source_path": "/tmp/crewai-src",
+            },
         ), mock.patch(
             "app.orchestrator.team_runtime_registry.team_runtime_adapter",
             return_value=adapter,

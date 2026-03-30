@@ -60,6 +60,9 @@ def default_team_id() -> str:
     if not teams:
         raise KeyError("no team specs configured")
     for spec in teams:
+        if spec.team_id == "delivery-studio":
+            return spec.team_id
+    for spec in teams:
         if spec.team_id == "repo-improvement":
             return spec.team_id
     return teams[0].team_id

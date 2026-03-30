@@ -21,9 +21,16 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from _common import PipelineError, add_default_args, append_jsonl, read_yaml, resolve_repo_root, resolve_workspace_root, utc_now_iso, write_json
-from _db import connect, get_db_url, to_jsonable
-from db_migrate import apply_migrations as _apply_migrations
+from _common import (
+    PipelineError,
+    add_default_args,
+    append_jsonl,
+    read_yaml,
+    resolve_repo_root,
+    resolve_workspace_root,
+    utc_now_iso,
+    write_json,
+)
 
 
 def _policy_path(repo_root: Path) -> Path:
@@ -117,120 +124,37 @@ def _write_fallback_event(ws_root: Path, event: dict[str, Any], *, dry_run: bool
     append_jsonl(p, event, dry_run=dry_run)
 
 
-def _db_available(dsn: str) -> bool:
-    return bool(str(dsn or "").strip())
+def _iter_fallback_events(ws_root: Path) -> list[dict[str, Any]]:
+    path = _audit_fallback_path(ws_root)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            events.append(obj)
+    return events
 
 
-def _ensure_db_schema(conn, *, repo_root: Path) -> None:
-    mig_dir = repo_root / "tooling" / "migrations"
-    migrations: list[tuple[str, Path]] = []
-    for p in sorted(mig_dir.glob("*.sql")):
-        name = p.name
-        if len(name) >= 4 and name[:4].isdigit():
-            migrations.append((name[:4], p))
-    if migrations:
-        _apply_migrations(conn, migrations)
-
-
-def _db_insert_approval(conn, row: dict[str, Any]) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO approvals (
-              approval_id, task_id, action_kind, action_summary,
-              risk_level, risk_reasons, category, status,
-              requested_by, requested_at,
-              decided_by, decided_at, decision_engine, decision_note,
-              action_payload
-            ) VALUES (
-              %s,%s,%s,%s,
-              %s,%s::jsonb,%s,%s,
-              %s,%s,
-              %s,%s,%s,%s,
-              %s::jsonb
-            )
-            """,
-            (
-                row["approval_id"],
-                row.get("task_id", ""),
-                row["action_kind"],
-                row["action_summary"],
-                row["risk_level"],
-                json.dumps(row.get("risk_reasons") or [], ensure_ascii=False),
-                row.get("category", ""),
-                row["status"],
-                row.get("requested_by", ""),
-                row.get("requested_at", utc_now_iso()),
-                row.get("decided_by", ""),
-                row.get("decided_at"),
-                row.get("decision_engine", ""),
-                row.get("decision_note", ""),
-                json.dumps(row.get("action_payload") or {}, ensure_ascii=False),
-            ),
-        )
-    conn.commit()
-
-
-def _db_update_decision(conn, *, approval_id: str, status: str, decided_by: str, decided_at: str, engine: str, note: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE approvals
-            SET status=%s, decided_by=%s, decided_at=%s, decision_engine=%s, decision_note=%s
-            WHERE approval_id=%s
-            """,
-            (status, decided_by, decided_at, engine, note[:800], approval_id),
-        )
-    conn.commit()
-
-
-def _db_get_approval(conn, *, approval_id: str) -> Optional[dict[str, Any]]:
-    with conn.cursor() as cur:
-        row = cur.execute("SELECT * FROM approvals WHERE approval_id=%s", (approval_id,)).fetchone()
-        return dict(row) if row else None
-
-
-def _db_list_approvals(conn, *, limit: int = 50) -> list[dict[str, Any]]:
-    with conn.cursor() as cur:
-        rows = cur.execute("SELECT * FROM approvals ORDER BY requested_at DESC LIMIT %s", (int(limit),)).fetchall()
-        out: list[dict[str, Any]] = []
-        for r in rows or []:
-            d = dict(r)
-            # JSONify datetime values
-            for k, v in list(d.items()):
-                d[k] = to_jsonable(v)
-            out.append(d)
-    return out
-
-
-def _db_insert_execution(
-    conn,
-    *,
-    approval_id: str,
-    execution_status: str,
-    executor: str,
-    note: str,
-    detail: dict[str, Any],
-) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO approval_executions (
-              execution_id, approval_id, execution_status, executor, note, detail
-            ) VALUES (
-              %s,%s,%s,%s,%s,%s::jsonb
-            )
-            """,
-            (
-                str(uuid.uuid4()),
-                str(approval_id),
-                str(execution_status),
-                str(executor or ""),
-                str(note or "")[:800],
-                json.dumps(detail or {}, ensure_ascii=False),
-            ),
-        )
-    conn.commit()
+def _find_approval_request_record(ws_root: Path, *, approval_id: str) -> Optional[dict[str, Any]]:
+    target = str(approval_id or "").strip()
+    if not target:
+        return None
+    for event in reversed(_iter_fallback_events(ws_root)):
+        if str(event.get("event") or "") != "APPROVAL_REQUEST":
+            continue
+        record = event.get("record") or {}
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("approval_id") or "").strip() == target:
+            return record
+    return None
 
 
 def _policy_decide(policy: dict[str, Any], *, category: str) -> Optional[str]:
@@ -369,36 +293,22 @@ def cmd_request(args: argparse.Namespace) -> int:
     record["decision_engine"] = decision_engine
     record["decision_note"] = decision_note
 
-    dsn = get_db_url(override=str(getattr(args, "db_url", "") or ""))
-    db_ok = _db_available(dsn)
+    db_ok = False
+    event = {"ts": now, "event": "APPROVAL_REQUEST", "pending_sync": True, "record": record}
+    _write_fallback_event(ws_root, event, dry_run=bool(args.dry_run))
+    # Also keep a last-known snapshot (helpful for debugging).
+    snap = ws_root / "shared" / "audit" / "approvals_last.json"
+    write_json(snap, event, dry_run=bool(args.dry_run))
 
-    # Persist to DB when possible; otherwise fallback to local jsonl audit.
-    if db_ok:
-        conn = connect(dsn)
-        try:
-            _ensure_db_schema(conn, repo_root=repo)
-            _db_insert_approval(conn, record)
-            # If a decision happened immediately, update it in-place.
-            if record["status"] in ("APPROVED", "DENIED") and record.get("decided_at"):
-                _db_update_decision(
-                    conn,
-                    approval_id=approval_id,
-                    status=record["status"],
-                    decided_by=record.get("decided_by") or "",
-                    decided_at=str(record.get("decided_at") or now),
-                    engine=record.get("decision_engine") or "",
-                    note=record.get("decision_note") or "",
-                )
-        finally:
-            conn.close()
-    else:
-        event = {"ts": now, "event": "APPROVAL_REQUEST", "pending_sync": True, "record": record}
-        _write_fallback_event(ws_root, event, dry_run=bool(args.dry_run))
-        # Also keep a last-known snapshot (helpful for debugging).
-        snap = ws_root / "shared" / "audit" / "approvals_last.json"
-        write_json(snap, event, dry_run=bool(args.dry_run))
-
-    out = {"ok": True, "approval_id": approval_id, "status": record["status"], "record": record, "classification": cls, "role": role, "db": {"enabled": db_ok}}
+    out = {
+        "ok": True,
+        "approval_id": approval_id,
+        "status": record["status"],
+        "record": record,
+        "classification": cls,
+        "role": role,
+        "db": {"enabled": db_ok},
+    }
     _emit_json(out, json_mode=bool(args.json))
     return 0 if record["status"] == "APPROVED" or risk_level != "HIGH" else 2
 
@@ -417,55 +327,41 @@ def cmd_decide(args: argparse.Namespace) -> int:
     decided_at = utc_now_iso()
     engine = str(args.engine or "").strip() or "manual"
     note = str(args.note or "").strip()
+    request_record = _find_approval_request_record(ws_root, approval_id=approval_id)
+    if request_record is None:
+        raise PipelineError(f"approval_id not found in local audit: {approval_id}")
+    current_status = str(request_record.get("status") or "").strip().upper()
+    category = str(request_record.get("category") or "").strip()
+    if decision == "APPROVE" and current_status == "DENIED":
+        raise PipelineError(f"cannot approve denied request via local audit flow: {category or 'UNKNOWN'}")
+    if decision == "APPROVE" and _policy_decide(policy, category=category) == "DENIED":
+        raise PipelineError(f"cannot approve denied category via local audit flow: {category or 'UNKNOWN'}")
 
-    dsn = get_db_url(override=str(getattr(args, "db_url", "") or ""))
-    if _db_available(dsn):
-        conn = connect(dsn)
-        try:
-            _ensure_db_schema(conn, repo_root=repo)
-            row = _db_get_approval(conn, approval_id=approval_id)
-            if not row:
-                raise PipelineError(f"approval not found: {approval_id}")
-            # Honor always-deny policy (cannot override).
-            cat = str(row.get("category") or "")
-            if _policy_decide(policy, category=cat) == "DENIED":
-                raise PipelineError(f"policy forbids approving category={cat}")
-            _db_update_decision(conn, approval_id=approval_id, status=status, decided_by=decided_by, decided_at=decided_at, engine=engine, note=note)
-        finally:
-            conn.close()
-        _emit_json({"ok": True, "approval_id": approval_id, "status": status}, json_mode=bool(args.json))
-        return 0
-
-    # Fallback: append decision event.
-    event = {"ts": decided_at, "event": "APPROVAL_DECISION", "pending_sync": True, "approval_id": approval_id, "status": status, "decided_by": decided_by, "engine": engine, "note": note}
+    # Single-node mode: append decision event to local audit only.
+    event = {
+        "ts": decided_at,
+        "event": "APPROVAL_DECISION",
+        "pending_sync": True,
+        "approval_id": approval_id,
+        "status": status,
+        "decided_by": decided_by,
+        "engine": engine,
+        "note": note,
+    }
     _write_fallback_event(ws_root, event, dry_run=bool(args.dry_run))
     _emit_json({"ok": True, "approval_id": approval_id, "status": status, "db": {"enabled": False}}, json_mode=bool(args.json))
     return 0
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    repo = resolve_repo_root(args)
     ws_root = resolve_workspace_root(args)
-    limit = int(getattr(args, "limit", 50) or 50)
-    dsn = get_db_url(override=str(getattr(args, "db_url", "") or ""))
-    if _db_available(dsn):
-        conn = connect(dsn)
-        try:
-            _ensure_db_schema(conn, repo_root=repo)
-            rows = _db_list_approvals(conn, limit=limit)
-        finally:
-            conn.close()
-        _emit_json({"ok": True, "db": {"enabled": True}, "approvals": rows}, json_mode=bool(args.json))
-        return 0
-
-    # Fallback: show local jsonl path only (do not parse potentially large file in doctor contexts).
+    # Single-node mode: show local jsonl path only (do not parse potentially large file in doctor contexts).
     p = _audit_fallback_path(ws_root)
     _emit_json({"ok": True, "db": {"enabled": False}, "fallback_audit_path": str(p)}, json_mode=bool(args.json))
     return 0
 
 
 def cmd_record_execution(args: argparse.Namespace) -> int:
-    repo = resolve_repo_root(args)
     ws_root = resolve_workspace_root(args)
     approval_id = str(args.approval_id or "").strip()
     if not approval_id:
@@ -484,17 +380,6 @@ def cmd_record_execution(args: argparse.Namespace) -> int:
         if not isinstance(detail, dict):
             raise PipelineError("--detail-json must be a JSON object")
 
-    dsn = get_db_url(override=str(getattr(args, "db_url", "") or ""))
-    if _db_available(dsn):
-        conn = connect(dsn)
-        try:
-            _ensure_db_schema(conn, repo_root=repo)
-            _db_insert_execution(conn, approval_id=approval_id, execution_status=status, executor=executor, note=note, detail=detail)
-        finally:
-            conn.close()
-        _emit_json({"ok": True, "approval_id": approval_id, "execution_status": status, "db": {"enabled": True}}, json_mode=bool(args.json))
-        return 0
-
     event = {
         "ts": utc_now_iso(),
         "event": "APPROVAL_EXECUTION",
@@ -511,9 +396,9 @@ def cmd_record_execution(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Approvals engine (DB-backed; deterministic)")
+    ap = argparse.ArgumentParser(description="Approvals engine (single-node local audit; deterministic)")
     add_default_args(ap)
-    ap.add_argument("--db-url", default="", help="override OPENTEAM_DB_URL")
+    ap.add_argument("--db-url", default="", help="deprecated in single-node mode; ignored")
     ap.add_argument("--json", action="store_true", help="emit JSON")
     sp = ap.add_subparsers(dest="cmd", required=True)
 
@@ -544,9 +429,9 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--dry-run", action="store_true")
     d.set_defaults(fn=cmd_decide)
 
-    l = sp.add_parser("list", help="List recent approvals")
-    l.add_argument("--limit", type=int, default=50)
-    l.set_defaults(fn=cmd_list)
+    list_p = sp.add_parser("list", help="List recent approvals")
+    list_p.add_argument("--limit", type=int, default=50)
+    list_p.set_defaults(fn=cmd_list)
 
     rx = sp.add_parser("record-execution", help="Record execution result for an approved action")
     rx.add_argument("approval_id")

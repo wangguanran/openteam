@@ -2,7 +2,6 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 openai-agents
 PyYAML>=6.0.1
-psycopg[binary]>=3.2.0
 crewai @ https://codeload.github.com/crewAIInc/crewAI/tar.gz/refs/heads/main#subdirectory=lib/crewai
 litellm
 textual>=0.66.0

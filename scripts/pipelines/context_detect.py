@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from _common import add_default_args, resolve_repo_root, runtime_workspace_root
+from _common import add_default_args, resolve_repo_root, resolve_workspace_root
 
 
 def _detect_project_from_cwd(workspace_root: Path, cwd: Path) -> str:
@@ -29,13 +29,13 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     repo = resolve_repo_root(args)
-    ws = runtime_workspace_root()
+    ws = resolve_workspace_root(args)
     cwd = Path(str(args.cwd or "").strip()).expanduser().resolve() if str(args.cwd or "").strip() else Path.cwd().resolve()
     pid = _detect_project_from_cwd(ws, cwd)
     out = {
         "ok": True,
         "repo_root": str(repo),
-        "runtime_workspace_root": str(ws),
+        "workspace_root": str(ws),
         "cwd": str(cwd),
         "in_project_repo": bool(pid),
         "project_id": pid,

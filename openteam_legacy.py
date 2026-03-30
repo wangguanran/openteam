@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import datetime as _dt
 import json
 import os
 import re
@@ -10,7 +9,6 @@ import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1536,18 +1534,6 @@ def cmd_policy_check(args: argparse.Namespace) -> None:
         raise SystemExit(p.returncode)
 
 
-def cmd_db_migrate(args: argparse.Namespace) -> None:
-    repo_root = _find_openteam_repo_root()
-    if not repo_root:
-        raise RuntimeError("Cannot find OpenTeam repo root. Set env OPENTEAM_REPO_PATH or run from within the repo.")
-    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))]
-    if getattr(args, "db_url", ""):
-        argv += ["--db-url", str(args.db_url).strip()]
-    if bool(getattr(args, "dry_run", False)):
-        argv.append("--dry-run")
-    _run_pipeline(repo_root, "scripts/pipelines/db_migrate.py", argv)
-
-
 def cmd_approvals_list(args: argparse.Namespace) -> None:
     repo_root = _find_openteam_repo_root()
     if not repo_root:
@@ -2500,7 +2486,7 @@ def cmd_repo_create(args: argparse.Namespace) -> None:
         print("next: re-run with --approve to execute (will prompt + record approval)")
         return
 
-    # Approval gate (records to DB when OPENTEAM_DB_URL is set; otherwise local audit fallback).
+    # Approval gate records into the local single-node audit trail.
     repo_root = _find_openteam_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find OpenTeam repo root. Set env OPENTEAM_REPO_PATH or run from within the repo.")
@@ -2927,16 +2913,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     pc.add_argument("--quiet", action="store_true")
     pc.set_defaults(fn=cmd_policy_check)
 
-    # db (Postgres)
-    db = sp.add_parser("db", help="Postgres DB (migrations)")
-    db_sp = db.add_subparsers(dest="subcmd", required=True)
-    dmig = db_sp.add_parser("migrate", help="Apply Postgres migrations (requires OPENTEAM_DB_URL)")
-    dmig.add_argument("--db-url", help="override OPENTEAM_DB_URL")
-    dmig.add_argument("--dry-run", action="store_true", help="plan only (no SQL executed)")
-    dmig.set_defaults(fn=cmd_db_migrate)
-
     # approvals (high-risk gates)
-    apv = sp.add_parser("approvals", help="High-risk approvals (DB-backed when OPENTEAM_DB_URL is set)")
+    apv = sp.add_parser("approvals", help="High-risk approvals (local audit first)")
     apv_sp = apv.add_subparsers(dest="subcmd", required=True)
     al = apv_sp.add_parser("list", help="List recent approvals")
     al.add_argument("--limit", type=int, default=50)

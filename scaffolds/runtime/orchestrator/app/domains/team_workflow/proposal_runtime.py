@@ -84,7 +84,6 @@ MODULE_ALIASES = {
     "review": "Review",
     "qa": "QA",
     "cli": "CLI",
-    "hub": "Hub",
     "release": "Release",
     "requirements": "Requirements",
     "observability": "Observability",
@@ -101,7 +100,7 @@ MODULE_RULES: list[tuple[tuple[str, ...], str]] = [
     (("delivery", "review", "qa", "release"), "Delivery"),
     (("proposal", "discussion"), "Proposal"),
     (("openteam", " cli ", " cli/", "/openteam"), "CLI"),
-    (("postgres", "redis", "hub"), "Hub"),
+    (("sqlite", "runtime db", "local control plane"), "Runtime"),
     (("requirements", "raw_inputs", "requirement"), "Requirements"),
     (("observability", "metrics", "telemetry", "heartbeat"), "Observability"),
     (("security", "auth", "oauth", "token"), "Security"),
@@ -2928,7 +2927,7 @@ def kickoff_upgrade_plan(
             "- Test-gap findings also use lane=quality, kind=CODE_QUALITY, require user confirmation, and must set test_gap_type=blackbox or test_gap_type=whitebox.\n"
             "- Test-gap findings and work_items should carry target_paths, missing_paths, suggested_test_files, and why_not_covered so downstream issues can explain the exact uncovered path.\n"
             "- Process improvements use lane=process, kind=PROCESS, cooldown_hours=24, and version_bump=none.\n"
-            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Team-Workflow, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- Every finding must carry exactly one stable module name. Prefer one of: Runtime, Team-Workflow, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Release, Requirements, Observability, Security.\n"
             "- Every feature, bug, or quality finding must include work_items. Each work item must be small, scoped, and suitable for a single coding agent.\n"
             "- Each work item must include review_role, qa_role, allowed_paths, tests, acceptance, worktree_hint, and should stay inside the same module as the finding. owner_role will be normalized to Coding-Agent by the runtime.\n"
             "- Bug work items must also include reproduction_steps, repo-relative test_case_files, and verification_steps. Do not leave bug reproduction implicit.\n"
@@ -3973,7 +3972,7 @@ def kickoff_proposal_discussion(*, proposal: dict[str, Any], comments: list[Any]
             "- If the user is only asking questions or suggesting changes, keep action=pending or hold.\n"
             "- Only set action=approve when the user explicitly confirms the proposal should proceed.\n"
             "- You may refine title, summary, version_bump, or module if the user feedback clearly changes the scope.\n"
-            "- module must stay a single stable value such as Runtime, Team-Workflow, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Hub, Release, Requirements, Observability, Security.\n"
+            "- module must stay a single stable value such as Runtime, Team-Workflow, CI, Doctor, Bootstrap, Workspace, GitHub-Project, Delivery, Proposal, Review, QA, CLI, Release, Requirements, Observability, Security.\n"
             "- Keep the reply concise and directly answer the user's latest questions.\n"
             "- 所有 reply_body、title、summary 必须使用简体中文。\n\n"
             f"Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"

@@ -17,7 +17,7 @@ from app import team_registry  # noqa: E402
 
 class CrewAITeamRegistryTests(unittest.TestCase):
     def test_default_team_is_loaded_from_team_specs(self) -> None:
-        self.assertEqual(team_registry.default_team_id(), "repo-improvement")
+        self.assertEqual(team_registry.default_team_id(), "delivery-studio")
 
     def test_team_specs_include_repo_improvement_and_delivery_studio(self) -> None:
         team_ids = {spec.team_id for spec in team_registry.list_teams()}

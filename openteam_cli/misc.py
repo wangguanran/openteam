@@ -1,13 +1,11 @@
-"""Miscellaneous subcommand handlers: prompt, metrics, policy, db, approvals, audit, doctor, daemon, repo, task, improvement-targets, openclaw, chat."""
+"""Miscellaneous subcommand handlers: prompt, metrics, policy, approvals, audit, doctor, daemon, repo, task, improvement-targets, openclaw, chat."""
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Optional
 
 from openteam_cli._shared import (
     _base_url,
@@ -19,12 +17,10 @@ from openteam_cli._shared import (
     _get_profile,
     _inject_project_agents_manual,
     _load_config,
-    _norm,
     _require_project_id,
     _run_pipeline,
     _runtime_root_for_repo,
     _workspace_root,
-    eprint,
     shutil_which,
 )
 from openteam_cli.http import _http_json
@@ -119,18 +115,6 @@ def cmd_policy_check(args: argparse.Namespace) -> None:
     p = subprocess.run(cmd)
     if p.returncode != 0:
         raise SystemExit(p.returncode)
-
-
-def cmd_db_migrate(args: argparse.Namespace) -> None:
-    repo_root = _find_openteam_repo_root()
-    if not repo_root:
-        raise RuntimeError("Cannot find OpenTeam repo root. Set env OPENTEAM_REPO_PATH or run from within the repo.")
-    argv = ["--repo-root", str(repo_root), "--workspace-root", str(_workspace_root(args))]
-    if getattr(args, "db_url", ""):
-        argv += ["--db-url", str(args.db_url).strip()]
-    if bool(getattr(args, "dry_run", False)):
-        argv.append("--dry-run")
-    _run_pipeline(repo_root, "scripts/pipelines/db_migrate.py", argv)
 
 
 def cmd_approvals_list(args: argparse.Namespace) -> None:
@@ -386,7 +370,7 @@ def cmd_repo_create(args: argparse.Namespace) -> None:
         print("next: re-run with --approve to execute (will prompt + record approval)")
         return
 
-    # Approval gate (records to DB when OPENTEAM_DB_URL is set; otherwise local audit fallback).
+    # Approval gate writes local audit records for the single-node runtime.
     repo_root = _find_openteam_repo_root()
     if not repo_root:
         raise RuntimeError("Cannot find OpenTeam repo root. Set env OPENTEAM_REPO_PATH or run from within the repo.")

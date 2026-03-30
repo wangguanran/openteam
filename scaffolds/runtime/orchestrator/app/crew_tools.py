@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from . import team_registry
+from . import team_registry, workspace_store
 
 
 class CrewToolsError(ValueError):
@@ -17,25 +16,20 @@ class CrewToolsError(ValueError):
 _FLOW_PIPELINES: dict[str, list[str]] = {
     "genesis": ["doctor"],
     "standard": ["doctor"],
-    "maintenance": ["doctor", "db_migrate"],
-    "migration": ["db_migrate"],
+    "maintenance": ["doctor"],
 }
 
 # Backward-compatible direct pipeline mode is intentionally narrow.
-_RUN_DIRECT_PIPELINE_ALLOWLIST = frozenset({"doctor", "db_migrate"})
+_RUN_DIRECT_PIPELINE_ALLOWLIST = frozenset({"doctor"})
 
 _PIPELINE_SCRIPTS: dict[str, str] = {
     "doctor": "doctor.py",
-    "db_migrate": "db_migrate.py",
     "task_create": "task_create.py",
 }
 
 
 def workspace_root() -> Path:
-    env_ws = str((os.getenv("OPENTEAM_WORKSPACE_ROOT") or "")).strip()
-    if env_ws:
-        return Path(env_ws).expanduser().resolve()
-    return (Path.home() / ".openteam" / "workspace").resolve()
+    return workspace_store.workspace_root()
 
 
 def normalize_flow(raw: Optional[str]) -> str:

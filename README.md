@@ -36,6 +36,7 @@ export OPENTEAM_LLM_API_KEY="<your_api_key>"
 - Status API: `http://127.0.0.1:8787/v1/status`
 - Runtime root: `~/.openteam/runtime/default`
 - Runtime DB: `~/.openteam/runtime/default/state/runtime.db`
+- Audit root: `~/.openteam/runtime/default/state/audit/`
 - Workspace root: `~/.openteam/workspace`
 
 停止运行时：
@@ -48,7 +49,7 @@ export OPENTEAM_LLM_API_KEY="<your_api_key>"
 
 `delivery-studio` 是当前默认的操作员入口：
 
-- 入口命令：`openteam cockpit --team delivery-studio --project <project_id>`
+- 入口命令：`./openteam cockpit --team delivery-studio --project <project_id>`
 - 真相源：`~/.openteam/workspace/projects/<project_id>/state/delivery_studio`
 - 评审闸门：`panel-review/blocking-gate` 加上仓库 CI
 - 任何 lock 之后的修改都必须作为新的 change request 进入流程

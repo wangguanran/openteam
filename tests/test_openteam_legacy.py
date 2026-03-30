@@ -1,10 +1,8 @@
-import argparse
 import contextlib
 import io
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +13,7 @@ import openteam_legacy
 
 
 class OpenTeamLegacyTests(unittest.TestCase):
-    def test_help_no_longer_lists_hub_cluster_or_node_commands(self) -> None:
+    def test_help_no_longer_lists_hub_cluster_node_or_db_commands(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as ctx:
             openteam_legacy.main(["--help"])
@@ -25,9 +23,10 @@ class OpenTeamLegacyTests(unittest.TestCase):
         self.assertNotIn(" hub ", out)
         self.assertNotIn(" cluster ", out)
         self.assertNotIn(" node ", out)
+        self.assertNotIn(" db ", out)
 
-    def test_removed_hub_cluster_and_node_commands_are_invalid(self) -> None:
-        for command in ("hub", "cluster", "node"):
+    def test_removed_hub_cluster_node_and_db_commands_are_invalid(self) -> None:
+        for command in ("hub", "cluster", "node", "db"):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ctx:
                 openteam_legacy.main([command, "--help"])

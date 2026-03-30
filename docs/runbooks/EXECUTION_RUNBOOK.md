@@ -2,6 +2,11 @@
 
 本文是 OpenTeam 当前的 operator runbook。默认场景只有一个：在本机运行一个单节点 OpenTeam，并以 `delivery-studio` 作为优先启动路径。
 
+最小任务流入口：
+
+- `./openteam task new --scope openteam --title "<title>"`
+- `./openteam task close <TASK_ID>`
+
 ## 1. 当前运行 contract
 
 - 单节点本地系统，不讲 Hub / Cluster / Node
@@ -98,7 +103,7 @@ sqlite3 ~/.openteam/runtime/default/state/runtime.db '.tables'
 ```text
 ~/.openteam/runtime/default/state/ledger/tasks/
 ~/.openteam/runtime/default/state/logs/tasks/
-~/.openteam/runtime/default/state/audits/
+~/.openteam/runtime/default/state/audit/
 ~/.openteam/workspace/projects/<project_id>/state/
 ```
 
@@ -106,7 +111,7 @@ sqlite3 ~/.openteam/runtime/default/state/runtime.db '.tables'
 
 - Repo 只放平台代码、模板、文档、测试
 - Workspace 只放 `project:<id>` 真相源
-- Runtime 只放本地控制面状态、`runtime.db`、OpenTeam 自身 ledger/logs/audits
+- Runtime 只放本地控制面状态、`runtime.db`、OpenTeam 自身 ledger/logs/audit
 
 若发现项目态文件混进仓库，先看迁移计划：
 

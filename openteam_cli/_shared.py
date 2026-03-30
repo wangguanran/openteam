@@ -19,10 +19,6 @@ except Exception:  # pragma: no cover
         tomli = None
 
 
-CONFIG_DIR = Path.home() / ".openteam"
-CONFIG_PATH = CONFIG_DIR / "config.toml"
-DEFAULT_WORKSPACE_ROOT = Path.home() / ".openteam" / "workspace"
-
 _PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -245,16 +241,42 @@ def _infer_task_id_from_branch(repo_root: Path) -> str:
         return ""
 
 
+def _openteam_home_dir() -> Path:
+    raw = str(os.getenv("OPENTEAM_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".openteam").resolve()
+
+
+def _config_dir() -> Path:
+    return _openteam_home_dir()
+
+
+def _config_path() -> Path:
+    return _config_dir() / "config.toml"
+
+
 def _ensure_config_dir() -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _config_dir().mkdir(parents=True, exist_ok=True)
+
+
+def _default_workspace_root() -> Path:
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
+    if home:
+        return (Path(home).expanduser().resolve() / "workspace").resolve()
+    runtime_root = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
+    if runtime_root:
+        return (Path(runtime_root).expanduser().resolve() / "workspace").resolve()
+    return ((Path.home() / ".openteam").resolve() / "workspace").resolve()
 
 
 def _load_config() -> dict[str, Any]:
-    if not CONFIG_PATH.exists():
+    config_path = _config_path()
+    if not config_path.exists():
         return {}
     if tomli is None:
         raise RuntimeError("Missing dependency: tomllib/tomli (install: python3 -m pip install --user tomli)")
-    with CONFIG_PATH.open("rb") as f:
+    with config_path.open("rb") as f:
         return tomli.load(f) or {}
 
 
@@ -287,7 +309,7 @@ def _dump_toml(cfg: dict[str, Any]) -> str:
 
 def _save_config(cfg: dict[str, Any]) -> None:
     _ensure_config_dir()
-    CONFIG_PATH.write_text(_dump_toml(cfg), encoding="utf-8")
+    _config_path().write_text(_dump_toml(cfg), encoding="utf-8")
 
 
 def _get_profile(cfg: dict[str, Any], name: Optional[str]) -> dict[str, Any]:
@@ -358,7 +380,7 @@ def _workspace_root_from_cfg(cfg: dict[str, Any]) -> Path:
     if not v:
         v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if not v:
-        v = str(DEFAULT_WORKSPACE_ROOT)
+        v = str(_default_workspace_root())
     return Path(v).expanduser().resolve()
 
 

@@ -18,10 +18,10 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from openteam_common import utc_now_iso, eprint  # noqa: E402
+from openteam_common import utc_now_iso  # noqa: E402
 
 import yaml
 
@@ -90,6 +90,16 @@ def default_runtime_root() -> Path:
     return (openteam_home() / "runtime" / "default").resolve()
 
 
+def default_workspace_root() -> Path:
+    home = str(os.getenv("OPENTEAM_HOME") or "").strip()
+    if home:
+        return (Path(home).expanduser().resolve() / "workspace").resolve()
+    runtime_override = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
+    if runtime_override:
+        return (Path(runtime_override).expanduser().resolve() / "workspace").resolve()
+    return ((Path.home() / ".openteam").resolve() / "workspace").resolve()
+
+
 def runtime_root(*, override: str = "") -> Path:
     """
     Resolve runtime root outside repo.
@@ -119,7 +129,7 @@ def workspace_root(*, override: str = "") -> Path:
     if not v:
         v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if not v:
-        v = str(runtime_workspace_root())
+        v = str(default_workspace_root())
     return Path(v).expanduser().resolve()
 
 
@@ -365,7 +375,7 @@ def add_default_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument(
         "--workspace-root",
         default="",
-        help="override workspace root (default: OPENTEAM_WORKSPACE_ROOT or <runtime_root>/workspace)",
+        help="override workspace root (default: OPENTEAM_WORKSPACE_ROOT or ~/.openteam/workspace)",
     )
 
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 import argparse
 
 from openteam_cli._shared import (
-    CONFIG_PATH,
-    DEFAULT_WORKSPACE_ROOT,
+    _config_path,
+    _default_workspace_root,
     _dump_toml,
     _load_config,
     _save_config,
@@ -14,12 +14,13 @@ from openteam_cli._shared import (
 
 
 def cmd_config_init(_args: argparse.Namespace) -> None:
-    if CONFIG_PATH.exists():
-        eprint(f"config_exists={CONFIG_PATH}")
+    config_path = _config_path()
+    if config_path.exists():
+        eprint(f"config_exists={config_path}")
         return
     cfg = {
         "current_profile": "local",
-        "workspace_root": str(DEFAULT_WORKSPACE_ROOT),
+        "workspace_root": str(_default_workspace_root()),
         "default_project_id": "openteam",
         "leader_only_writes": True,
         "profiles": {
@@ -31,7 +32,7 @@ def cmd_config_init(_args: argparse.Namespace) -> None:
         },
     }
     _save_config(cfg)
-    print(f"config_created={CONFIG_PATH}")
+    print(f"config_created={config_path}")
 
 
 def cmd_config_add_profile(args: argparse.Namespace) -> None:
@@ -57,5 +58,5 @@ def cmd_config_use(args: argparse.Namespace) -> None:
 
 def cmd_config_show(_args: argparse.Namespace) -> None:
     cfg = _load_config()
-    print(CONFIG_PATH)
+    print(_config_path())
     print(_dump_toml(cfg))

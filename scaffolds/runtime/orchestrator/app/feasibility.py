@@ -34,25 +34,60 @@ _MISSING_INFO_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 _FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
-    ("secrets_in_git_en", re.compile(r"commit\s+.*\b(token|password|api\s*key|secret)\b", re.IGNORECASE), "Policy forbids committing secrets into git."),
-    ("secrets_in_git_cn", re.compile(r"(提交|入库|写入).*(token|密钥|密码|api\s*key|secret)", re.IGNORECASE), "Policy forbids storing secrets into git."),
-    ("project_into_openteam_cn", re.compile(r"(把|将).*(项目|project).*(写入|放到).*(team-?os|Team\s*OS)", re.IGNORECASE), "Repo/workspace isolation forbids writing project truth sources into the openteam repo."),
+    (
+        "secrets_in_git_en",
+        re.compile(r"commit\s+.*\b(token|password|api\s*key|secret)\b", re.IGNORECASE),
+        "Policy forbids committing secrets into git.",
+    ),
+    (
+        "secrets_in_git_cn",
+        re.compile(r"(提交|入库|写入).*(token|密钥|密码|api\s*key|secret)", re.IGNORECASE),
+        "Policy forbids storing secrets into git.",
+    ),
+    (
+        "project_into_openteam_cn",
+        re.compile(r"(把|将).*(项目|project).*(写入|放到).*(team-?os|Team\s*OS)", re.IGNORECASE),
+        "Repo/workspace isolation forbids writing project truth sources into the openteam repo.",
+    ),
 ]
 
 _HIGH_RISK_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("rm_rf", re.compile(r"\brm\s+-rf\b"), "Data deletion (rm -rf) is high risk and requires approvals."),
-    ("force_push", re.compile(r"\bpush\s+--force(?:-with-lease)?\b", re.IGNORECASE), "Force push is high risk and requires approvals."),
-    ("public_port", re.compile(r"(0\.0\.0\.0|公网|public\s+port|expose\s+to\s+internet)", re.IGNORECASE), "Exposing public ports is high risk and requires approvals."),
-    ("system_config", re.compile(r"(sshd|防火墙|firewall|sysctl|kernel\s+param)", re.IGNORECASE), "System config changes are high risk and require approvals."),
-    ("prod_deploy", re.compile(r"(生产|线上|prod|production|deploy|发布|回滚|rollback)", re.IGNORECASE), "Production deploy/rollback/migration is high risk and requires approvals."),
-    ("github_repo_create_delete", re.compile(r"(create\s+repo|delete\s+repo|创建\s*repo|删除\s*repo|创建\s*仓库|删除\s*仓库)", re.IGNORECASE), "Creating/deleting GitHub repos is high risk and requires approvals."),
+    (
+        "force_push",
+        re.compile(r"\bpush\s+--force(?:-with-lease)?\b", re.IGNORECASE),
+        "Force push is high risk and requires approvals.",
+    ),
+    (
+        "public_port",
+        re.compile(r"(0\.0\.0\.0|公网|public\s+port|expose\s+to\s+internet)", re.IGNORECASE),
+        "Exposing public ports is high risk and requires approvals.",
+    ),
+    (
+        "system_config",
+        re.compile(r"(sshd|防火墙|firewall|sysctl|kernel\s+param)", re.IGNORECASE),
+        "System config changes are high risk and require approvals.",
+    ),
+    (
+        "prod_deploy",
+        re.compile(r"(生产|线上|prod|production|deploy|发布|回滚|rollback)", re.IGNORECASE),
+        "Production deploy/rollback/migration is high risk and requires approvals.",
+    ),
+    (
+        "github_repo_create_delete",
+        re.compile(r"(create\s+repo|delete\s+repo|创建\s*repo|删除\s*repo|创建\s*仓库|删除\s*仓库)", re.IGNORECASE),
+        "Creating/deleting GitHub repos is high risk and requires approvals.",
+    ),
 ]
 
 _DEPENDENCY_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
-    ("postgres", re.compile(r"\b(postgres|postgresql)\b", re.IGNORECASE), "PostgreSQL (OPENTEAM_DB_URL / psycopg)"),
-    ("redis", re.compile(r"\bredis\b", re.IGNORECASE), "Redis (optional)"),
-    ("github", re.compile(r"\bgithub\b|gh\s+cli|projects\s+v2", re.IGNORECASE), "GitHub API/Projects (gh auth required)"),
-    ("docker", re.compile(r"\bdocker\b", re.IGNORECASE), "Docker runtime"),
+    (
+        "github",
+        re.compile(r"\bgithub\b|gh\s+cli|projects\s+v2", re.IGNORECASE),
+        "GitHub API/Projects (gh auth required)",
+    ),
+    ("sqlite", re.compile(r"\bsqlite\b|runtime\\.db", re.IGNORECASE), "Local runtime DB (SQLite)"),
+    ("control_plane", re.compile(r"control\\s*plane|127\\.0\\.0\\.1:8787", re.IGNORECASE), "Local control plane"),
     ("oauth", re.compile(r"\boauth\b|codex\s+login|device\s+auth", re.IGNORECASE), "Codex OAuth (codex login)"),
 ]
 
@@ -68,7 +103,6 @@ def assess(*, scope: str, text: str) -> Feasibility:
     - Purely rule/regex based.
     """
     s = str(text or "")
-    lowered = s.lower()
     scope_s = str(scope or "").strip()
 
     blockers: list[str] = []
@@ -97,7 +131,10 @@ def assess(*, scope: str, text: str) -> Feasibility:
             blockers.append(msg)
     if forbidden_hits:
         evidence.append("forbidden_hits=" + ",".join(sorted(set(forbidden_hits))))
-        alternatives.append("Rewrite the requirement to comply with governance policies (no secrets in git; workspace separation).")
+        alternatives.append(
+            "Rewrite the requirement to comply with governance policies "
+            "(no secrets in git; workspace separation)."
+        )
 
     # High-risk detector (approvals required).
     high_risk_hits = []
@@ -107,7 +144,7 @@ def assess(*, scope: str, text: str) -> Feasibility:
             risks.append(msg)
     if high_risk_hits:
         evidence.append("high_risk_hits=" + ",".join(sorted(set(high_risk_hits))))
-        dependencies.append("Approvals engine (DB-backed) must approve before execution.")
+        dependencies.append("Local approvals/audit flow must approve before execution.")
 
     # Dependencies detector.
     dep_hits = []
@@ -120,8 +157,13 @@ def assess(*, scope: str, text: str) -> Feasibility:
 
     # Suggested deterministic plan scaffold.
     suggested_plan.append("Capture raw input (append-only) and generate feasibility report.")
-    suggested_plan.append("If NEEDS_INFO/NOT_FEASIBLE: create NEED_PM_DECISION item with report link; stop expansion.")
-    suggested_plan.append("If FEASIBLE/PARTIALLY_FEASIBLE: run drift/conflict checks; update requirements.yaml + REQUIREMENTS.md + CHANGELOG.md.")
+    suggested_plan.append(
+        "If NEEDS_INFO/NOT_FEASIBLE: create NEED_PM_DECISION item with report link; stop expansion."
+    )
+    suggested_plan.append(
+        "If FEASIBLE/PARTIALLY_FEASIBLE: run drift/conflict checks; "
+        "update requirements.yaml + REQUIREMENTS.md + CHANGELOG.md."
+    )
     suggested_plan.append("Trigger prompt compile / projects sync (gated) for the same scope.")
 
     # Outcome decision.

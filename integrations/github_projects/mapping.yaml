@@ -4,7 +4,7 @@ schema_version: 1
 # Truth source:
 # - scope=openteam: openteam repo (.openteam/ledger, docs/product/openteam/requirements)
 # - scope=project:<id>: Workspace (<WORKSPACE>/projects/<id>/state/{ledger,logs,requirements,plan,prompts})
-# - control-plane runtime state DB (sqlite/postgres)
+# - control-plane runtime state DB (sqlite)
 #
 # This file can be used to:
 # - bind OpenTeam project_id -> GitHub ProjectV2

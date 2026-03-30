@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import json
-from pathlib import Path
 from typing import Any
 
 
@@ -315,6 +314,10 @@ def _dump_node(value: Any, *, indent: int, sort_keys: bool, allow_unicode: bool)
         for key, item in items:
             dumped_key = str(key)
             if isinstance(item, (dict, list)):
+                if not item:
+                    empty = "{}" if isinstance(item, dict) else "[]"
+                    lines.append(f"{prefix}{dumped_key}: {empty}")
+                    continue
                 lines.append(f"{prefix}{dumped_key}:")
                 lines.extend(_dump_node(item, indent=indent + 2, sort_keys=sort_keys, allow_unicode=allow_unicode))
                 continue
@@ -332,6 +335,10 @@ def _dump_node(value: Any, *, indent: int, sort_keys: bool, allow_unicode: bool)
         lines = []
         for item in value:
             if isinstance(item, (dict, list)):
+                if not item:
+                    empty = "{}" if isinstance(item, dict) else "[]"
+                    lines.append(f"{prefix}- {empty}")
+                    continue
                 lines.append(f"{prefix}-")
                 lines.extend(_dump_node(item, indent=indent + 2, sort_keys=sort_keys, allow_unicode=allow_unicode))
                 continue

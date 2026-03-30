@@ -345,6 +345,46 @@ def run_team_iteration(*, team_id: str, db: Any, spec: Any, actor: str, run_id: 
         if workflow.phase == workflow_registry.PHASE_FINDING and workflow.enabled
     ]
     if not workflows:
+        manual_entry_workflows = [
+            workflow
+            for workflow in workflow_registry.list_workflows(team_id=normalized_team_id, project_id=project_id)
+            if workflow.enabled and str(getattr(workflow, "phase", "") or "").strip() != workflow_registry.PHASE_FINDING
+        ]
+        if manual_entry_workflows:
+            payload = {
+                "ok": True,
+                "ready": True,
+                "reason": "manual_request_entrypoint",
+                "team_id": normalized_team_id,
+                "run_id": run_id,
+                "target_id": target_id,
+                "repo_root": str(repo_root),
+                "repo_locator": repo_locator,
+                "project_id": project_id,
+                "trigger": trigger,
+                "entrypoint_workflows": [str(workflow.workflow_id) for workflow in manual_entry_workflows],
+                "crewai": crewai_info,
+            }
+            proposal_runtime._merge_state_last_run(
+                target_id,
+                {
+                    "ts": proposal_runtime._utc_now_iso(),
+                    "team_id": normalized_team_id,
+                    "target_id": target_id,
+                    "repo_root": str(repo_root),
+                    "repo_locator": repo_locator,
+                    "status": "READY",
+                    "reason": "manual_request_entrypoint",
+                },
+            )
+            db.add_event(
+                event_type="TEAM_WORKFLOW_READY",
+                actor=actor,
+                project_id=project_id,
+                workstream_id=workstream_id,
+                payload=payload,
+            )
+            return payload
         payload = {
             "ok": True,
             "skipped": True,

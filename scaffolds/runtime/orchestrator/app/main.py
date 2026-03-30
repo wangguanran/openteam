@@ -22,7 +22,7 @@ from . import codex_llm
 from .demo_seed import seed_mock_data
 from . import github_checks_client
 from .github_projects_client import GitHubAPIError, GitHubAuthError, GitHubGraphQL, RATE_LIMIT_QUERY, resolve_github_token
-from .panel_github_sync import GitHubProjectsPanelSync, PanelSyncError
+from .panel_github_sync import GitHubProjectsPanelSync
 from .panel_mapping import PanelMappingError, load_mapping
 from .plan_store import list_milestones
 from . import observability
@@ -1701,7 +1701,12 @@ def healthz(response: Response):
         and checks["orchestrator_exists"]
         and bool(crewai_info.get("importable"))
     )
-    db = {"backend": ("postgres" if (os.getenv("OPENTEAM_DB_URL") or "").strip() else "sqlite"), "ok": True, "error": ""}
+    db = {
+        "backend": "sqlite",
+        "ok": True,
+        "error": "",
+        "path": str(os.getenv("OPENTEAM_RUNTIME_DB_PATH") or (runtime_root() / "state" / "runtime.db")),
+    }
     try:
         # Minimal DB probe (no side effects).
         _ = DB.list_events(after_id=0, limit=1)
@@ -1733,6 +1738,10 @@ def v1_status():
     task_run_sync = _task_run_sync_summary(tasks=tasks, runs=runs)
     crewai_info = engine_runtime.probe_crewai()
     milestones = [m.__dict__ for m in list_milestones("openteam")]
+    runtime_db = {
+        "backend": "sqlite",
+        "path": str(os.getenv("OPENTEAM_RUNTIME_DB_PATH") or (runtime_root() / "state" / "runtime.db")),
+    }
     target_summaries: list[dict[str, Any]] = []
     for target in targets:
         tid = str(target.get("target_id") or "").strip()
@@ -1820,6 +1829,7 @@ def v1_status():
     return {
         "instance_id": instance_id,
         "default_team_id": default_team_id,
+        "runtime_db": runtime_db,
         "workspace_root": ws_root,
         "workspace_projects_count": len(_list_workspace_projects()),
         "current_focus": focus,
@@ -2524,45 +2534,8 @@ def v1_recovery_scan():
     _require_leader_write()
 
     def _pending_approvals(task_id: str) -> list[dict[str, Any]]:
-        dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
-        if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
-            return []
-        try:
-            import psycopg  # type: ignore
-            from psycopg.rows import dict_row  # type: ignore
-        except Exception:
-            return []
-        try:
-            conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3)
-        except Exception:
-            return []
-        try:
-            with conn.cursor() as cur:
-                rows = cur.execute(
-                    """
-                    SELECT approval_id, status, category, risk_level, action_kind, requested_at
-                    FROM approvals
-                    WHERE task_id=%s AND status='REQUESTED'
-                    ORDER BY requested_at DESC
-                    LIMIT 50
-                    """,
-                    (str(task_id),),
-                ).fetchall()
-            out: list[dict[str, Any]] = []
-            for r in rows or []:
-                d = dict(r)
-                # psycopg may return datetime objects for requested_at
-                if d.get("requested_at") is not None:
-                    d["requested_at"] = str(d["requested_at"])
-                out.append(d)
-            return out
-        except Exception:
-            return []
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        _ = task_id
+        return []
 
     def _gates_for_task(t: dict[str, Any]) -> list[dict[str, Any]]:
         gates: list[dict[str, Any]] = []
@@ -2604,38 +2577,8 @@ def v1_recovery_resume(payload: RecoveryResumeIn):
     _require_leader_write()
 
     def _pending_approvals(task_id: str) -> list[dict[str, Any]]:
-        dsn = str(os.getenv("OPENTEAM_DB_URL") or "").strip()
-        if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
-            return []
-        try:
-            import psycopg  # type: ignore
-            from psycopg.rows import dict_row  # type: ignore
-        except Exception:
-            return []
-        try:
-            conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=3)
-        except Exception:
-            return []
-        try:
-            with conn.cursor() as cur:
-                rows = cur.execute(
-                    "SELECT approval_id, status, category, action_kind, requested_at FROM approvals WHERE task_id=%s AND status='REQUESTED' ORDER BY requested_at DESC LIMIT 50",
-                    (str(task_id),),
-                ).fetchall()
-            out: list[dict[str, Any]] = []
-            for r in rows or []:
-                d = dict(r)
-                if d.get("requested_at") is not None:
-                    d["requested_at"] = str(d["requested_at"])
-                out.append(d)
-            return out
-        except Exception:
-            return []
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        _ = task_id
+        return []
 
     def _gates_for_task(t: dict[str, Any]) -> list[dict[str, Any]]:
         gates: list[dict[str, Any]] = []

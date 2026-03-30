@@ -5,14 +5,13 @@ OpenTeam policy checks (local, no remote writes).
 This script codifies non-negotiable norms that should not live only in docs:
 - No secrets in git
 - Repo vs Workspace separation (openteam repo stays repo-pure)
-- Runtime template must mount Workspace for all project truth sources
+- Active operator docs must keep the single-node local contract
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -145,23 +144,23 @@ def run_checks(*, repo_root: Path) -> CheckResult:
         sample = [f"{str(v.get('kind') or '')}:{str(v.get('path') or '')}" for v in purity_violations[:10]]
         failures.append(f"repo purity violations detected ({len(purity_violations)}): {sample}")
 
-    # 4) runtime template should mount Workspace (for containers)
-    compose_tpl = repo_root / "scaffolds" / "runtime" / "docker-compose.yml"
-    if compose_tpl.exists():
-        text = compose_tpl.read_text(encoding="utf-8", errors="replace")
-        if "OPENTEAM_WORKSPACE_ROOT" not in text:
-            failures.append("runtime template missing OPENTEAM_WORKSPACE_ROOT env (workspace support)")
-        if "/openteam-workspace" not in text:
-            failures.append("runtime template missing /openteam-workspace mount (workspace support)")
-    else:
-        warnings.append("runtime template docker-compose.yml missing (cannot verify workspace mount policy)")
+    # 4) Active operator docs must codify the single-node contract.
+    single_node_docs: list[tuple[Path, list[str]]] = [
+        (repo_root / "README.md", ["single-node local system", "delivery-studio", "runtime.db"]),
+        (repo_root / "OPENTEAM.md", ["single-node local system", "delivery-studio", "runtime.db"]),
+        (repo_root / "scaffolds" / "runtime" / "README.md", ["单节点", "~/.openteam/workspace", "127.0.0.1:8787"]),
+    ]
+    for p, needles in single_node_docs:
+        missing_phrases = _missing_phrases(p, needles)
+        if missing_phrases:
+            failures.append(f"{p} missing required phrases: {missing_phrases}")
 
     # 5) AGENTS/governance docs must codify the canonical task workflow.
     # This prevents drift back to ad-hoc changes that bypass the task gate.
     doc_checks: list[tuple[Path, list[str]]] = [
         (repo_root / "AGENTS.md", ["./openteam task new --scope openteam", "./openteam task close"]),
-        (repo_root / "docs" / "GOVERNANCE.md", ["./openteam task close"]),
-        (repo_root / "docs" / "EXECUTION_RUNBOOK.md", ["./openteam task new", "./openteam task close"]),
+        (repo_root / "docs" / "product" / "GOVERNANCE.md", ["./openteam task close"]),
+        (repo_root / "docs" / "runbooks" / "EXECUTION_RUNBOOK.md", ["./openteam task new", "./openteam task close"]),
     ]
     for p, needles in doc_checks:
         missing_phrases = _missing_phrases(p, needles)

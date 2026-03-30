@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+from . import requirements_store
 
 
 class WorkspaceError(Exception):
@@ -53,13 +54,18 @@ def workspace_root() -> Path:
     """
     Workspace root (outside the openteam git repo).
 
-    Default: <runtime_root>/workspace
+    Default: <OPENTEAM_HOME>/workspace
     Override:
-    - env OPENTEAM_WORKSPACE_ROOT (recommended for control-plane container)
+    - env OPENTEAM_WORKSPACE_ROOT
     """
     v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT", "")).strip()
     if not v:
-        v = str(runtime_root() / "workspace")
+        if str(os.getenv("OPENTEAM_HOME") or "").strip():
+            v = str(_openteam_home() / "workspace")
+        elif str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip():
+            v = str(runtime_root() / "workspace")
+        else:
+            v = str((Path.home() / ".openteam").resolve() / "workspace")
     return _expand(v)
 
 
@@ -173,10 +179,6 @@ def kb_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
     return project_state_dir(project_id, root=root) / "kb"
 
 
-def cluster_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
-    return project_state_dir(project_id, root=root) / "cluster"
-
-
 def conversations_dir(project_id: str, *, root: Optional[Path] = None) -> Path:
     return project_state_dir(project_id, root=root) / "ledger" / "conversations" / _safe_project_id(project_id)
 
@@ -219,15 +221,11 @@ def ensure_project_scaffold(project_id: str, *, root: Optional[Path] = None) -> 
     (s / "logs" / "tasks").mkdir(parents=True, exist_ok=True)
     (s / "logs" / "teams").mkdir(parents=True, exist_ok=True)
     (s / "locks").mkdir(parents=True, exist_ok=True)
-    (s / "requirements" / "conflicts").mkdir(parents=True, exist_ok=True)
-    (s / "requirements" / "baseline").mkdir(parents=True, exist_ok=True)
-    raw = s / "requirements" / "raw_inputs.jsonl"
-    if not raw.exists():
-        raw.write_text("", encoding="utf-8")
+    (s / "ledger" / "conversations" / pid).mkdir(parents=True, exist_ok=True)
     (s / "prompts").mkdir(parents=True, exist_ok=True)
     (s / "kb").mkdir(parents=True, exist_ok=True)
-    (s / "cluster").mkdir(parents=True, exist_ok=True)
     (s / "delivery_studio" / "requests").mkdir(parents=True, exist_ok=True)
+    requirements_store.ensure_scaffold(s / "requirements", project_id=pid)
 
     # Minimal prompt skeleton (project-scoped, lives in workspace).
     mp = s / "prompts" / "MASTER_PROMPT.md"

@@ -56,7 +56,16 @@ def repo_root() -> Path:
 def workspace_root() -> Path:
     v = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
     if not v:
-        v = str(Path.home() / ".openteam" / "workspace")
+        home = str(os.getenv("OPENTEAM_HOME") or "").strip()
+        if home:
+            base = Path(home).expanduser().resolve()
+            v = str(base / "workspace")
+        else:
+            runtime_root = str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip()
+            if runtime_root:
+                v = str(Path(runtime_root).expanduser().resolve() / "workspace")
+            else:
+                v = str((Path.home() / ".openteam").resolve() / "workspace")
     return Path(v).expanduser().resolve()
 
 

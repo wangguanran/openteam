@@ -5,7 +5,7 @@
 ## Operator Flow
 
 ```bash
-openteam cockpit --team delivery-studio --project <project_id>
+./openteam cockpit --team delivery-studio --project <project_id>
 ```
 
 建议流程：

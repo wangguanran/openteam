@@ -11,8 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from _common import PipelineError, add_default_args, append_jsonl, resolve_repo_root, runtime_root, utc_now_iso
-from _db import connect, get_db_url
-from db_migrate import apply_migrations as _apply_migrations
+from installer_knowledge import upsert_fallback as upsert_installer_knowledge_fallback
 
 
 def _emit_json(obj: dict[str, Any]) -> None:
@@ -94,7 +93,7 @@ def classify_failure(*, component: str, stage: str, stdout: str, stderr: str, ok
     if "permission denied" in blob and ("install -m" in blob or "mkdir -p" in blob or stg.startswith("ssh")):
         return {"category": "REMOTE_PERMISSION", "retryable": False, "remediation": "verify write permission on remote ~/.openteam paths"}
 
-    if "missing hub env" in blob or "missing required postgres config" in blob or "missing required redis config" in blob:
+    if "missing runtime db config" in blob or "missing local runtime config" in blob:
         return {
             "category": "BRAIN_CONFIG_MISSING",
             "retryable": False,
@@ -102,59 +101,19 @@ def classify_failure(*, component: str, stage: str, stdout: str, stderr: str, ok
         }
 
     if stg.startswith("scp"):
-        return {"category": "SCP_FAILED", "retryable": True, "remediation": "check ssh/scp connectivity and remote reachability, then retry"}
+        return {
+            "category": "SCP_FAILED",
+            "retryable": True,
+            "remediation": "check ssh/scp connectivity and remote reachability, then retry",
+        }
     if stg.startswith("ssh"):
-        return {"category": "SSH_REMOTE_COMMAND_FAILED", "retryable": False, "remediation": "inspect remote command stderr and fix remote state"}
+        return {
+            "category": "SSH_REMOTE_COMMAND_FAILED",
+            "retryable": False,
+            "remediation": "inspect remote command stderr and fix remote state",
+        }
 
     return {"category": "UNKNOWN", "retryable": False, "remediation": "inspect installer stderr/stdout and classify manually"}
-
-
-def _ensure_db_schema(conn, *, repo_root: Path) -> None:
-    mig_dir = repo_root / "tooling" / "migrations"
-    migrations: list[tuple[str, Path]] = []
-    for p in sorted(mig_dir.glob("*.sql")):
-        name = p.name
-        if len(name) >= 4 and name[:4].isdigit():
-            migrations.append((name[:4], p))
-    if migrations:
-        _apply_migrations(conn, migrations)
-
-
-def _db_insert_run(conn, row: dict[str, Any]) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO installer_runs (
-              run_id, ts, instance_id, target_host, ok, category, detail
-            ) VALUES (
-              %s,%s,%s,%s,%s,%s,%s::jsonb
-            )
-            """,
-            (
-                row["run_id"],
-                row["ts"],
-                row.get("instance_id", ""),
-                row.get("target_host", ""),
-                bool(row.get("ok")),
-                row.get("category", ""),
-                json.dumps(row.get("detail") or {}, ensure_ascii=False),
-            ),
-        )
-    conn.commit()
-
-
-def _db_upsert_knowledge(conn, *, key: str, value: dict[str, Any]) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO installer_knowledge (key, value, updated_at)
-            VALUES (%s, %s::jsonb, now())
-            ON CONFLICT (key)
-            DO UPDATE SET value=EXCLUDED.value, updated_at=now()
-            """,
-            (str(key), json.dumps(value, ensure_ascii=False)),
-        )
-    conn.commit()
 
 
 def _fallback_path(*, runtime_root_override: str) -> Path:
@@ -238,7 +197,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
 
 
 def cmd_record(args: argparse.Namespace) -> int:
-    repo = resolve_repo_root(args)
+    _ = resolve_repo_root(args)
     data = _normalize_input(_load_input(args))
 
     cls = classify_failure(
@@ -278,50 +237,33 @@ def cmd_record(args: argparse.Namespace) -> int:
         "updated_at": now,
     }
 
-    dsn = get_db_url(override=str(getattr(args, "db_url", "") or ""))
-    db_enabled = bool(str(dsn or "").strip())
-    db_error: Optional[str] = None
     fallback_path: Optional[Path] = None
-
-    if db_enabled:
-        conn = None
-        try:
-            conn = connect(dsn)
-            _ensure_db_schema(conn, repo_root=repo)
-            _db_insert_run(conn, run)
-            _db_upsert_knowledge(conn, key=knowledge_key, value=knowledge_value)
-        except Exception as e:
-            db_error = str(e)
-            db_enabled = False
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-    if not db_enabled:
-        event = {
-            "ts": now,
-            "event": "INSTALLER_RUN",
-            "pending_sync": True,
-            "run": run,
-            "classification": cls,
-            "knowledge": {"key": knowledge_key, "value": knowledge_value},
-            "db_error": db_error or "",
-        }
-        fallback_path = _write_fallback(runtime_root_override=str(getattr(args, "runtime_root", "") or ""), event=event)
+    event = {
+        "ts": now,
+        "event": "INSTALLER_RUN",
+        "pending_sync": True,
+        "run": run,
+        "classification": cls,
+        "knowledge": {"key": knowledge_key, "value": knowledge_value},
+        "db_error": "",
+    }
+    fallback_path = _write_fallback(runtime_root_override=str(getattr(args, "runtime_root", "") or ""), event=event)
+    knowledge_path = upsert_installer_knowledge_fallback(
+        runtime_root_override=str(getattr(args, "runtime_root", "") or ""),
+        key=knowledge_key,
+        value=knowledge_value,
+        dry_run=False,
+    )
 
     out: dict[str, Any] = {
         "ok": True,
         "run": {k: v for k, v in run.items() if k != "detail"},
         "classification": cls,
-        "db": {"enabled": db_enabled},
+        "db": {"enabled": False},
     }
     if fallback_path is not None:
         out["fallback_path"] = str(fallback_path)
-    if db_error:
-        out["db_error"] = db_error
+    out["knowledge_path"] = str(knowledge_path)
     _emit_json(out)
     return 0
 
@@ -329,7 +271,7 @@ def cmd_record(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Deterministic installer run classifier/recorder")
     add_default_args(ap)
-    ap.add_argument("--db-url", default="", help="override OPENTEAM_DB_URL")
+    ap.add_argument("--db-url", default="", help="deprecated in single-node mode; ignored")
     ap.add_argument("--runtime-root", default="", help="override runtime root (fallback audit path)")
     ap.add_argument("--instance-id", default="", help="override installer instance id")
     ap.add_argument("--input-json", default="", help="JSON object for classifier input; '-' means stdin")

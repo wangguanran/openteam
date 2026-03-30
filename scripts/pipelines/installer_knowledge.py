@@ -2,25 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from _common import PipelineError, add_default_args, default_runtime_root, resolve_repo_root, runtime_state_root, write_json
-from _db import connect, get_db_url
-from db_migrate import apply_migrations
+from _common import PipelineError, add_default_args, resolve_repo_root, runtime_state_root, write_json
 
 
-def _migrations(repo: Path) -> list[tuple[str, Path]]:
-    out: list[tuple[str, Path]] = []
-    for p in sorted((repo / "tooling" / "migrations").glob("*.sql")):
-        if len(p.name) >= 4 and p.name[:4].isdigit():
-            out.append((p.name[:4], p))
-    return out
-
-
-def _fallback_path(repo: Path) -> Path:
-    rt = runtime_state_root(override=str(default_runtime_root()))
+def _fallback_path(*, runtime_root_override: str = ""):
+    rt = runtime_state_root(override=runtime_root_override)
     return rt / "audit" / "installer_knowledge.json"
 
 
@@ -32,6 +24,39 @@ def _load_fallback(path: Path) -> dict[str, Any]:
         return obj if isinstance(obj, dict) else {}
     except Exception:
         return {}
+
+
+def _lock_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".lock")
+
+
+@contextlib.contextmanager
+def _exclusive_fallback_lock(path: Path):
+    lock_path = _lock_path(path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except Exception:
+            pass
+        os.close(fd)
+
+
+def upsert_fallback(*, runtime_root_override: str, key: str, value: dict[str, Any], dry_run: bool = False):
+    path = _fallback_path(runtime_root_override=runtime_root_override)
+    with _exclusive_fallback_lock(path):
+        data = _load_fallback(path)
+        data[str(key)] = value
+        write_json(path, data, dry_run=dry_run)
+    return path
 
 
 def _upsert_db(conn: Any, key: str, value: dict[str, Any]) -> None:
@@ -63,7 +88,10 @@ def _get_db(conn: Any, key: str) -> dict[str, Any]:
 
 def _list_db(conn: Any, limit: int) -> list[dict[str, Any]]:
     with conn.cursor() as cur:
-        rows = cur.execute("SELECT key, value, updated_at FROM installer_knowledge ORDER BY updated_at DESC LIMIT %s", (int(limit),)).fetchall()
+        rows = cur.execute(
+            "SELECT key, value, updated_at FROM installer_knowledge ORDER BY updated_at DESC LIMIT %s",
+            (int(limit),),
+        ).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows or []:
         d = dict(r)
@@ -78,9 +106,10 @@ def _list_db(conn: Any, limit: int) -> list[dict[str, Any]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Installer knowledge store (DB first, runtime fallback)")
+    ap = argparse.ArgumentParser(description="Installer knowledge store (single-node runtime fallback)")
     add_default_args(ap)
-    ap.add_argument("--db-url", default="")
+    ap.add_argument("--db-url", default="", help="deprecated in single-node mode; ignored")
+    ap.add_argument("--runtime-root", default="", help="override runtime root for fallback storage")
     ap.add_argument("--json", action="store_true")
     sp = ap.add_subparsers(dest="cmd", required=True)
 
@@ -96,22 +125,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     repo = resolve_repo_root(args)
-    dsn = get_db_url(override=str(args.db_url or ""))
+    _ = repo
 
-    out: dict[str, Any] = {"ok": True, "db": {"enabled": bool(dsn)}}
+    out: dict[str, Any] = {"ok": True, "db": {"enabled": False}}
 
-    conn = None
-    if dsn:
-        try:
-            conn = connect(dsn)
-            mig = _migrations(repo)
-            if mig:
-                apply_migrations(conn, mig)
-        except Exception as e:
-            out["db"] = {"enabled": False, "error": str(e)[:300]}
-            conn = None
-
-    fb = _fallback_path(repo)
+    fb = _fallback_path(runtime_root_override=str(getattr(args, "runtime_root", "") or ""))
     fb.parent.mkdir(parents=True, exist_ok=True)
 
     if args.cmd == "upsert":
@@ -122,42 +140,26 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(value_obj, dict):
             raise PipelineError("--value-json must be a JSON object")
 
-        if conn is not None:
-            _upsert_db(conn, str(args.key), value_obj)
-            out["stored"] = {"key": str(args.key), "backend": "db"}
-        else:
-            data = _load_fallback(fb)
-            data[str(args.key)] = value_obj
-            write_json(fb, data, dry_run=False)
-            out["stored"] = {"key": str(args.key), "backend": "fallback", "path": str(fb)}
+        fb = upsert_fallback(
+            runtime_root_override=str(getattr(args, "runtime_root", "") or ""),
+            key=str(args.key),
+            value=value_obj,
+            dry_run=False,
+        )
+        out["stored"] = {"key": str(args.key), "backend": "fallback", "path": str(fb)}
 
     elif args.cmd == "get":
-        if conn is not None:
-            item = _get_db(conn, str(args.key))
-            out["item"] = item
-            out["backend"] = "db"
-        else:
-            data = _load_fallback(fb)
-            out["item"] = {"key": str(args.key), "value": (data.get(str(args.key)) or {})}
-            out["backend"] = "fallback"
-            out["path"] = str(fb)
+        data = _load_fallback(fb)
+        out["item"] = {"key": str(args.key), "value": (data.get(str(args.key)) or {})}
+        out["backend"] = "fallback"
+        out["path"] = str(fb)
 
     else:
-        if conn is not None:
-            out["items"] = _list_db(conn, int(args.limit))
-            out["backend"] = "db"
-        else:
-            data = _load_fallback(fb)
-            items = [{"key": k, "value": v} for k, v in data.items()]
-            out["items"] = items[: int(args.limit)]
-            out["backend"] = "fallback"
-            out["path"] = str(fb)
-
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        data = _load_fallback(fb)
+        items = [{"key": k, "value": v} for k, v in data.items()]
+        out["items"] = items[: int(args.limit)]
+        out["backend"] = "fallback"
+        out["path"] = str(fb)
 
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))

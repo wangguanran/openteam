@@ -40,7 +40,7 @@
 审批记录必须出现在任务日志中。当前单节点模式下，审批与审计证据默认记录在本地 runtime：
 
 - `~/.openteam/runtime/default/state/runtime.db`
-- `~/.openteam/runtime/default/state/audits/`
+- `~/.openteam/runtime/default/state/audit/`
 
 查看审批记录：
 
@@ -70,7 +70,7 @@
 
 - Repo：平台代码、模板、文档、测试
 - Workspace：任何 `project:<id>` 真相源
-- Runtime：OpenTeam 自身 ledger、logs、audits、`runtime.db`
+- Runtime：OpenTeam 自身 ledger、logs、audit、`runtime.db`
 
 强制执行：
 

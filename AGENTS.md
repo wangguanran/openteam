@@ -332,6 +332,11 @@ Agent 输出必须显式区分：
 
 ## 8. Agent 的输出与沟通格式
 
+最小任务流入口应在文档中保持可见：
+
+- `./openteam task new --scope openteam --title "<title>"`
+- `./openteam task close <TASK_ID>`
+
 每次较完整的工作输出建议至少包含：
 
 1. **Context**：我针对什么目标、什么范围工作

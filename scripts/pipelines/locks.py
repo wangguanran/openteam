@@ -2,18 +2,12 @@
 """
 Deterministic locking (repo lock + scope lock).
 
-Design:
-- Preferred: Postgres advisory lock when OPENTEAM_DB_URL is available.
-- Fallback: file lock with TTL + heartbeat renew (crash recovery).
-
-Notes:
-- This module is intentionally dependency-light (stdlib; optional psycopg).
-- Lock files store holder metadata for diagnostics.
+Single-node OpenTeam uses only local file locks with TTL + heartbeat renew
+for crash recovery. Lock files store holder metadata for diagnostics.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import socket
@@ -27,7 +21,7 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from openteam_common import utc_now_iso as _utc_now_iso
 
-from _common import runtime_state_root, runtime_workspace_root
+from _common import runtime_state_root, workspace_root as default_workspace_root
 
 
 class LockBusy(RuntimeError):
@@ -37,14 +31,6 @@ class LockBusy(RuntimeError):
         self.holder = holder or {}
         self.waited_sec = float(waited_sec)
         super().__init__(f"LOCK_BUSY lock_key={lock_key} backend={backend} waited_sec={waited_sec:.2f} holder={self.holder}")
-
-
-class DbUnavailable(RuntimeError):
-    """
-    Raised when OPENTEAM_DB_URL is configured but the DB backend cannot be used
-    (missing driver / connection failure). This allows falling back to file
-    locks without conflating "lock contention" with "DB unavailable".
-    """
 
 
 def _iso_from_epoch(ts: float) -> str:
@@ -69,18 +55,6 @@ def _epoch_from_iso(s: str) -> float:
         return 0.0
 
 
-def _advisory_key64(lock_key: str) -> int:
-    """
-    Postgres advisory locks accept BIGINT (signed int64).
-    Derive a stable signed 64-bit int from lock_key.
-    """
-    h = hashlib.sha256(str(lock_key).encode("utf-8")).digest()[:8]
-    u = int.from_bytes(h, "big", signed=False)
-    if u >= 2**63:
-        return int(u - 2**64)
-    return int(u)
-
-
 def _default_holder(*, instance_id: str = "", agent_id: str = "", task_id: str = "") -> dict[str, Any]:
     return {
         "instance_id": str(instance_id or "").strip(),
@@ -89,10 +63,6 @@ def _default_holder(*, instance_id: str = "", agent_id: str = "", task_id: str =
         "pid": os.getpid(),
         "hostname": socket.gethostname(),
     }
-
-
-def _db_dsn() -> str:
-    return str(os.getenv("OPENTEAM_DB_URL") or "").strip()
 
 
 def _runtime_override_for_repo(repo_root: Path) -> str:
@@ -105,21 +75,6 @@ def _runtime_override_for_repo(repo_root: Path) -> str:
     if home:
         return str((Path(home).expanduser().resolve() / "runtime" / "default").resolve())
     return str((Path.home() / ".openteam" / "runtime" / "default").resolve())
-
-
-def _can_use_db(dsn: str) -> bool:
-    s = str(dsn or "").strip().lower()
-    return bool(s) and (s.startswith("postgres://") or s.startswith("postgresql://"))
-
-
-def _connect_db(dsn: str):
-    import psycopg  # type: ignore
-
-    # Keep short connect timeout for lock acquisition.
-    try:
-        return psycopg.connect(dsn, connect_timeout=5)
-    except TypeError:  # pragma: no cover
-        return psycopg.connect(dsn)
 
 
 def _read_lock_file(path: Path) -> dict[str, Any]:
@@ -148,12 +103,11 @@ def _is_expired(meta: dict[str, Any], *, now_epoch: float) -> bool:
 @dataclass
 class LockHandle:
     lock_key: str
-    backend: str  # db_advisory | file
+    backend: str  # file
     holder: dict[str, Any]
     acquired_at: str
     expires_at: str
     _lock_path: Optional[Path] = None
-    _conn: Any = None
     _stop: Optional[threading.Event] = None
     _renew_thread: Optional[threading.Thread] = None
     _ttl_sec: int = 0
@@ -185,25 +139,12 @@ class LockHandle:
         except Exception:
             pass
 
-        if self.backend == "db_advisory":
-            try:
-                if self._conn is not None:
-                    k = _advisory_key64(self.lock_key)
-                    with self._conn.cursor() as cur:
-                        cur.execute("SELECT pg_advisory_unlock(%s)", (k,))
-                    self._conn.close()
-            except Exception:
-                try:
-                    if self._conn is not None:
-                        self._conn.close()
-                except Exception:
-                    pass
-            return
-
         if self.backend == "file" and self._lock_path is not None:
             try:
                 meta = _read_lock_file(self._lock_path)
-                if str(meta.get("holder", {}).get("pid")) == str(self.holder.get("pid")) and str(meta.get("holder", {}).get("hostname")) == str(self.holder.get("hostname")):
+                same_pid = str(meta.get("holder", {}).get("pid")) == str(self.holder.get("pid"))
+                same_host = str(meta.get("holder", {}).get("hostname")) == str(self.holder.get("hostname"))
+                if same_pid and same_host:
                     try:
                         self._lock_path.unlink(missing_ok=True)  # type: ignore[arg-type]
                     except TypeError:  # pragma: no cover (py<3.8)
@@ -298,67 +239,15 @@ def _acquire_file_lock(
                     pass
 
             if now >= deadline:
-                raise LockBusy(lock_key=lock_key, backend="file", holder=meta.get("holder") if isinstance(meta, dict) else {}, waited_sec=time.time() - start)
+                raise LockBusy(
+                    lock_key=lock_key,
+                    backend="file",
+                    holder=meta.get("holder") if isinstance(meta, dict) else {},
+                    waited_sec=time.time() - start,
+                )
             time.sleep(max(0.05, float(poll_sec or 0.2)))
 
-
-def _acquire_db_advisory_lock(
-    *,
-    lock_key: str,
-    dsn: str,
-    holder: dict[str, Any],
-    wait_sec: float,
-    poll_sec: float,
-) -> LockHandle:
-    start = time.time()
-    deadline = start + float(wait_sec or 0)
-    key = _advisory_key64(lock_key)
-    connected_once = False
-    last_err = ""
-
-    while True:
-        conn = None
-        try:
-            conn = _connect_db(dsn)
-            connected_once = True
-            with conn.cursor() as cur:
-                cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (key,))
-                row = cur.fetchone()
-                ok = False
-                try:
-                    ok = bool((row[0] if isinstance(row, (list, tuple)) else row.get("ok")) if row is not None else False)
-                except Exception:
-                    ok = False
-            if ok:
-                # Keep connection open while holding the lock.
-                return LockHandle(
-                    lock_key=lock_key,
-                    backend="db_advisory",
-                    holder=holder,
-                    acquired_at=_utc_now_iso(),
-                    expires_at="",
-                    _conn=conn,
-                )
-            try:
-                conn.close()
-            except Exception:
-                pass
-        except Exception as e:
-            last_err = str(e)[:200]
-            try:
-                if conn is not None:
-                    conn.close()
-            except Exception:
-                pass
-
-        if time.time() >= deadline:
-            if not connected_once:
-                raise DbUnavailable(f"db_unavailable lock_key={lock_key} err={last_err}")
-            raise LockBusy(lock_key=lock_key, backend="db_advisory", holder=None, waited_sec=time.time() - start)
-        time.sleep(max(0.05, float(poll_sec or 0.2)))
-
-
-def _acquire_lock_with_preferred_backends(
+def _acquire_lock(
     *,
     lock_key: str,
     holder: dict[str, Any],
@@ -366,29 +255,7 @@ def _acquire_lock_with_preferred_backends(
     ttl_sec: int,
     wait_sec: float,
     poll_sec: float,
-    prefer_db: bool,
 ) -> LockHandle:
-    """
-    Backend order is deterministic:
-    1) Postgres advisory lock when OPENTEAM_DB_URL is configured and prefer_db=True.
-       - Lock contention surfaces as LOCK_BUSY (no downgrade to file lock).
-       - DB-unavailable falls back to file lock.
-    2) File lock fallback.
-    """
-    dsn = _db_dsn()
-    if prefer_db and _can_use_db(dsn):
-        try:
-            return _acquire_db_advisory_lock(
-                lock_key=lock_key,
-                dsn=dsn,
-                holder=holder,
-                wait_sec=wait_sec,
-                poll_sec=poll_sec,
-            )
-        except LockBusy:
-            raise
-        except DbUnavailable:
-            pass
     return _acquire_file_lock(
         lock_key=lock_key,
         lock_path=lock_path,
@@ -408,23 +275,20 @@ def acquire_repo_lock(
     ttl_sec: int = 120,
     wait_sec: float = 30.0,
     poll_sec: float = 0.2,
-    prefer_db: bool = True,
 ) -> LockHandle:
     rr = (repo_root or Path.cwd()).resolve()
-    # Keep the DB advisory lock key stable across machines (repo path may differ).
     lock_key = "repo:openteam"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
 
     lock_dir = runtime_state_root(override=_runtime_override_for_repo(rr)) / "locks"
     lock_path = lock_dir / "repo.lock"
-    return _acquire_lock_with_preferred_backends(
+    return _acquire_lock(
         lock_key=lock_key,
         holder=holder,
         lock_path=lock_path,
         ttl_sec=int(ttl_sec),
         wait_sec=wait_sec,
         poll_sec=poll_sec,
-        prefer_db=prefer_db,
     )
 
 
@@ -440,7 +304,6 @@ def acquire_scope_lock(
     ttl_sec: int = 120,
     wait_sec: float = 30.0,
     poll_sec: float = 0.2,
-    prefer_db: bool = True,
 ) -> LockHandle:
     s = str(scope or "").strip()
     if not s:
@@ -453,8 +316,7 @@ def acquire_scope_lock(
     if workspace_root is not None:
         ws = workspace_root.expanduser().resolve()
     else:
-        env_ws = str(os.getenv("OPENTEAM_WORKSPACE_ROOT") or "").strip()
-        ws = Path(env_ws).expanduser().resolve() if env_ws else runtime_workspace_root(override=runtime_override)
+        ws = default_workspace_root()
 
     lock_key = f"scope:{s}"
     holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
@@ -472,14 +334,13 @@ def acquire_scope_lock(
         if req_dir is not None and not lock_dir.exists():
             lock_dir = runtime_state_root(override=runtime_override) / "locks" / "fallback"
     lock_path = lock_dir / lock_name
-    return _acquire_lock_with_preferred_backends(
+    return _acquire_lock(
         lock_key=lock_key,
         holder=holder,
         lock_path=lock_path,
         ttl_sec=int(ttl_sec),
         wait_sec=wait_sec,
         poll_sec=poll_sec,
-        prefer_db=prefer_db,
     )
 
 

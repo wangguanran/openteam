@@ -4,6 +4,8 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 def _repo_root() -> Path:
@@ -115,10 +117,18 @@ from fastapi import HTTPException  # noqa: E402
 from app.domains.delivery_studio import runtime as delivery_runtime  # noqa: E402
 from app.domains.delivery_studio import store as delivery_store  # noqa: E402
 from app import main as app_main  # noqa: E402
+from app import team_workflow_runtime  # noqa: E402
 from app import workspace_store  # noqa: E402
 
 
 class DeliveryStudioRuntimeTests(unittest.TestCase):
+    class _FakeDB:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        def add_event(self, **kwargs):
+            self.events.append(kwargs)
+
     def test_create_request_persists_under_workspace_and_logs_intake(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
@@ -137,6 +147,59 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             self.assertTrue(Path(req["request_path"]).exists())
             self.assertTrue("workspace/projects/demo/state/delivery_studio/requests" in req["request_path"])
             self.assertTrue(Path(req["artifacts"]["raw_record"]).exists())
+
+    def test_team_workflow_bootstrap_marks_delivery_studio_ready_for_manual_requests(self) -> None:
+        db = self._FakeDB()
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            spec = SimpleNamespace(
+                project_id="openteam",
+                workstream_id="general",
+                repo_path=str(repo),
+                repo_url="",
+                repo_locator="",
+                target_id="",
+                force=False,
+                dry_run=False,
+                trigger="bootstrap",
+            )
+            target = {
+                "target_id": "openteam",
+                "project_id": "openteam",
+                "repo_root": str(repo),
+                "repo_locator": "",
+            }
+            direct_task_workflow = SimpleNamespace(
+                workflow_id="delivery-studio-discuss",
+                lane="discussion",
+                phase="discussion",
+                enabled=True,
+            )
+
+            with mock.patch("app.team_workflow_runtime._proposal_runtime") as proposal_runtime, mock.patch(
+                "app.team_workflow_runtime.workflow_registry.list_workflows",
+                return_value=(direct_task_workflow,),
+            ):
+                proposal_runtime.return_value._safe_project_id.return_value = "openteam"
+                proposal_runtime.return_value._resolve_target.return_value = target
+                proposal_runtime.return_value._utc_now_iso.return_value = "2026-03-30T00:00:00Z"
+                proposal_runtime.return_value._merge_state_last_run.return_value = None
+
+                out = team_workflow_runtime.run_team_iteration(
+                    team_id="delivery-studio",
+                    db=db,
+                    spec=spec,
+                    actor="bootstrap",
+                    run_id="run-1",
+                    crewai_info={"importable": True},
+                )
+
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["ready"])
+        self.assertFalse(out.get("skipped", False))
+        self.assertEqual(out["reason"], "manual_request_entrypoint")
+        self.assertTrue(any(event.get("event_type") == "TEAM_WORKFLOW_READY" for event in db.events))
 
     def test_approval_locks_request_and_creates_approval_record(self) -> None:
         with tempfile.TemporaryDirectory() as td:

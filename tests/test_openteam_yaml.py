@@ -1,34 +1,30 @@
 import unittest
 
-import yaml
+import openteam_yaml
 
 
 class OpenTeamYamlTests(unittest.TestCase):
-    def test_safe_load_supports_top_level_scalars(self) -> None:
-        self.assertIs(yaml.safe_load("false"), False)
-        self.assertEqual(yaml.safe_load("2"), 2)
+    def test_safe_dump_preserves_empty_nested_lists(self):
+        payload = {
+            "requirements": [
+                {
+                    "constraints": [],
+                    "acceptance": [],
+                    "supersedes": [],
+                    "conflicts_with": [],
+                    "decision_log_refs": [],
+                }
+            ]
+        }
 
-    def test_safe_load_supports_block_scalars_inside_sequences(self) -> None:
-        doc = yaml.safe_load(
-            """
-items:
-  - name: one
-    body: |
-      line 1
+        dumped = openteam_yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
-      line 2
-"""
-        )
-
-        self.assertEqual(doc["items"][0]["name"], "one")
-        self.assertEqual(doc["items"][0]["body"], "line 1\n\nline 2")
-
-    def test_safe_dump_writes_nested_data(self) -> None:
-        payload = {"enabled": True, "items": [{"name": "demo", "count": 2}]}
-        dumped = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-        loaded = yaml.safe_load(dumped)
-
-        self.assertEqual(loaded, payload)
+        self.assertIn("constraints: []", dumped)
+        self.assertIn("acceptance: []", dumped)
+        self.assertIn("supersedes: []", dumped)
+        self.assertIn("conflicts_with: []", dumped)
+        self.assertIn("decision_log_refs: []", dumped)
+        self.assertEqual(openteam_yaml.safe_load(dumped), payload)
 
 
 if __name__ == "__main__":

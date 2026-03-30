@@ -14,9 +14,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 import openteam_cli
-import openteam_cli._shared as _shared
 import openteam_cli.cockpit as _cockpit
-import openteam_cli.http as _http
 import openteam_cli.project as _project
 import openteam_cli.team as _team
 
@@ -27,7 +25,7 @@ class TeamosReplTests(unittest.TestCase):
         parser = openteam_cli.main(["cockpit", "--help"])
         self.assertEqual(parser, 0)
 
-    def test_removed_hub_cluster_and_node_commands_are_absent(self) -> None:
+    def test_removed_hub_cluster_node_and_db_commands_are_absent(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             parser = openteam_cli.main(["cockpit", "--help"])
@@ -37,8 +35,9 @@ class TeamosReplTests(unittest.TestCase):
         self.assertNotIn("hub", help_text)
         self.assertNotIn("cluster", help_text)
         self.assertNotIn("node", help_text)
+        self.assertNotIn("db", help_text)
 
-        for command in ("hub", "cluster", "node"):
+        for command in ("hub", "cluster", "node", "db"):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 rc = openteam_cli.main([command, "--help"])
@@ -74,7 +73,7 @@ class TeamosReplTests(unittest.TestCase):
             try:
                 with mock.patch("openteam_cli._shared._load_config", return_value={}), mock.patch(
                     "openteam_cli._shared._workspace_root_from_cfg", return_value=Path("/tmp/unrelated_workspace_root")
-                ), mock.patch("openteam_cli.project._project_repl", return_value=0) as repl, mock.patch(
+                ), mock.patch("openteam_cli.project._project_repl", return_value=0), mock.patch(
                     "openteam_cli._project_repl", return_value=0
                 ):
                     rc = openteam_cli.main([])

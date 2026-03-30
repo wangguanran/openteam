@@ -11,8 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from _common import PipelineError, add_default_args, default_runtime_root, resolve_repo_root, resolve_workspace_root, runtime_state_root
-from _db import connect, get_db_url
+from _common import PipelineError, add_default_args, resolve_repo_root, resolve_workspace_root, runtime_root, runtime_state_root
 from workspace_doctor import check_workspace
 
 
@@ -84,52 +83,17 @@ def _github_remote_layers_enabled() -> bool:
     return False
 
 
-def _db_check(repo_root: Path) -> dict[str, Any]:
-    """
-    Postgres connectivity + migrations check.
-    - When OPENTEAM_DB_URL is unset: SKIP (ok=true)
-    - When set: require psycopg + connection + schema_migrations present.
-    """
-    dsn = get_db_url()
-    if not dsn:
-        return {"ok": True, "status": "SKIP", "reason": "OPENTEAM_DB_URL not set"}
-
-    try:
-        conn = connect(dsn)
-    except Exception as e:
-        return {
-            "ok": False,
-            "status": "FAIL",
-            "reason": "db_driver_or_connect_failed",
-            "error": str(e)[:300],
-            "hint": 'Install: python3 -m pip install --user "psycopg[binary]"',
-        }
-
-    try:
-        with conn.cursor() as cur:
-            try:
-                rows = cur.execute("SELECT version, applied_at FROM schema_migrations ORDER BY version ASC").fetchall()
-            except Exception as e:
-                return {
-                    "ok": False,
-                    "status": "FAIL",
-                    "reason": "migrations_missing",
-                    "error": str(e)[:200],
-                    "hint": "Run: openteam db migrate",
-                }
-        vers = []
-        for r in rows or []:
-            try:
-                vers.append(str(r.get("version") or "").strip())
-            except Exception:
-                continue
-        vers = [v for v in vers if v]
-        return {"ok": True, "status": "OK", "dsn": "set", "migrations": vers[-20:]}
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+def _runtime_db_check() -> dict[str, Any]:
+    db_path = str(os.getenv("OPENTEAM_RUNTIME_DB_PATH") or "").strip()
+    if not db_path:
+        db_path = str(runtime_root() / "state" / "runtime.db")
+    path = Path(db_path).expanduser().resolve()
+    return {
+        "ok": True,
+        "backend": "sqlite",
+        "path": str(path),
+        "exists": path.exists(),
+    }
 
 
 def _default_team_check(repo_root: Path) -> dict[str, Any]:
@@ -137,12 +101,11 @@ def _default_team_check(repo_root: Path) -> dict[str, Any]:
     Best-effort runtime-state check for the default configured team.
     Persistent state now lives in the runtime DB / control-plane status, not local JSON files.
     """
-    runtime_override = "" if str(os.getenv("OPENTEAM_RUNTIME_ROOT") or "").strip() else str(default_runtime_root())
-    state_root = runtime_state_root(override=runtime_override)
+    state_root = runtime_state_root(override=str(runtime_root()))
     return {
         "ok": True,
         "runtime_state_root": str(state_root),
-        "state_backend": "postgres" if str(os.getenv("OPENTEAM_DB_URL") or "").strip() else "sqlite_or_runtime_db",
+        "state_backend": "sqlite_runtime_db",
         "last_run": {},
     }
 
@@ -240,11 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     if not bool(llm.get("ok")):
         ok = False
 
-    # Postgres DB is optional unless OPENTEAM_DB_URL is set.
-    db = _db_check(repo)
-    report["postgres_db"] = db
-    if not bool(db.get("ok")):
-        ok = False
+    report["runtime_db"] = _runtime_db_check()
 
     # Runtime-managed default team status (informational).
     report["default_team"] = _default_team_check(repo)
@@ -338,9 +297,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"control_plane: FAIL {cp.get('error','')}")
         print(f"codex: {'OK' if codex_ok else 'FAIL'} {codex_msg}")
         print(f"gh: {'OK' if gh_ok else 'FAIL'} {gh_msg}")
-        dbs_value = report.get("postgres_db")
+        dbs_value = report.get("runtime_db")
         dbs: dict[str, Any] = dbs_value if isinstance(dbs_value, dict) else {}
-        print(f"db: {str(dbs.get('status') or '').strip() or ('OK' if dbs.get('ok') else 'FAIL')} {dbs.get('reason','')}")
+        print(
+            "runtime_db: "
+            f"{'OK' if dbs.get('ok') else 'FAIL'} "
+            f"backend={str(dbs.get('backend') or '').strip() or 'unknown'} "
+            f"path={str(dbs.get('path') or '').strip()}"
+        )
         default_team_value = report.get("default_team")
         default_team: dict[str, Any] = default_team_value if isinstance(default_team_value, dict) else {}
         if default_team:

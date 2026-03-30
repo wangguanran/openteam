@@ -15,9 +15,25 @@ def _add_template_app_to_syspath() -> None:
 _add_template_app_to_syspath()
 
 from app.runtime_db import RuntimeDB  # noqa: E402
+from app.runtime_db import SQLiteRuntimeDB  # noqa: E402
 
 
 class RuntimeDBTaskLeaseTests(unittest.TestCase):
+    def test_runtime_db_ignores_legacy_postgres_env_and_uses_sqlite(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "runtime.db"
+            old = os.environ.get("OPENTEAM_DB_URL")
+            os.environ["OPENTEAM_DB_URL"] = "postgresql://obsolete-user:obsolete-pass@127.0.0.1:15432/openteam"
+            try:
+                db = RuntimeDB(str(db_path))
+            finally:
+                if old is None:
+                    os.environ.pop("OPENTEAM_DB_URL", None)
+                else:
+                    os.environ["OPENTEAM_DB_URL"] = old
+
+            self.assertIsInstance(db._impl, SQLiteRuntimeDB)
+
     def test_claim_renew_release_roundtrip(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "runtime.db"

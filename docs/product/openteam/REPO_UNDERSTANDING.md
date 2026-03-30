@@ -15,7 +15,7 @@ OpenTeam 当前应被理解为一个本地单节点系统：
 - 本地运行态数据库：`~/.openteam/runtime/default/state/runtime.db`
 - 项目真相源：`~/.openteam/workspace/projects/<project_id>/...`
 
-`single-node local system` 是当前文档 contract。遗留的多节点脚本、Hub 资产或集群目录即使仍然存在，也不构成当前 operator 主路径。
+`single-node local system` 是当前文档 contract。多节点、Hub、远程节点、Docker runtime 模板不再属于当前 operator 主路径。
 
 ## 模块边界与职责
 
@@ -65,12 +65,13 @@ scripts/
 tests/
 ```
 
-## 已知迁移期矛盾
+## 当前清理方向
 
-以下内容在代码层可能仍然存在，但不应继续出现在主产品文档里：
+当前仓库只为单机运行背书：
 
-- 可选 Postgres DSN 支持
-- 遗留 cluster / node / hub 相关脚本或目录
-- 与旧运行形态相关的 DB、Redis、远程节点逻辑
+- 本地 CLI
+- 本地 control plane
+- 本地 `runtime.db`
+- workspace 中的项目真相源
 
-如果这些遗留实现影响文档真实性，应在任务报告里单独列出，由代码所有者继续清理。
+任何与 Hub、集群选主、远程节点引导、容器化 runtime 部署相关的遗留内容，都应视为待删除或待重设计资产，而不是默认能力。

@@ -21,7 +21,7 @@ from .cockpit import cmd_cockpit
 from .team import cmd_team_list, cmd_team_run, cmd_team_watch, cmd_team_proposals, cmd_team_decide, cmd_team_discussions_sync, cmd_team_coding_run, cmd_team_coding_tasks, cmd_team_logs, cmd_team_bug_scan_live
 from .requirements import cmd_req_add, cmd_req_import, cmd_req_list, cmd_req_conflicts, cmd_req_verify, cmd_req_rebuild, cmd_req_baseline_show, cmd_req_baseline_set_v2
 from .misc import (
-    cmd_chat, cmd_doctor, cmd_policy_check, cmd_db_migrate, cmd_approvals_list,
+    cmd_chat, cmd_doctor, cmd_policy_check, cmd_approvals_list,
     cmd_prompt_compile, cmd_prompt_diff,
     cmd_metrics_check, cmd_metrics_analyze, cmd_metrics_bootstrap,
     cmd_audit_deterministic_gov, cmd_audit_execution_strategy, cmd_audit_reqv3_locks,
@@ -314,13 +314,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     polc.add_argument("--json", action="store_true")
     polc.add_argument("--quiet", action="store_true")
     polc.set_defaults(fn=cmd_policy_check)
-
-    db = sp.add_parser("db", help="Postgres DB (migrations)")
-    db_sp = db.add_subparsers(dest="subcmd", required=True)
-    dmig = db_sp.add_parser("migrate")
-    dmig.add_argument("--db-url")
-    dmig.add_argument("--dry-run", action="store_true")
-    dmig.set_defaults(fn=cmd_db_migrate)
 
     apv = sp.add_parser("approvals")
     apv_sp = apv.add_subparsers(dest="subcmd", required=True)

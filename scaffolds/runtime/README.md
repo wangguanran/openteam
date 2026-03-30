@@ -9,6 +9,7 @@
 - 本地 Control Plane：`127.0.0.1:8787`
 - 本地 runtime root：`~/.openteam/runtime/default`
 - 本地 SQLite：`~/.openteam/runtime/default/state/runtime.db`
+- 本地审计目录：`~/.openteam/runtime/default/state/audit/`
 - 项目真相源：`~/.openteam/workspace/projects/<project_id>/...`
 
 ## 启动顺序
@@ -66,7 +67,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
         runtime.db
         ledger/
         logs/
-        audits/
+        audit/
   workspace/
     projects/
       <project_id>/
@@ -84,7 +85,7 @@ curl -fsS http://127.0.0.1:8787/v1/status
 说明：
 
 - `runtime.db` 是本地 SQLite 运行态数据库
-- `ledger/`、`logs/`、`audits/` 存放 OpenTeam 自身的本地任务与审计痕迹
+- `ledger/`、`logs/`、`audit/` 存放 OpenTeam 自身的本地任务与审计痕迹
 - 任何 `project:<id>` 真相源都必须留在 Workspace，不写回仓库
 
 ## 常用命令

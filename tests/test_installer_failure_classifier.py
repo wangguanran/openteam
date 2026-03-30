@@ -43,7 +43,7 @@ class InstallerFailureClassifierTests(unittest.TestCase):
             component="bootstrap",
             stage="startup",
             stdout="",
-            stderr="missing required postgres config",
+            stderr="missing runtime db config",
             ok=False,
         )
 
@@ -94,6 +94,66 @@ class InstallerFailureClassifierTests(unittest.TestCase):
             self.assertEqual(run.get("category"), "NETWORK_UNREACHABLE")
             cls = event.get("classification") or {}
             self.assertTrue(bool(cls.get("retryable")))
+
+    def test_record_updates_single_node_knowledge_store_and_get_uses_same_runtime_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._repo_root()
+            runtime_root = Path(td) / "runtime"
+            env = dict(os.environ)
+            env["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
+            env.pop("OPENTEAM_DB_URL", None)
+
+            payload = {
+                "component": "node_add.push_hub_config",
+                "stage": "scp_env",
+                "stdout": "",
+                "stderr": "ssh: connect to host 10.0.0.8 port 22: Connection timed out",
+                "target_host": "10.0.0.8",
+                "ok": False,
+            }
+            recorded = self._run(
+                [
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(Path(td) / "ws"),
+                    "--input-json",
+                    json.dumps(payload, ensure_ascii=False),
+                    "record",
+                ],
+                env,
+            )
+            self.assertEqual(recorded.returncode, 0, recorded.stderr)
+
+            knowledge = subprocess.run(
+                [
+                    "python3",
+                    str(repo / "scripts" / "pipelines" / "installer_knowledge.py"),
+                    "--repo-root",
+                    str(repo),
+                    "--workspace-root",
+                    str(Path(td) / "ws"),
+                    "--json",
+                    "get",
+                    "installer:node_add.push_hub_config:network_unreachable",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(knowledge.returncode, 0, knowledge.stderr)
+            out = json.loads(knowledge.stdout)
+            self.assertEqual(out.get("backend"), "fallback")
+            expected_path = (runtime_root / "state" / "audit" / "installer_knowledge.json").resolve()
+            self.assertEqual(Path(str(out.get("path") or "")).resolve(), expected_path)
+            item = out.get("item") or {}
+            value = item.get("value") or {}
+            self.assertEqual(item.get("key"), "installer:node_add.push_hub_config:network_unreachable")
+            self.assertEqual(value.get("category"), "NETWORK_UNREACHABLE")
+            self.assertEqual(value.get("last_stage"), "scp_env")
+            self.assertEqual(value.get("last_target_host"), "10.0.0.8")
 
 
 if __name__ == "__main__":

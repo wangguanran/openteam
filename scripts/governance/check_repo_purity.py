@@ -76,10 +76,6 @@ _ROOT_DYNAMIC_DENYLIST: dict[str, tuple[str, str]] = {
         "IN_REPO_DYNAMIC_WORKSPACE_PATH",
         "workspace dynamic root must be outside repo",
     ),
-    "hub": (
-        "IN_REPO_DYNAMIC_HUB_PATH",
-        "hub dynamic root must be outside repo",
-    ),
     "state": (
         "IN_REPO_DYNAMIC_STATE_PATH",
         "state dynamic root must be outside repo",
