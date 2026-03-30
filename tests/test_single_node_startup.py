@@ -72,6 +72,23 @@ class SingleNodeStartupTests(unittest.TestCase):
             self.assertEqual(out["default_team"]["last_run"], {"ts": "2026-03-30T00:00:00Z", "status": "DONE"})
             self.assertEqual(out["default_team"]["state_backend"], "control_plane_status")
 
+    def test_stop_flow_is_single_node_and_skips_hub_down(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "runtime"
+            workspace_root = runtime_root / "workspace"
+            repo.mkdir(parents=True, exist_ok=True)
+            runtime_root.mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.object(self.mod, "_stop_pid", return_value={"ok": True, "stopped": True, "pid": 4321}), mock.patch.object(
+                self.mod, "_run_json", side_effect=AssertionError("hub_down should not be called")
+            ):
+                out = self.mod._stop_flow(repo, runtime_root, workspace_root, keep_hub=False)
+
+            self.assertNotIn("hub", out)
+            self.assertEqual(out["default_team"], {"ok": True, "mode": "single_node"})
+            self.assertEqual(out["control_plane"]["stopped"], True)
+
 
 if __name__ == "__main__":
     unittest.main()

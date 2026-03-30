@@ -159,17 +159,24 @@ def _crewai_pip_spec() -> str:
     return f"crewai @ {_crewai_archive_url()}#subdirectory=lib/crewai"
 
 
-def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
+def _missing_python_modules(
+    python_exe: Path,
+    *,
+    require_redis: bool = True,
+    require_psycopg: bool = True,
+) -> list[tuple[str, str]]:
     required: list[tuple[str, str]] = [
         ("uvicorn", "uvicorn"),
         ("fastapi", "fastapi"),
         ("pydantic", "pydantic"),
         ("agents", "openai-agents"),
-        ("redis", "redis"),
         ("yaml", "PyYAML"),
-        ("psycopg", "psycopg[binary]"),
         ("crewai", _crewai_pip_spec()),
     ]
+    if require_redis:
+        required.insert(5, ("redis", "redis"))
+    if require_psycopg:
+        required.insert(6 if require_redis else 5, ("psycopg", "psycopg[binary]"))
     code = (
         "import importlib.util,json,sys;"
         "req=json.loads(sys.argv[1]);"
@@ -190,15 +197,12 @@ def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
         return required
 
 
-def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
-    try:
-        temp_root = Path(tempfile.gettempdir()).resolve()
-        rr = runtime_root.resolve()
-        if rr == temp_root or temp_root in rr.parents:
-            return {"ok": True, "installed": [], "missing": [], "python": str(sys.executable), "skipped": True}
-    except Exception:
-        pass
-
+def _ensure_python_dependencies(
+    runtime_root: Path,
+    *,
+    require_redis: bool = True,
+    require_psycopg: bool = True,
+) -> dict[str, Any]:
     venv_py = _venv_python(runtime_root)
     if not venv_py.exists():
         venv_dir = venv_py.parent.parent
@@ -207,7 +211,7 @@ def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
             msg = (err or out or "").strip()
             raise BootstrapError(f"failed to create python venv at {venv_dir}: {msg[:800]}")
 
-    missing = _missing_python_modules(venv_py)
+    missing = _missing_python_modules(venv_py, require_redis=require_redis, require_psycopg=require_psycopg)
     if not missing:
         return {"ok": True, "installed": [], "missing": [], "python": str(venv_py)}
 
@@ -229,7 +233,7 @@ def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
         msg = (err or out or "").strip()
         raise BootstrapError(f"failed to install python dependencies into bootstrap venv {pkgs}: {msg[:800]}")
 
-    still = _missing_python_modules(venv_py)
+    still = _missing_python_modules(venv_py, require_redis=require_redis, require_psycopg=require_psycopg)
     if still:
         raise BootstrapError(f"python dependencies still missing in bootstrap venv: {[m for m, _ in still]}")
 
@@ -664,7 +668,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     _append_audit(runtime_root, "llm config check passed")
     local_db = _ensure_local_runtime_db(runtime_root)
     _append_audit(runtime_root, "local runtime db ready")
-    python_deps = _ensure_python_dependencies(runtime_root)
+    python_deps = _ensure_python_dependencies(runtime_root, require_redis=False, require_psycopg=False)
     _append_audit(runtime_root, "python dependencies ready")
     control_plane = _start_control_plane(
         repo,
@@ -710,16 +714,9 @@ def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, keep_hub
     _append_audit(runtime_root, "stop start")
 
     cp_stop = _stop_pid(_pid_path(runtime_root, "control_plane"))
-
-    hub_down: dict[str, Any] = {"ok": True, "skipped": keep_hub}
-    if not keep_hub:
-        try:
-            hub_down = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_down.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)], cwd=repo, timeout_sec=180)
-        except Exception as e:
-            hub_down = {"ok": False, "error": str(e)[:300]}
-
     _append_audit(runtime_root, "stop completed")
-    return {"ok": True, "default_team": {"ok": True, "mode": "no_daemon"}, "control_plane": cp_stop, "hub": hub_down}
+    _ = keep_hub, repo, workspace_root
+    return {"ok": True, "default_team": {"ok": True, "mode": "single_node"}, "control_plane": cp_stop}
 
 
 def _doctor(repo: Path, workspace_root: Path) -> dict[str, Any]:

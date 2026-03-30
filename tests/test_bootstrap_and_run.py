@@ -118,6 +118,13 @@ class BootstrapAndRunTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(row, ("bootstrap_probe",))
 
+    def test_missing_python_modules_can_skip_hub_era_packages(self):
+        missing = self.mod._missing_python_modules(Path(sys.executable), require_redis=False, require_psycopg=False)
+        missing_names = {name for name, _ in missing}
+
+        self.assertNotIn("redis", missing_names)
+        self.assertNotIn("psycopg", missing_names)
+
     def test_start_flow_requires_repo_improvement_actual_execution(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -191,6 +198,7 @@ class BootstrapAndRunTests(unittest.TestCase):
             def fake_deps(*args, **kwargs):
                 _ = args, kwargs
                 calls.append("deps")
+                self.assertEqual(kwargs, {"require_redis": False, "require_psycopg": False})
                 return {"ok": True, "python": sys.executable}
 
             def fake_cp(*args, **kwargs):
