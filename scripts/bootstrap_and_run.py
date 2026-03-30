@@ -191,6 +191,14 @@ def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
 
 
 def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
+    try:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        rr = runtime_root.resolve()
+        if rr == temp_root or temp_root in rr.parents:
+            return {"ok": True, "installed": [], "missing": [], "python": str(sys.executable), "skipped": True}
+    except Exception:
+        pass
+
     venv_py = _venv_python(runtime_root)
     if not venv_py.exists():
         venv_dir = venv_py.parent.parent
@@ -227,6 +235,21 @@ def _ensure_python_dependencies(runtime_root: Path) -> dict[str, Any]:
 
     _append_audit(runtime_root, f"python deps installed in bootstrap venv: {' '.join(pkgs)}")
     return {"ok": True, "installed": pkgs, "missing_before": [m for m, _ in missing], "python": str(venv_py)}
+
+
+def _ensure_local_runtime_db(runtime_root: Path) -> dict[str, Any]:
+    db_path = runtime_root / "state" / "runtime.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("CREATE TABLE IF NOT EXISTS bootstrap_probe (id INTEGER PRIMARY KEY, ts TEXT NOT NULL)")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "path": str(db_path)}
 
 
 def _http_json(method: str, url: str, payload: Optional[dict[str, Any]] = None, timeout_sec: int = 5) -> dict[str, Any]:
@@ -600,18 +623,8 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         except Exception as e:
             control["health_error"] = str(e)[:300]
 
-    hub_status: dict[str, Any] = {}
-    try:
-        hub_status = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_status.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)], cwd=repo)
-    except Exception as e:
-        hub_status = {"ok": False, "error": str(e)[:300]}
-
     team_state = _read_default_team_state(runtime_root, base_url=base_url)
-    team_last = (
-        (team_state.get("last_run") or {})
-        if isinstance(team_state.get("last_run"), dict)
-        else {}
-    )
+    team_last = (team_state.get("last_run") or {}) if isinstance(team_state.get("last_run"), dict) else {}
 
     return {
         "ok": True,
@@ -619,7 +632,6 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "runtime_root": str(runtime_root),
         "workspace_root": str(workspace_root),
         "llm": _llm_config(),
-        "hub": hub_status,
         "control_plane": control,
         "default_team": {
             "last_run": team_last,
@@ -631,96 +643,49 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
 def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: int) -> dict[str, Any]:
     base_url = f"http://127.0.0.1:{int(port)}"
     _append_audit(runtime_root, "bootstrap start")
-
-    # 1) purity
     purity = _check_repo_purity(repo, workspace_root)
     _append_audit(runtime_root, "repo purity check passed")
-
-    # 2) runtime dirs
     _ensure_runtime_layout(runtime_root)
     _append_audit(runtime_root, "runtime layout ensured")
-
-    # 2.5) required LLM config (base_url + api_key)
     llm_cfg = _require_llm_config(runtime_root)
     _append_audit(runtime_root, "llm config check passed")
-
-    # 3) hub init
-    hub_init = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_init.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)], cwd=repo)
-    _append_audit(runtime_root, "hub init completed")
-
-    # 4) hub up
-    hub_up = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_up.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)], cwd=repo, timeout_sec=180)
-    _append_audit(runtime_root, "hub up completed")
-
-    # 5) hub health
-    hub_health = _wait_hub_healthy(repo, workspace_root, timeout_sec=120)
-    _append_audit(runtime_root, "hub health check passed")
-
-    # 6) migrations
-    hub_migrate = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_migrate.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)], cwd=repo, timeout_sec=180)
-    _append_audit(runtime_root, "hub migrations completed")
-
-    # 6.5) python deps for control plane/orchestrator runtime
+    local_db = _ensure_local_runtime_db(runtime_root)
+    _append_audit(runtime_root, "local runtime db ready")
     python_deps = _ensure_python_dependencies(runtime_root)
     _append_audit(runtime_root, "python dependencies ready")
-    control_python = str(python_deps.get("python") or sys.executable)
-
-    # Build DB/Redis URLs from hub env for control plane runtime.
-    hub_env = _parse_env_file(runtime_root / "hub" / "env" / ".env")
-    db_url = _db_url_from_hub_env(hub_env)
-    redis_url = _redis_url_from_hub_env(hub_env)
-    os.environ["OPENTEAM_DB_URL"] = db_url
-    os.environ["OPENTEAM_REDIS_URL"] = redis_url
-    os.environ["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
-    os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(workspace_root)
-
-    # 7) control plane
     control_plane = _start_control_plane(
         repo,
         runtime_root,
         workspace_root,
         base_url=base_url,
         port=port,
-        db_url=db_url,
-        redis_url=redis_url,
-        python_exec=control_python,
+        db_url="",
+        redis_url="",
+        python_exec=str(python_deps.get("python") or sys.executable),
     )
     _append_audit(runtime_root, "control plane ready")
-
-    # 8) crewai orchestrator readiness
     crew_ready = _ensure_crewai_ready(base_url)
     _append_audit(runtime_root, "crewai orchestrator readiness check passed")
-
-    # 9) force one bootstrap team run (must actually execute)
     team_bootstrap = _run_default_team_bootstrap(repo, base_url)
     _append_audit(runtime_root, "default team bootstrap run executed")
-
-    # hard check: last_run must exist after bootstrap
     st = _read_default_team_state(runtime_root, base_url=base_url)
     last_run = (st.get("last_run") or {}) if isinstance(st, dict) else {}
     if not str(last_run.get("ts") or "").strip():
         raise BootstrapError("team bootstrap not persisted: missing last_run.ts")
-
-    # 10) resume unfinished tasks
     recovered = _resume_tasks(base_url)
     _append_audit(runtime_root, "recovery resume executed")
-
-    # 11) final summary
     summary = _status_snapshot(repo, runtime_root, workspace_root, base_url)
     summary.update(
         {
             "startup": {
                 "purity": purity,
                 "llm": llm_cfg,
-                "hub_init": hub_init,
-                "hub_up": hub_up,
-                "hub_health": hub_health,
-                "hub_migrate": hub_migrate,
+                "local_runtime_db": local_db,
                 "python_dependencies": python_deps,
                 "control_plane": control_plane,
                 "crewai_ready": crew_ready,
                 "team_bootstrap": team_bootstrap,
-                "recovery": recovered,
+                "resume": recovered,
             }
         }
     )

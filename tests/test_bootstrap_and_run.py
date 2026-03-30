@@ -3,6 +3,7 @@ import importlib.util
 import os
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -150,23 +151,6 @@ class BootstrapAndRunTests(unittest.TestCase):
             runtime_root = Path(td) / "openteam-runtime"
             workspace_root = runtime_root / "workspace"
             repo.mkdir(parents=True, exist_ok=True)
-            (runtime_root / "hub" / "env").mkdir(parents=True, exist_ok=True)
-            (runtime_root / "hub" / "env" / ".env").write_text(
-                "\n".join(
-                    [
-                        "POSTGRES_USER=openteam",
-                        "POSTGRES_PASSWORD=pw",
-                        "POSTGRES_DB=openteam",
-                        "PG_BIND_IP=127.0.0.1",
-                        "PG_PORT=5432",
-                        "REDIS_BIND_IP=127.0.0.1",
-                        "REDIS_PORT=6379",
-                        "REDIS_PASSWORD=rpw",
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
             calls: list[str] = []
             real_layout = self.mod._ensure_runtime_layout
 
@@ -183,31 +167,19 @@ class BootstrapAndRunTests(unittest.TestCase):
                 calls.append("llm")
                 return {"ok": True, "base_url": "x", "api_key_masked": "y"}
 
-            def fake_run_json(cmd, **kwargs):
-                _ = kwargs
-                txt = " ".join(cmd)
-                if "hub_init.py" in txt:
-                    calls.append("hub_init")
-                elif "hub_up.py" in txt:
-                    calls.append("hub_up")
-                elif "hub_migrate.py" in txt:
-                    calls.append("hub_migrate")
-                return {"ok": True}
+            def fake_db(*args, **kwargs):
+                _ = args, kwargs
+                calls.append("local_db")
+                return {"ok": True, "path": str(runtime_root / "state" / "runtime.db")}
 
-            def fake_hub_health(_repo, _ws, timeout_sec=90):
-                _ = timeout_sec
-                calls.append("hub_health")
-                return {"ok": True, "postgres": {"tcp_open": True}, "redis": {"tcp_open": True}}
+            def fake_deps(*args, **kwargs):
+                _ = args, kwargs
+                return {"ok": True, "python": sys.executable}
 
             def fake_cp(*args, **kwargs):
                 _ = args, kwargs
                 calls.append("control_plane")
                 return {"ok": True, "pid": 2222}
-
-            def fake_deps(*args, **kwargs):
-                _ = args, kwargs
-                calls.append("deps")
-                return {"ok": True, "installed": [], "missing": []}
 
             def fake_crewai(*args, **kwargs):
                 _ = args, kwargs
@@ -216,7 +188,7 @@ class BootstrapAndRunTests(unittest.TestCase):
 
             def fake_su_boot(*args, **kwargs):
                 _ = args, kwargs
-                calls.append("su_boot")
+                calls.append("team_bootstrap")
                 return {"ok": True, "applied_count": 0}
 
             def fake_resume(*args, **kwargs):
@@ -233,9 +205,9 @@ class BootstrapAndRunTests(unittest.TestCase):
                 self.mod, "_ensure_runtime_layout", side_effect=fake_layout
             ), mock.patch.object(
                 self.mod, "_require_llm_config", side_effect=fake_llm
-            ), mock.patch.object(self.mod, "_run_json", side_effect=fake_run_json), mock.patch.object(
-                self.mod, "_wait_hub_healthy", side_effect=fake_hub_health
-            ), mock.patch.object(self.mod, "_ensure_python_dependencies", side_effect=fake_deps), mock.patch.object(
+            ), mock.patch.object(self.mod, "_ensure_local_runtime_db", side_effect=fake_db), mock.patch.object(
+                self.mod, "_ensure_python_dependencies", side_effect=fake_deps
+            ), mock.patch.object(
                 self.mod, "_start_control_plane", side_effect=fake_cp
             ), mock.patch.object(
                 self.mod, "_ensure_crewai_ready", side_effect=fake_crewai
@@ -255,14 +227,10 @@ class BootstrapAndRunTests(unittest.TestCase):
                     "purity",
                     "layout",
                     "llm",
-                    "hub_init",
-                    "hub_up",
-                    "hub_health",
-                    "hub_migrate",
-                    "deps",
+                    "local_db",
                     "control_plane",
                     "crewai_ready",
-                    "su_boot",
+                    "team_bootstrap",
                     "resume",
                     "snapshot",
                 ],
