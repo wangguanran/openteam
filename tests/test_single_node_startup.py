@@ -83,11 +83,73 @@ class SingleNodeStartupTests(unittest.TestCase):
             with mock.patch.object(self.mod, "_stop_pid", return_value={"ok": True, "stopped": True, "pid": 4321}), mock.patch.object(
                 self.mod, "_run_json", side_effect=AssertionError("hub_down should not be called")
             ):
-                out = self.mod._stop_flow(repo, runtime_root, workspace_root, keep_hub=False)
+                out = self.mod._stop_flow(repo, runtime_root, workspace_root)
 
             self.assertNotIn("hub", out)
             self.assertEqual(out["default_team"], {"ok": True, "mode": "single_node"})
             self.assertEqual(out["control_plane"]["stopped"], True)
+
+    def test_start_control_plane_omits_hub_db_and_redis_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            runtime_root = Path(td) / "runtime"
+            workspace_root = runtime_root / "workspace"
+            orch_dir = repo / "scaffolds" / "runtime" / "orchestrator"
+            orch_dir.mkdir(parents=True, exist_ok=True)
+            captured: dict[str, object] = {}
+
+            class _FakeProcess:
+                pid = 9876
+
+            def fake_popen(cmd, cwd=None, stdout=None, stderr=None, env=None, start_new_session=None):
+                captured["cmd"] = cmd
+                captured["cwd"] = cwd
+                captured["env"] = dict(env or {})
+                captured["start_new_session"] = start_new_session
+                if stdout is not None:
+                    stdout.close()
+                if stderr is not None and stderr is not stdout:
+                    stderr.close()
+                return _FakeProcess()
+
+            with mock.patch.object(self.mod.subprocess, "Popen", side_effect=fake_popen), mock.patch.object(
+                self.mod, "_wait_http_ready", return_value={"ok": True}
+            ):
+                out = self.mod._start_control_plane(
+                    repo,
+                    runtime_root,
+                    workspace_root,
+                    base_url="http://127.0.0.1:8787",
+                    port=8787,
+                    python_exec="/usr/bin/python3",
+                )
+
+            env = captured["env"]
+            assert isinstance(env, dict)
+            self.assertEqual(out["pid"], 9876)
+            self.assertNotIn("OPENTEAM_DB_URL", env)
+            self.assertNotIn("OPENTEAM_REDIS_URL", env)
+
+    def test_main_rejects_keep_hub_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            stderr = []
+
+            def fake_eprint(*args, **kwargs):
+                _ = kwargs
+                stderr.append(" ".join(str(arg) for arg in args))
+
+            with mock.patch.object(self.mod, "_repo_root", return_value=repo), mock.patch.object(
+                self.mod, "_runtime_root", return_value=Path(td) / "runtime"
+            ), mock.patch.object(self.mod, "_workspace_root", return_value=Path(td) / "runtime" / "workspace"), mock.patch.object(
+                self.mod, "_ensure_runtime_layout", return_value=None
+            ), mock.patch("sys.stderr.write", side_effect=lambda text: stderr.append(text) or len(text)):
+                with self.assertRaises(SystemExit) as ctx:
+                    self.mod.main(["stop", "--keep-hub"])
+
+            self.assertEqual(ctx.exception.code, 2)
+            self.assertTrue(any("--keep-hub" in part for part in stderr))
 
 
 if __name__ == "__main__":

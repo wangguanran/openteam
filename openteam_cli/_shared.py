@@ -410,7 +410,6 @@ def _ensure_project_scaffold(workspace_root: Path, project_id: str) -> None:
     (state / "prompts").mkdir(parents=True, exist_ok=True)
     (state / "plan").mkdir(parents=True, exist_ok=True)
     (state / "kb").mkdir(parents=True, exist_ok=True)
-    (state / "cluster").mkdir(parents=True, exist_ok=True)
 
     mp = state / "prompts" / "MASTER_PROMPT.md"
     if not mp.exists():

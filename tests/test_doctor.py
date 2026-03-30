@@ -102,6 +102,64 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("/v1/hub/status", output)
         self.assertNotIn("/v1/nodes", output)
 
+    def test_main_keeps_ok_true_when_gh_auth_missing_but_github_is_optional(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        workspace_root = repo_root / ".tmp-doctor-workspace"
+        status_payload = {
+            "instance_id": "local-1",
+            "default_team_id": "repo-improvement",
+            "teams": {"repo-improvement": {"last_run": {}}},
+            "task_run_sync": {"ok": True},
+        }
+        openapi_payload = {
+            "paths": {
+                "/v1/status": {},
+                "/v1/agents": {},
+                "/v1/runs": {},
+                "/v1/runs/start": {},
+                "/v1/tasks": {},
+                "/v1/focus": {},
+                "/v1/chat": {},
+                "/v1/requirements": {},
+                "/v1/panel/github/sync": {},
+                "/v1/panel/github/health": {},
+                "/v1/panel/github/config": {},
+                "/v1/tasks/new": {},
+                "/v1/recovery/scan": {},
+                "/v1/recovery/resume": {},
+                "/v1/teams": {},
+            }
+        }
+
+        def fake_http(url: str, *, timeout_sec: int = 5):
+            if url.endswith("/healthz"):
+                return {"status": "ok"}
+            if url.endswith("/v1/status"):
+                return status_payload
+            if url.endswith("/openapi.json"):
+                return openapi_payload
+            raise AssertionError(f"unexpected url: {url}")
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(self.mod, "resolve_repo_root", return_value=repo_root),
+            mock.patch.object(self.mod, "resolve_workspace_root", return_value=workspace_root),
+            mock.patch.object(self.mod, "check_workspace", return_value={"ok": True}),
+            mock.patch.object(self.mod, "_codex_status", return_value=(True, "ok")),
+            mock.patch.object(self.mod, "_gh_status", return_value=(False, "MISS optional github auth")),
+            mock.patch.object(self.mod, "_db_check", return_value={"ok": True, "status": "OK"}),
+            mock.patch.object(self.mod, "_default_team_check", return_value={"ok": True, "last_run": {}}),
+            mock.patch.object(self.mod, "_llm_config_check", return_value={"ok": True}),
+            mock.patch.object(self.mod, "_http_json", side_effect=fake_http),
+            mock.patch("sys.stdout", stdout),
+        ):
+            rc = self.mod.main(["--json"])
+
+        self.assertEqual(rc, 0)
+        output = stdout.getvalue()
+        self.assertIn('"ok": true', output)
+        self.assertIn('"gh"', output)
+
 
 if __name__ == "__main__":
     unittest.main()

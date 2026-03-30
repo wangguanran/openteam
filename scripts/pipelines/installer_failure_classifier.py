@@ -95,7 +95,11 @@ def classify_failure(*, component: str, stage: str, stdout: str, stderr: str, ok
         return {"category": "REMOTE_PERMISSION", "retryable": False, "remediation": "verify write permission on remote ~/.openteam paths"}
 
     if "missing hub env" in blob or "missing required postgres config" in blob or "missing required redis config" in blob:
-        return {"category": "BRAIN_CONFIG_MISSING", "retryable": False, "remediation": "run `openteam hub init` / validate central hub env, then retry"}
+        return {
+            "category": "BRAIN_CONFIG_MISSING",
+            "retryable": False,
+            "remediation": "validate local single-node runtime database/config, then retry",
+        }
 
     if stg.startswith("scp"):
         return {"category": "SCP_FAILED", "retryable": True, "remediation": "check ssh/scp connectivity and remote reachability, then retry"}

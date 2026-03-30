@@ -60,7 +60,6 @@ def check_workspace(*, repo_root: Path, workspace_root: Path) -> dict[str, Any]:
                 d / "state" / "plan" / "plan.yaml",
                 d / "state" / "plan" / "PLAN.md",
                 d / "state" / "kb",
-                d / "state" / "cluster",
                 d / "state" / "requirements" / "requirements.yaml",
             ]
             miss2 = [str(p.relative_to(d)) for p in must_paths if not p.exists()]
@@ -104,4 +103,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -2,7 +2,8 @@
 """OpenTeam CLI entry point.
 
 This is a thin wrapper that delegates to the openteam_cli package.
-The original monolithic CLI is preserved in openteam_legacy.py.
+Legacy compatibility helpers remain in ``openteam_legacy.py`` without the removed
+hub/cluster/node entrypoints.
 """
 import sys
 from pathlib import Path

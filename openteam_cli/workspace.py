@@ -99,7 +99,6 @@ def cmd_workspace_doctor(args: argparse.Namespace) -> None:
                 d / "state" / "plan" / "plan.yaml",
                 d / "state" / "plan" / "PLAN.md",
                 d / "state" / "kb",
-                d / "state" / "cluster",
                 req,
             ]
             miss = [str(p.relative_to(d)) for p in must_paths if not p.exists()]

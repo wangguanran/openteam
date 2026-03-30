@@ -27,7 +27,7 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from openteam_common import utc_now_iso as _utc_now_iso
 
-from _common import runtime_hub_root, runtime_state_root, runtime_workspace_root
+from _common import runtime_state_root, runtime_workspace_root
 
 
 class LockBusy(RuntimeError):
@@ -472,62 +472,6 @@ def acquire_scope_lock(
         if req_dir is not None and not lock_dir.exists():
             lock_dir = runtime_state_root(override=runtime_override) / "locks" / "fallback"
     lock_path = lock_dir / lock_name
-    return _acquire_lock_with_preferred_backends(
-        lock_key=lock_key,
-        holder=holder,
-        lock_path=lock_path,
-        ttl_sec=int(ttl_sec),
-        wait_sec=wait_sec,
-        poll_sec=poll_sec,
-        prefer_db=prefer_db,
-    )
-
-
-def acquire_cluster_lock(
-    *,
-    repo_root: Optional[Path] = None,
-    instance_id: str = "",
-    agent_id: str = "",
-    task_id: str = "",
-    ttl_sec: int = 180,
-    wait_sec: float = 30.0,
-    poll_sec: float = 0.2,
-    prefer_db: bool = True,
-) -> LockHandle:
-    rr = (repo_root or Path.cwd()).resolve()
-    lock_key = "cluster:global"
-    holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
-
-    lock_dir = runtime_state_root(override=_runtime_override_for_repo(rr)) / "locks"
-    lock_path = lock_dir / "cluster.lock"
-    return _acquire_lock_with_preferred_backends(
-        lock_key=lock_key,
-        holder=holder,
-        lock_path=lock_path,
-        ttl_sec=int(ttl_sec),
-        wait_sec=wait_sec,
-        poll_sec=poll_sec,
-        prefer_db=prefer_db,
-    )
-
-
-def acquire_hub_lock(
-    *,
-    hub_root: Optional[Path] = None,
-    instance_id: str = "",
-    agent_id: str = "",
-    task_id: str = "",
-    ttl_sec: int = 180,
-    wait_sec: float = 30.0,
-    poll_sec: float = 0.2,
-    prefer_db: bool = True,
-) -> LockHandle:
-    hr = (hub_root or runtime_hub_root()).expanduser().resolve()
-    lock_key = "hub:global"
-    holder = _default_holder(instance_id=instance_id, agent_id=agent_id, task_id=task_id)
-
-    lock_dir = hr / "state" / "locks"
-    lock_path = lock_dir / "hub.lock"
     return _acquire_lock_with_preferred_backends(
         lock_key=lock_key,
         holder=holder,

@@ -35,7 +35,7 @@ class BootstrapAndRunTests(unittest.TestCase):
             self.assertTrue((rt / "workspace" / "shared" / "cache").exists())
             self.assertTrue((rt / "workspace" / "shared" / "tmp").exists())
             self.assertTrue((rt / "workspace" / "config").exists())
-            self.assertTrue((rt / "hub").exists())
+            self.assertFalse((rt / "hub").exists())
             self.assertTrue((rt / "tmp").exists())
             self.assertTrue((rt / "cache").exists())
 
@@ -103,6 +103,12 @@ class BootstrapAndRunTests(unittest.TestCase):
 
         self.assertEqual(archive_url, "https://codeload.github.com/example/crewAI/tar.gz/refs/heads/main")
 
+    def test_crewai_defaults_use_crewaiinc_repo(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            archive_url = self.mod._crewai_archive_url()
+
+        self.assertEqual(archive_url, "https://codeload.github.com/crewAIInc/crewAI/tar.gz/refs/heads/main")
+
     def test_ensure_local_runtime_db_creates_bootstrap_probe_table(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_root = Path(td) / "openteam-runtime"
@@ -131,30 +137,12 @@ class BootstrapAndRunTests(unittest.TestCase):
             runtime_root = Path(td) / "openteam-runtime"
             workspace_root = runtime_root / "workspace"
             repo.mkdir(parents=True, exist_ok=True)
-            (runtime_root / "hub" / "env").mkdir(parents=True, exist_ok=True)
-            (runtime_root / "hub" / "env" / ".env").write_text(
-                "\n".join(
-                    [
-                        "POSTGRES_USER=openteam",
-                        "POSTGRES_PASSWORD=pw",
-                        "POSTGRES_DB=openteam",
-                        "PG_BIND_IP=127.0.0.1",
-                        "PG_PORT=5432",
-                        "REDIS_BIND_IP=127.0.0.1",
-                        "REDIS_PORT=6379",
-                        "REDIS_PASSWORD=rpw",
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
 
             with mock.patch.object(self.mod, "_check_repo_purity", return_value={"ok": True}), mock.patch.object(
                 self.mod, "_require_llm_config", return_value={"ok": True}
             ), mock.patch.object(self.mod, "_run_json", return_value={"ok": True}), mock.patch.object(
-                self.mod, "_wait_hub_healthy", return_value={"ok": True, "postgres": {"tcp_open": True}, "redis": {"tcp_open": True}
-                }
-            ), mock.patch.object(self.mod, "_ensure_python_dependencies", return_value={"ok": True}), mock.patch.object(
+                self.mod, "_ensure_python_dependencies", return_value={"ok": True}
+            ), mock.patch.object(
                 self.mod, "_start_control_plane", return_value={"ok": True, "pid": 1234}
             ), mock.patch.object(
                 self.mod, "_ensure_crewai_ready", return_value={"ok": True}

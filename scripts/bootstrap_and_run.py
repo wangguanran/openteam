@@ -18,9 +18,9 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openteam_common import utc_now_iso as _utc_now_iso
 
-_DEFAULT_CREWAI_GIT_URL = "https://github.com/openteam-dev/crewAI.git"
+_DEFAULT_CREWAI_GIT_URL = "https://github.com/crewAIInc/crewAI.git"
 _DEFAULT_CREWAI_GIT_REF = "main"
-_DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/openteam-dev/crewAI/tar.gz/refs/heads/main"
+_DEFAULT_CREWAI_ARCHIVE_URL = "https://codeload.github.com/crewAIInc/crewAI/tar.gz/refs/heads/main"
 
 
 class BootstrapError(Exception):
@@ -72,7 +72,6 @@ def _ensure_runtime_layout(runtime_root: Path) -> None:
         runtime_root / "workspace" / "shared" / "cache",
         runtime_root / "workspace" / "shared" / "tmp",
         runtime_root / "workspace" / "config",
-        runtime_root / "hub",
         runtime_root / "tmp",
         runtime_root / "cache",
     ]
@@ -360,22 +359,6 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
-def _db_url_from_hub_env(env: dict[str, str]) -> str:
-    u = str(env.get("POSTGRES_USER") or "openteam")
-    p = str(env.get("POSTGRES_PASSWORD") or "")
-    h = str(env.get("PG_BIND_IP") or "127.0.0.1")
-    pt = str(env.get("PG_PORT") or "5432")
-    db = str(env.get("POSTGRES_DB") or "openteam")
-    return f"postgresql://{u}:{p}@{h}:{pt}/{db}"
-
-
-def _redis_url_from_hub_env(env: dict[str, str]) -> str:
-    p = str(env.get("REDIS_PASSWORD") or "")
-    h = str(env.get("REDIS_BIND_IP") or "127.0.0.1")
-    pt = str(env.get("REDIS_PORT") or "6379")
-    return f"redis://:{p}@{h}:{pt}/0"
-
-
 def _mask_secret(v: str) -> str:
     s = str(v or "").strip()
     if not s:
@@ -452,20 +435,6 @@ def _require_llm_config(runtime_root: Path) -> dict[str, Any]:
     return cfg
 
 
-def _wait_hub_healthy(repo: Path, workspace_root: Path, *, timeout_sec: int = 90) -> dict[str, Any]:
-    deadline = time.time() + timeout_sec
-    last: dict[str, Any] = {}
-    while time.time() < deadline:
-        out = _run_json([sys.executable, str(repo / "scripts" / "pipelines" / "hub_status.py"), "--repo-root", str(repo), "--workspace-root", str(workspace_root)])
-        last = out
-        pg = bool(((out.get("postgres") or {}).get("tcp_open")))
-        rd = bool(((out.get("redis") or {}).get("tcp_open")))
-        if pg and rd:
-            return out
-        time.sleep(2)
-    raise BootstrapError(f"hub health timeout: {json.dumps(last, ensure_ascii=False)[:600]}")
-
-
 def _wait_http_ready(base_url: str, *, timeout_sec: int = 120) -> dict[str, Any]:
     deadline = time.time() + timeout_sec
     last_error = ""
@@ -488,8 +457,6 @@ def _start_control_plane(
     *,
     base_url: str,
     port: int,
-    db_url: str,
-    redis_url: str,
     python_exec: str,
 ) -> dict[str, Any]:
     pidp = _pid_path(runtime_root, "control_plane")
@@ -514,8 +481,6 @@ def _start_control_plane(
     env["OPENTEAM_REPO_PATH"] = str(repo)
     env["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
     env["OPENTEAM_WORKSPACE_ROOT"] = str(workspace_root)
-    env["OPENTEAM_DB_URL"] = db_url
-    env["OPENTEAM_REDIS_URL"] = redis_url
     env["OPENTEAM_RUNTIME_DB_PATH"] = str(runtime_root / "state" / "runtime.db")
     env["OPENTEAM_BASE_URL"] = base_url
     env["CONTROL_PLANE_BASE_URL"] = base_url
@@ -676,8 +641,6 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
         workspace_root,
         base_url=base_url,
         port=port,
-        db_url="",
-        redis_url="",
         python_exec=str(python_deps.get("python") or sys.executable),
     )
     _append_audit(runtime_root, "control plane ready")
@@ -710,12 +673,12 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     return summary
 
 
-def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, keep_hub: bool = False) -> dict[str, Any]:
+def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path) -> dict[str, Any]:
     _append_audit(runtime_root, "stop start")
 
     cp_stop = _stop_pid(_pid_path(runtime_root, "control_plane"))
     _append_audit(runtime_root, "stop completed")
-    _ = keep_hub, repo, workspace_root
+    _ = repo, workspace_root
     return {"ok": True, "default_team": {"ok": True, "mode": "single_node"}, "control_plane": cp_stop}
 
 
@@ -739,7 +702,6 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Team-OS one-click bootstrap and runtime controller")
     ap.add_argument("action", nargs="?", default="start", choices=["start", "status", "stop", "restart", "doctor"])
     ap.add_argument("--control-plane-port", type=int, default=int(os.getenv("OPENTEAM_CONTROL_PLANE_PORT") or "8787"))
-    ap.add_argument("--keep-hub", action="store_true", help="used with stop: keep hub running")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -761,9 +723,9 @@ def main(argv: list[str] | None = None) -> int:
             base_url = f"http://127.0.0.1:{int(args.control_plane_port)}"
             out = _status_snapshot(repo, runtime_root, workspace_root, base_url)
         elif args.action == "stop":
-            out = _stop_flow(repo, runtime_root, workspace_root, keep_hub=bool(args.keep_hub))
+            out = _stop_flow(repo, runtime_root, workspace_root)
         elif args.action == "restart":
-            _ = _stop_flow(repo, runtime_root, workspace_root, keep_hub=False)
+            _ = _stop_flow(repo, runtime_root, workspace_root)
             legacy_dir = _quarantine_legacy_openteam_dir(repo, runtime_root)
             if legacy_dir.get("found"):
                 _append_audit(runtime_root, f"quarantined legacy .openteam dir -> {legacy_dir.get('moved_to')}")

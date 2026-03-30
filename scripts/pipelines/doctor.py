@@ -74,6 +74,16 @@ def _gh_status() -> tuple[bool, str]:
     return (False, "FAIL (run: gh auth login) " + (head[0][:200] if head else ""))
 
 
+def _github_remote_layers_enabled() -> bool:
+    for key in ("GITHUB_TOKEN", "GH_TOKEN"):
+        if str(os.getenv(key) or "").strip():
+            return True
+    for key in ("OPENTEAM_PANEL_GH_WRITE_ENABLED", "OPENTEAM_PANEL_GH_AUTO_SYNC"):
+        if str(os.getenv(key) or "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+
 def _db_check(repo_root: Path) -> dict[str, Any]:
     """
     Postgres connectivity + migrations check.
@@ -218,11 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     gh_ok, gh_msg = _gh_status()
     if not codex_ok:
         ok = False
-    if not gh_ok:
-        # gh is optional (env token ok), but warn by failing only if neither present.
-        ok = False
     report["codex"] = {"ok": codex_ok, "message": codex_msg}
-    report["gh"] = {"ok": gh_ok, "message": gh_msg}
+    gh_required = _github_remote_layers_enabled()
+    if not gh_ok and gh_required:
+        ok = False
+    report["gh"] = {"ok": gh_ok, "message": gh_msg, "required": gh_required}
 
     # LLM config is mandatory for startup/runtime readiness.
     llm = _llm_config_check()
@@ -230,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     if not bool(llm.get("ok")):
         ok = False
 
-    # Postgres DB (shared hub). Optional unless OPENTEAM_DB_URL is set.
+    # Postgres DB is optional unless OPENTEAM_DB_URL is set.
     db = _db_check(repo)
     report["postgres_db"] = db
     if not bool(db.get("ok")):

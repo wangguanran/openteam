@@ -114,10 +114,6 @@ def runtime_workspace_root(*, override: str = "") -> Path:
     return runtime_root(override=override) / "workspace"
 
 
-def runtime_hub_root(*, override: str = "") -> Path:
-    return runtime_root(override=override) / "hub"
-
-
 def workspace_root(*, override: str = "") -> Path:
     v = str(override or "").strip()
     if not v:

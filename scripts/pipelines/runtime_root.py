@@ -21,7 +21,6 @@ def _ensure_runtime_dirs(rt: Path) -> dict[str, str]:
         "runtime_root": rt,
         "state": rt / "state",
         "workspace": rt / "workspace",
-        "hub": rt / "hub",
         "tmp": rt / "tmp",
         "cache": rt / "cache",
     }

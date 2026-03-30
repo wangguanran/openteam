@@ -21,10 +21,11 @@ class RiskClassifierTests(unittest.TestCase):
         self.assertEqual(out["risk_level"], "HIGH")
         self.assertEqual(out["category"], "GITHUB_REPO_CREATE")
 
-    def test_hub_expose_is_high_risk(self):
+    def test_removed_hub_action_kind_defaults_to_unknown_high(self):
         out = risk_classify(action_kind="hub_expose_remote_access", action_summary="openteam hub expose ...", payload={})
         self.assertEqual(out["risk_level"], "HIGH")
-        self.assertEqual(out["category"], "PUBLIC_PORT")
+        self.assertEqual(out["category"], "UNKNOWN")
+        self.assertIn("unknown_kind", out.get("reasons") or [])
 
     def test_known_low_risk_kind(self):
         out = risk_classify(action_kind="doctor", action_summary="openteam doctor", payload={})

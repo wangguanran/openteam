@@ -38,6 +38,18 @@ class InstallerFailureClassifierTests(unittest.TestCase):
         self.assertEqual(out.get("category"), "SSH_AUTH_FAILED")
         self.assertFalse(bool(out.get("retryable")))
 
+    def test_classify_brain_config_missing_uses_single_node_remediation(self):
+        out = classify_failure(
+            component="bootstrap",
+            stage="startup",
+            stdout="",
+            stderr="missing required postgres config",
+            ok=False,
+        )
+
+        self.assertEqual(out.get("category"), "BRAIN_CONFIG_MISSING")
+        self.assertNotIn("openteam hub init", str(out.get("remediation") or ""))
+
     def test_record_fallback_to_runtime_audit_jsonl(self):
         with tempfile.TemporaryDirectory() as td:
             repo = self._repo_root()
