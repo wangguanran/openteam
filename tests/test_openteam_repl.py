@@ -28,12 +28,24 @@ class TeamosReplTests(unittest.TestCase):
         self.assertEqual(parser, 0)
 
     def test_removed_hub_cluster_and_node_commands_are_absent(self) -> None:
-        parser = openteam_cli.main(["cockpit", "--help"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            parser = openteam_cli.main(["cockpit", "--help"])
         self.assertEqual(parser, 0)
+        help_text = stdout.getvalue()
+        self.assertIn("cockpit", help_text)
+        self.assertNotIn("hub", help_text)
+        self.assertNotIn("cluster", help_text)
+        self.assertNotIn("node", help_text)
 
-        self.assertEqual(openteam_cli.main(["hub", "--help"]), 2)
-        self.assertEqual(openteam_cli.main(["cluster", "--help"]), 2)
-        self.assertEqual(openteam_cli.main(["node", "--help"]), 2)
+        for command in ("hub", "cluster", "node"):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = openteam_cli.main([command, "--help"])
+            self.assertEqual(rc, 2)
+            err = stderr.getvalue()
+            self.assertIn("invalid choice", err)
+            self.assertIn(command, err)
 
     def test_cmd_cockpit_passes_project_and_team_to_app(self) -> None:
         args = argparse.Namespace(project="proj-123", team="delivery-studio")
