@@ -97,11 +97,17 @@ def build_crewai_llm(*, workflow: Any | None = None, override_config: Any | None
         if override_config.max_tokens:
             pass  # handled below
 
-    provider = detect_provider(model)
-    # For openrouter: keep "openrouter/" prefix (litellm recognizes it).
-    # Set OPENROUTER_API_KEY so litellm auto-authenticates.
+    gateway = ""
+    if override_config is not None and getattr(override_config, "extra", None):
+        gateway = str((override_config.extra or {}).get("gateway") or "").strip().lower()
+    if not gateway:
+        gateway = str(os.getenv("OPENTEAM_LLM_GATEWAY") or "").strip().lower()
+
+    provider = detect_provider(model, gateway=gateway)
+    # Direct OpenRouter still passes through litellm; LiteLLM proxy mode bypasses
+    # provider-specific auth wiring and routes everything through the global gateway.
     model_for_llm = model
-    if provider.name == "openrouter" and api_key:
+    if provider.name == "openrouter" and api_key and gateway != "litellm_proxy":
         os.environ.setdefault("OPENROUTER_API_KEY", api_key)
     max_tokens = int(os.getenv("OPENTEAM_LLM_MAX_TOKENS") or "16384")
     if override_config is not None and override_config.max_tokens > 0:

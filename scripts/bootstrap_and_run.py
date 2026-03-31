@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -13,6 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openteam_common import utc_now_iso as _utc_now_iso
@@ -204,6 +206,7 @@ def _missing_python_modules(python_exe: Path) -> list[tuple[str, str]]:
         ("fastapi", "fastapi"),
         ("pydantic", "pydantic"),
         ("agents", "openai-agents"),
+        ("litellm", "litellm[proxy]"),
         ("yaml", "PyYAML"),
         ("crewai", _crewai_pip_spec()),
     ]
@@ -394,6 +397,266 @@ def _mask_secret(v: str) -> str:
     return f"{s[:4]}***{s[-4:]}"
 
 
+def _llm_gateway() -> str:
+    return str(os.getenv("OPENTEAM_LLM_GATEWAY") or "").strip().lower()
+
+
+def _llm_default_base_url(*, gateway: str = "") -> str:
+    if str(gateway or "").strip().lower() == "litellm_proxy":
+        return "http://127.0.0.1:4000/v1"
+    return ""
+
+
+def _litellm_proxy_enabled() -> bool:
+    return _llm_gateway() == "litellm_proxy"
+
+
+def _litellm_pid_path(runtime_root: Path) -> Path:
+    return _pid_path(runtime_root, "litellm_proxy")
+
+
+def _litellm_log_path(runtime_root: Path) -> Path:
+    return runtime_root / "state" / "logs" / "litellm_proxy.log"
+
+
+def _litellm_config_path(runtime_root: Path) -> Path:
+    return runtime_root / "state" / "openteam" / "litellm_config.yaml"
+
+
+def _litellm_state_path(runtime_root: Path) -> Path:
+    return runtime_root / "state" / "openteam" / "litellm_proxy.json"
+
+
+def _litellm_health_url(base_url: str) -> str:
+    return base_url.rstrip("/") + "/models"
+
+
+def _litellm_cli_command(python_exec: str) -> list[str]:
+    py = Path(str(python_exec))
+    if os.name == "nt":
+        cli = py.parent / "litellm.exe"
+    else:
+        cli = py.parent / "litellm"
+    if cli.exists():
+        return [str(cli)]
+    return [str(py), "-m", "litellm"]
+
+
+def _clear_proxy_env(env: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(env)
+    for key in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        if key in cleaned:
+            cleaned[key] = ""
+    return cleaned
+
+
+def _read_litellm_state(runtime_root: Path) -> dict[str, Any]:
+    path = _litellm_state_path(runtime_root)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_litellm_state(runtime_root: Path, *, base_url: str) -> None:
+    path = _litellm_state_path(runtime_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"base_url": str(base_url).strip(), "updated_at": _utc_now_iso()}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _resolved_litellm_base_url(runtime_root: Optional[Path] = None) -> str:
+    explicit = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
+    if explicit:
+        return explicit
+    if runtime_root is not None:
+        saved = str(_read_litellm_state(runtime_root).get("base_url") or "").strip()
+        if saved:
+            return saved
+    return _llm_default_base_url(gateway="litellm_proxy")
+
+
+def _is_local_port_available(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, int(port)))
+            return True
+    except OSError:
+        return False
+
+
+def _find_free_local_port(host: str, preferred_port: int) -> int:
+    start = max(int(preferred_port) + 1, 1024)
+    for port in range(start, start + 128):
+        if _is_local_port_available(host, port):
+            return port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def _litellm_api_key_env_for_model(model: str) -> str:
+    prefix = str(model or "").strip().lower().split("/", 1)[0]
+    if prefix == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    if prefix == "openrouter":
+        return "OPENROUTER_API_KEY"
+    if prefix == "google":
+        return "GOOGLE_API_KEY"
+    if prefix == "xai":
+        return "XAI_API_KEY"
+    return "OPENAI_API_KEY"
+
+
+def _collect_litellm_models(repo: Path) -> list[str]:
+    models: set[str] = set()
+    env_model = str(os.getenv("OPENTEAM_LLM_MODEL") or "").strip()
+    if env_model:
+        models.add(env_model)
+    workflows_dir = repo / "scaffolds" / "runtime" / "orchestrator" / "app" / "teams"
+    if workflows_dir.exists():
+        try:
+            import yaml  # type: ignore
+        except Exception as e:
+            raise BootstrapError(f"PyYAML unavailable for LiteLLM config generation: {e}") from e
+        for path in workflows_dir.glob("*/specs/workflows/*.yaml"):
+            try:
+                raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except Exception as e:
+                raise BootstrapError(f"failed to parse workflow yaml for LiteLLM config {path}: {e}") from e
+            agents = raw.get("agents") or []
+            if not isinstance(agents, list):
+                continue
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    continue
+                model = str(agent.get("model") or "").strip()
+                if model:
+                    models.add(model)
+    return sorted(models)
+
+
+def _write_litellm_config(repo: Path, runtime_root: Path) -> dict[str, Any]:
+    path = _litellm_config_path(runtime_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    models = _collect_litellm_models(repo)
+    lines = ["model_list:"]
+    if not models:
+        lines.append("  []")
+    for model in models:
+        api_key_env = _litellm_api_key_env_for_model(model)
+        lines.extend(
+            [
+                f"  - model_name: {model}",
+                "    litellm_params:",
+                f"      model: {model}",
+                f"      api_key: os.environ/{api_key_env}",
+            ]
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"ok": True, "config_path": str(path), "models": models}
+
+
+def _wait_litellm_ready(base_url: str, *, timeout_sec: int = 60) -> dict[str, Any]:
+    deadline = time.time() + timeout_sec
+    last_error = ""
+    health_url = _litellm_health_url(base_url)
+    while time.time() < deadline:
+        try:
+            models = _http_json("GET", health_url, None, timeout_sec=3)
+            if isinstance(models, dict):
+                return {"ok": True, "models": models, "health_url": health_url}
+        except Exception as e:
+            last_error = str(e)[:300]
+        time.sleep(1)
+    raise BootstrapError(f"LiteLLM proxy not ready at {health_url}: {last_error}")
+
+
+def _start_litellm_proxy(repo: Path, runtime_root: Path, *, python_exec: str) -> dict[str, Any]:
+    if not _litellm_proxy_enabled():
+        return {"ok": True, "enabled": False, "skipped": True}
+
+    explicit_base_url = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
+    base_url = explicit_base_url or _resolved_litellm_base_url(runtime_root)
+    pidp = _litellm_pid_path(runtime_root)
+    existing = _read_pid(pidp)
+    if _pid_alive(existing):
+        ready = _wait_litellm_ready(base_url, timeout_sec=5)
+        return {"ok": True, "enabled": True, "already_running": True, "pid": existing, "base_url": base_url, "ready": ready}
+
+    config_info = _write_litellm_config(repo, runtime_root)
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = int(parsed.port or 4000)
+    if not explicit_base_url and not _is_local_port_available(host, port):
+        port = _find_free_local_port(host, port)
+        base_url = f"{parsed.scheme or 'http'}://{host}:{port}{parsed.path or '/v1'}"
+
+    log_path = _litellm_log_path(runtime_root)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logf = log_path.open("a", encoding="utf-8")
+    cmd = _litellm_cli_command(python_exec) + ["--config", str(config_info["config_path"]), "--host", host, "--port", str(port)]
+    env = _clear_proxy_env(os.environ.copy())
+    try:
+        p = subprocess.Popen(cmd, stdout=logf, stderr=logf, env=env, start_new_session=True)
+    finally:
+        logf.close()
+    pidp.parent.mkdir(parents=True, exist_ok=True)
+    pidp.write_text(str(int(p.pid)) + "\n", encoding="utf-8")
+
+    try:
+        ready = _wait_litellm_ready(base_url, timeout_sec=60)
+        _write_litellm_state(runtime_root, base_url=base_url)
+    except Exception:
+        _stop_pid(pidp, grace_sec=1.0)
+        try:
+            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
+            hint = "\n".join(tail)
+        except Exception:
+            hint = ""
+        if hint:
+            raise BootstrapError(f"LiteLLM proxy failed to start; recent log tail:\n{hint}")
+        raise
+
+    return {
+        "ok": True,
+        "enabled": True,
+        "already_running": False,
+        "pid": int(p.pid),
+        "base_url": base_url,
+        "config": config_info,
+        "ready": ready,
+        "log_path": str(log_path),
+    }
+
+
+def _litellm_proxy_status(runtime_root: Path) -> dict[str, Any]:
+    enabled = _litellm_proxy_enabled()
+    base_url = _resolved_litellm_base_url(runtime_root)
+    pid = _read_pid(_litellm_pid_path(runtime_root))
+    running = _pid_alive(pid)
+    out: dict[str, Any] = {
+        "enabled": enabled,
+        "base_url": base_url,
+        "pid": pid,
+        "running": running,
+    }
+    if enabled and running:
+        try:
+            out["ready"] = _wait_litellm_ready(base_url, timeout_sec=3)
+        except Exception as e:
+            out["health_error"] = str(e)[:300]
+    return out
+
+
+def _stop_litellm_proxy(runtime_root: Path) -> dict[str, Any]:
+    return _stop_pid(_litellm_pid_path(runtime_root))
+
+
 def _codex_login_status() -> tuple[bool, str]:
     try:
         p = subprocess.run(
@@ -413,22 +676,30 @@ def _codex_login_status() -> tuple[bool, str]:
     return p.returncode == 0, (msg or f"exit_code={p.returncode}")
 
 
-def _llm_config() -> dict[str, Any]:
-    base = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
+def _llm_config(runtime_root: Optional[Path] = None) -> dict[str, Any]:
+    gateway = _llm_gateway()
+    if gateway == "litellm_proxy":
+        base = _resolved_litellm_base_url(runtime_root)
+    else:
+        base = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip() or _llm_default_base_url(gateway=gateway)
     key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
     model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
     needs_codex = "codex" in model.lower()
     codex_logged_in, codex_login_message = _codex_login_status()
     codex_oauth_ready = bool(needs_codex and codex_logged_in)
     api_key_ready = bool(base and key)
-    ok = bool(api_key_ready or codex_oauth_ready)
+    proxy_ready = bool(gateway == "litellm_proxy" and base)
+    ok = bool(api_key_ready or codex_oauth_ready or proxy_ready)
     auth_strategy = ""
     if codex_oauth_ready:
         auth_strategy = "codex_oauth"
+    elif proxy_ready:
+        auth_strategy = "litellm_proxy"
     elif api_key_ready:
         auth_strategy = "api_key"
     return {
         "ok": ok,
+        "gateway": gateway,
         "model": model,
         "base_url": base,
         "api_key_masked": _mask_secret(key),
@@ -437,16 +708,18 @@ def _llm_config() -> dict[str, Any]:
         "codex_oauth_ready": codex_oauth_ready,
         "required": [
             "Codex OAuth login via `codex login` for codex models",
+            "or OPENTEAM_LLM_GATEWAY=litellm_proxy (default local proxy at http://127.0.0.1:4000/v1)",
             "or OPENTEAM_LLM_BASE_URL + OPENTEAM_LLM_API_KEY",
         ],
     }
 
 
 def _require_llm_config(runtime_root: Path) -> dict[str, Any]:
-    cfg = _llm_config()
+    cfg = _llm_config(runtime_root)
     if not bool(cfg.get("ok")):
         raise BootstrapError(
             "missing required LLM config: either run `codex login` for codex models, "
+            "or export OPENTEAM_LLM_GATEWAY=litellm_proxy, "
             "or set OPENTEAM_LLM_BASE_URL and OPENTEAM_LLM_API_KEY"
         )
     _append_audit(
@@ -503,7 +776,7 @@ def _start_control_plane(
     log_path = logs_dir / "control_plane.log"
     logf = log_path.open("a", encoding="utf-8")
 
-    env = os.environ.copy()
+    env = _clear_proxy_env(os.environ.copy())
     env["OPENTEAM_REPO_PATH"] = str(repo)
     env["OPENTEAM_RUNTIME_ROOT"] = str(runtime_root)
     env["OPENTEAM_WORKSPACE_ROOT"] = str(workspace_root)
@@ -521,7 +794,10 @@ def _start_control_plane(
     env["PYTHONPATH"] = py_path
 
     cmd = [str(python_exec), "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(int(port))]
-    p = subprocess.Popen(cmd, cwd=str(orch_dir), stdout=logf, stderr=logf, env=env, start_new_session=True)
+    try:
+        p = subprocess.Popen(cmd, cwd=str(orch_dir), stdout=logf, stderr=logf, env=env, start_new_session=True)
+    finally:
+        logf.close()
     pidp.parent.mkdir(parents=True, exist_ok=True)
     pidp.write_text(str(int(p.pid)) + "\n", encoding="utf-8")
 
@@ -651,7 +927,8 @@ def _status_snapshot(repo: Path, runtime_root: Path, workspace_root: Path, base_
         "repo_root": str(repo),
         "runtime_root": str(runtime_root),
         "workspace_root": str(workspace_root),
-        "llm": _llm_config(),
+        "llm": _llm_config(runtime_root),
+        "llm_gateway": _litellm_proxy_status(runtime_root),
         "control_plane": control,
         "default_team": {**default_team, "state_backend": "control_plane_status"},
     }
@@ -670,13 +947,22 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
     _append_audit(runtime_root, "local runtime db ready")
     python_deps = _ensure_python_dependencies(runtime_root)
     _append_audit(runtime_root, "python dependencies ready")
+    control_python = str(python_deps.get("python") or sys.executable)
+    litellm_proxy = _start_litellm_proxy(repo, runtime_root, python_exec=control_python)
+    if litellm_proxy.get("enabled"):
+        actual_base_url = str(litellm_proxy.get("base_url") or "").strip()
+        if actual_base_url:
+            llm_cfg = {**llm_cfg, "base_url": actual_base_url, "auth_strategy": "litellm_proxy"}
+        else:
+            llm_cfg = _llm_config(runtime_root)
+        _append_audit(runtime_root, "litellm proxy ready")
     control_plane = _start_control_plane(
         repo,
         runtime_root,
         workspace_root,
         base_url=base_url,
         port=port,
-        python_exec=str(python_deps.get("python") or sys.executable),
+        python_exec=control_python,
     )
     _append_audit(runtime_root, "control plane ready")
     crew_ready = _ensure_crewai_ready(base_url)
@@ -697,6 +983,7 @@ def _start_flow(repo: Path, runtime_root: Path, workspace_root: Path, *, port: i
                 "llm": llm_cfg,
                 "local_runtime_db": local_db,
                 "python_dependencies": python_deps,
+                "llm_gateway": litellm_proxy,
                 "control_plane": control_plane,
                 "crewai_ready": crew_ready,
                 "team_bootstrap": team_bootstrap,
@@ -712,9 +999,16 @@ def _stop_flow(repo: Path, runtime_root: Path, workspace_root: Path) -> dict[str
     _append_audit(runtime_root, "stop start")
 
     cp_stop = _stop_pid(_pid_path(runtime_root, "control_plane"))
+    llm_gateway = {"ok": True, "enabled": False, "skipped": True}
+    if _litellm_proxy_enabled():
+        llm_gateway = _stop_litellm_proxy(runtime_root)
     _append_audit(runtime_root, "stop completed")
-    _ = repo, workspace_root
-    return {"ok": True, "default_team": {"ok": True, "mode": "single_node"}, "control_plane": cp_stop}
+    return {
+        "ok": True,
+        "default_team": {"ok": True, "mode": "single_node"},
+        "llm_gateway": llm_gateway,
+        "control_plane": cp_stop,
+    }
 
 
 def _doctor(repo: Path, workspace_root: Path, *, base_url: str = "") -> dict[str, Any]:

@@ -3,6 +3,7 @@ import importlib.util
 import io
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -169,6 +170,52 @@ class DoctorTests(unittest.TestCase):
         self.assertIn('"ok": true', output)
         self.assertIn('"gh"', output)
         self.assertNotIn('"postgres_db"', output)
+
+    def test_llm_config_accepts_litellm_proxy_without_api_key(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            self.mod, "_codex_status", return_value=(False, "not logged in")
+        ), mock.patch.object(
+            self.mod, "runtime_root", return_value=Path(td) / "runtime"
+        ), mock.patch.dict(
+            os.environ,
+            {
+                "OPENTEAM_LLM_GATEWAY": "litellm_proxy",
+                "OPENTEAM_LLM_MODEL": "openai/gpt-5.4",
+            },
+            clear=True,
+        ):
+            cfg = self.mod._llm_config_check()
+
+        self.assertTrue(bool(cfg.get("ok")))
+        self.assertEqual(cfg.get("auth_strategy"), "litellm_proxy")
+        self.assertEqual(cfg.get("base_url"), "http://127.0.0.1:4000/v1")
+        self.assertEqual(cfg.get("model"), "openai/gpt-5.4")
+
+    def test_llm_config_prefers_runtime_saved_litellm_base_url_when_env_absent(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            self.mod, "_codex_status", return_value=(False, "not logged in")
+        ), mock.patch.object(
+            self.mod, "runtime_root", return_value=Path(td) / "runtime"
+        ), mock.patch.dict(
+            os.environ,
+            {
+                "OPENTEAM_LLM_GATEWAY": "litellm_proxy",
+                "OPENTEAM_LLM_MODEL": "openai/gpt-5.4",
+            },
+            clear=True,
+        ):
+            state_dir = Path(td) / "runtime" / "state" / "openteam"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "litellm_proxy.json").write_text(
+                '{"base_url":"http://127.0.0.1:4001/v1"}\n',
+                encoding="utf-8",
+            )
+
+            cfg = self.mod._llm_config_check()
+
+        self.assertTrue(bool(cfg.get("ok")))
+        self.assertEqual(cfg.get("auth_strategy"), "litellm_proxy")
+        self.assertEqual(cfg.get("base_url"), "http://127.0.0.1:4001/v1")
 
 
 if __name__ == "__main__":

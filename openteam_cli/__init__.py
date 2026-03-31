@@ -180,6 +180,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     cp = sp.add_parser("cockpit", help="Terminal delivery-studio cockpit")
     cp.add_argument("--project", default="")
     cp.add_argument("--team", default="delivery-studio")
+    cp.add_argument("--request-id", default="")
     cp.set_defaults(fn=cmd_cockpit)
 
     rp = sp.add_parser("repo", help="Repo operations (GitHub)")

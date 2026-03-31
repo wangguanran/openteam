@@ -2868,6 +2868,19 @@ def v1_team_request_create(team_id: str, payload: DeliveryRequestCreateIn):
     )
 
 
+@app.get("/v1/teams/{team_id}/requests/{request_id}")
+def v1_team_request_get(team_id: str, request_id: str, project_id: str = Query(default="")):
+    if team_id != "delivery-studio":
+        raise HTTPException(status_code=404, detail="team_request_api_unsupported")
+    try:
+        return delivery_studio_runtime.get_request(
+            project_id=str(project_id).strip(),
+            request_id=request_id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found", "path": str(exc)}) from exc
+
+
 @app.post("/v1/teams/{team_id}/requests/{request_id}/approve")
 def v1_team_request_approve(team_id: str, request_id: str, payload: DeliveryApprovalIn):
     if team_id != "delivery-studio":

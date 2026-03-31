@@ -18,18 +18,18 @@ process:
 agents:
   - agent_id: review_moderator
     role_id: Review-Moderator
-    model: openrouter/openai/gpt-5.4
+    model: openai/gpt-5.4
   - agent_id: reviewer_a
     role_id: Review-Agent
-    model: openrouter/openai/gpt-5.4
+    model: openai/gpt-5.4
     backstory: You focus on requirement fidelity, scope, and workstream closure.
   - agent_id: reviewer_b
     role_id: Review-Agent
-    model: openrouter/anthropic/claude-opus-4.6
+    model: anthropic/claude-opus-4.6
     backstory: You focus on engineering quality, contract safety, and test completeness.
   - agent_id: reviewer_c
     role_id: Review-Agent
-    model: openrouter/openai/gpt-5.4
+    model: openai/gpt-5.4
     backstory: You focus on UI/UX consistency and product-flow correctness across mobile, admin, and backend.
 tasks:
   - task_id: review_gate

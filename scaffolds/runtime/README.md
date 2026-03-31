@@ -36,6 +36,34 @@ curl -fsS http://127.0.0.1:8787/healthz
 curl -fsS http://127.0.0.1:8787/v1/status
 ```
 
+当前 runtime 建议统一通过本机 `LiteLLM Proxy` 接模型。默认示例配置为：
+
+```bash
+export OPENTEAM_LLM_GATEWAY=litellm_proxy
+export OPENTEAM_LLM_BASE_URL=http://127.0.0.1:4000/v1
+export OPENTEAM_LLM_MODEL=openai/gpt-5.4
+export OPENTEAM_CREWAI_REASONING_EFFORT=xhigh
+```
+
+Team workflow 仍然可以为不同 agent 指定不同模型，例如 `openai/gpt-5.4`、`anthropic/claude-opus-4.6`；但 provider 路由统一由全局 LiteLLM 层负责，不再在 team spec 里硬编码 `openrouter/*`。
+
+`./run.sh start` 在 `OPENTEAM_LLM_GATEWAY=litellm_proxy` 时会先生成本机 LiteLLM 配置并尝试拉起 proxy，再启动 control-plane。当前生成的配置落在：
+
+```bash
+~/.openteam/runtime/default/state/openteam/litellm_config.yaml
+```
+
+LiteLLM proxy 会扫描 team workflow 里声明的模型，并读取上游 provider 凭据，例如：
+
+```bash
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
+export OPENROUTER_API_KEY=...
+```
+
+Repo-improvement 的 background workflow loop 不再由 `OPENTEAM_TEAM_WORKFLOW_*` 环境变量控制；具体的 `bug-finding`、`feature-discussion`、`coding` 等 workflow 配置都定义在 `scaffolds/runtime/orchestrator/app/teams/repo_improvement/specs/workflows/*.yaml`。Runtime 侧只保留全局开关 `OPENTEAM_RUNTIME_WORKFLOW_LOOPS_ENABLED`。
+
+Team 目录现在只保留配置；workflow 里的 `kind: skill` 节点会通过 `scaffolds/runtime/orchestrator/app/skill_library/specs/*.yaml` 描述的技能库执行，具体实现位于通用 runtime skill/domain 模块，而不是 team 目录脚本。
 停止或重启：
 
 ```bash

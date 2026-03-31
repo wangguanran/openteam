@@ -1,4 +1,3 @@
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -128,10 +127,16 @@ class DeliveryStudioTeamLayoutTests(unittest.TestCase):
         self.assertIn("moderator", agent_ids)
         self.assertIn("product_architect", agent_ids)
         self.assertIn("skeptic", agent_ids)
+        for agent in discuss.get("agents") or []:
+            if isinstance(agent, dict):
+                self.assertNotIn("openrouter/", str(agent.get("model") or ""))
         self.assertEqual(coding.get("phase"), "coding")
         self.assertEqual(coding.get("stages"), ["delivery"])
         self.assertEqual(review.get("phase"), "coding")
         self.assertEqual(review.get("task_source"), "direct_task")
+        for agent in review.get("agents") or []:
+            if isinstance(agent, dict):
+                self.assertNotIn("openrouter/", str(agent.get("model") or ""))
 
 
 if __name__ == "__main__":

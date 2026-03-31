@@ -1,4 +1,3 @@
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -22,6 +21,26 @@ class RepoImprovementTeamLayoutTests(unittest.TestCase):
         team_dir = _repo_root() / "scaffolds" / "runtime" / "orchestrator" / "app" / "teams" / "repo_improvement"
         py_files = sorted(str(path.relative_to(team_dir)) for path in team_dir.rglob("*.py"))
         self.assertEqual(py_files, [])
+
+    def test_repo_review_workflow_agents_do_not_hardcode_openrouter(self) -> None:
+        import yaml
+
+        workflow_path = (
+            _repo_root()
+            / "scaffolds"
+            / "runtime"
+            / "orchestrator"
+            / "app"
+            / "teams"
+            / "repo_improvement"
+            / "specs"
+            / "workflows"
+            / "repo-review.yaml"
+        )
+        data = yaml.safe_load(workflow_path.read_text(encoding="utf-8")) or {}
+        for agent in data.get("agents") or []:
+            if isinstance(agent, dict):
+                self.assertNotIn("openrouter/", str(agent.get("model") or ""))
 
 
 if __name__ == "__main__":

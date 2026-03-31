@@ -10,11 +10,14 @@ from typing import Any
 
 from app.engines.base import EngineLLMConfig
 
+_LITELLM_PROXY_DEFAULT_BASE_URL = "http://127.0.0.1:4000/v1"
+
 
 def build_llm_config(*, workflow: Any = None) -> EngineLLMConfig:
     model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
     base_url = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
     api_key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
+    gateway = str(os.getenv("OPENTEAM_LLM_GATEWAY") or "").strip().lower()
 
     if workflow is not None:
         override_base_url = str(getattr(workflow, "llm_url", "") or "").strip()
@@ -52,6 +55,10 @@ def build_llm_config(*, workflow: Any = None) -> EngineLLMConfig:
     auth_mode = str(os.getenv("OPENTEAM_CREWAI_AUTH_MODE") or "").strip().lower()
     if auth_mode:
         extra["auth_mode"] = auth_mode
+    if gateway:
+        extra["gateway"] = gateway
+    if gateway == "litellm_proxy" and not base_url:
+        base_url = _LITELLM_PROXY_DEFAULT_BASE_URL
 
     return EngineLLMConfig(
         model=model,

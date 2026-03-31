@@ -18,13 +18,13 @@ process:
 agents:
   - agent_id: moderator
     role_id: Moderator
-    model: openrouter/openai/gpt-5.4
+    model: openai/gpt-5.4
   - agent_id: product_architect
     role_id: Product-Architect
-    model: openrouter/anthropic/claude-opus-4.6
+    model: anthropic/claude-opus-4.6
   - agent_id: skeptic
     role_id: Senior-Engineer-Skeptic
-    model: openrouter/openai/gpt-5.4
+    model: openai/gpt-5.4
 tasks:
   - task_id: moderate_requirement
     kind: skill

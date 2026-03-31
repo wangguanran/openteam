@@ -39,7 +39,7 @@ agents:
   - agent_id: bug_scanner
     role_id: Test-Manager
     tool_profile: qa
-    model: openrouter/anthropic/claude-sonnet-4
+    model: anthropic/claude-sonnet-4
     max_tokens: 16384
     backstory: >
       You reason like a QA/test lead. Focus on reproducible defects,
@@ -49,7 +49,7 @@ agents:
   # --- Feature 扫描 ---
   - agent_id: feature_scanner
     role_id: Product-Manager
-    model: openrouter/openai/gpt-4.1
+    model: openai/gpt-4.1
     max_tokens: 8192
     backstory: >
       You think like a product manager with 10+ years shipping products.
@@ -58,7 +58,7 @@ agents:
   # --- Quality 扫描（轻量模型）---
   - agent_id: test_gap_scanner
     role_id: Test-Case-Gap-Agent
-    model: openrouter/openai/gpt-4.1-mini
+    model: openai/gpt-4.1-mini
     max_tokens: 8192
     backstory: >
       You think like a test architecture lead. Map behavior paths
@@ -66,7 +66,7 @@ agents:
 
   - agent_id: quality_scanner
     role_id: Code-Quality-Analyst
-    model: openrouter/openai/gpt-4.1-mini
+    model: openai/gpt-4.1-mini
     max_tokens: 8192
     backstory: >
       You think like a staff engineer doing code health stewardship.
@@ -75,7 +75,7 @@ agents:
   # --- Process 扫描（轻量模型）---
   - agent_id: process_scanner
     role_id: Process-Optimization-Analyst
-    model: openrouter/openai/gpt-4.1-mini
+    model: openai/gpt-4.1-mini
     max_tokens: 8192
     backstory: >
       You optimize the team workflow by analyzing timings, failures,
@@ -84,7 +84,7 @@ agents:
   # --- 计划起草（大上下文汇总）---
   - agent_id: drafter
     role_id: Issue-Drafter
-    model: openrouter/openai/gpt-4.1
+    model: openai/gpt-4.1
     max_tokens: 32768
     backstory: >
       You break features and bugs into small, execution-scoped
@@ -93,7 +93,7 @@ agents:
   # --- 评审（推理强的模型）---
   - agent_id: reviewer
     role_id: Plan-Review-Agent
-    model: openrouter/anthropic/claude-sonnet-4
+    model: anthropic/claude-sonnet-4
     max_tokens: 16384
     backstory: >
       You enforce code review constraints and scope discipline.
@@ -101,7 +101,7 @@ agents:
   # --- QA 闸门（轻量模型）---
   - agent_id: qa_gate
     role_id: Plan-QA-Agent
-    model: openrouter/openai/gpt-4.1-mini
+    model: openai/gpt-4.1-mini
     max_tokens: 16384
     backstory: >
       You are the final delivery gate. No item closes without

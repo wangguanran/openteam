@@ -46,21 +46,23 @@ class TeamosReplTests(unittest.TestCase):
             self.assertIn("invalid choice", err)
             self.assertIn(command, err)
 
-    def test_cmd_cockpit_passes_project_and_team_to_app(self) -> None:
-        args = argparse.Namespace(project="proj-123", team="delivery-studio")
+    def test_cmd_cockpit_passes_project_team_request_and_base_url_to_app(self) -> None:
+        args = argparse.Namespace(project="proj-123", team="delivery-studio", request_id="REQ-9", profile=None)
         calls = []
 
         class _FakeApp:
-            def __init__(self, *, project: str, team: str) -> None:
-                calls.append(("init", project, team))
+            def __init__(self, *, project: str, team: str, request_id: str, base_url: str) -> None:
+                calls.append(("init", project, team, request_id, base_url))
 
             def run(self) -> None:
                 calls.append(("run",))
 
-        with mock.patch("openteam_cli.cockpit.DeliveryCockpitApp", _FakeApp):
+        with mock.patch("openteam_cli.cockpit.DeliveryCockpitApp", _FakeApp), mock.patch(
+            "openteam_cli.cockpit._base_url", return_value=("http://cp.local", {"name": "local"})
+        ):
             _cockpit.cmd_cockpit(args)
 
-        self.assertEqual(calls, [("init", "proj-123", "delivery-studio"), ("run",)])
+        self.assertEqual(calls, [("init", "proj-123", "delivery-studio", "REQ-9", "http://cp.local"), ("run",)])
 
     def test_main_no_args_auto_enters_repl_from_runtime_workspace_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as td:

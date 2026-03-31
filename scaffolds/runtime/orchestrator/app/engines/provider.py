@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 _REASONING_MODEL_TOKENS = ("o1", "o3", "o4")
+_LITELLM_PROXY_DEFAULT_BASE_URL = "http://127.0.0.1:4000/v1"
 
 
 @dataclass(frozen=True)
@@ -56,8 +57,17 @@ _PROVIDERS: dict[str, ProviderConfig] = {
 _DEFAULT = ProviderConfig(name="unknown", litellm=True, api_mode="chat")
 
 
-def detect_provider(model: str) -> ProviderConfig:
+def detect_provider(model: str, *, gateway: str = "") -> ProviderConfig:
     """Detect provider from model name prefix (first segment before '/')."""
+    normalized_gateway = str(gateway or "").strip().lower()
+    if normalized_gateway == "litellm_proxy":
+        return ProviderConfig(
+            name="litellm_proxy",
+            litellm=True,
+            api_mode="chat",
+            supports_reasoning=False,
+            default_base_url=_LITELLM_PROXY_DEFAULT_BASE_URL,
+        )
     normalized = str(model or "").strip().lower()
     if not normalized or "/" not in normalized:
         return ProviderConfig(name=normalized or "unknown", litellm=True, api_mode="chat")

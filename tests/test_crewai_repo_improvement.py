@@ -89,9 +89,23 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
-            target = {"target_id": "demo-target", "project_id": "openteam", "repo_root": str(repo), "repo_locator": "foo/bar"}
+            target = {
+                "target_id": "demo-target",
+                "project_id": "openteam",
+                "repo_root": str(repo),
+                "repo_locator": "foo/bar",
+            }
             review_workflow = SimpleNamespace(workflow_id="repo-review", lane="review", phase="finding", enabled=True)
-            allowed_policy = SimpleNamespace(allowed=True, reason="", active_window_start_hour=0, active_window_end_hour=24, max_continuous_runtime_minutes=0, current_local_hour=0, active_since="", now_iso="")
+            allowed_policy = SimpleNamespace(
+                allowed=True,
+                reason="",
+                active_window_start_hour=0,
+                active_window_end_hour=24,
+                max_continuous_runtime_minutes=0,
+                current_local_hour=0,
+                active_since="",
+                now_iso="",
+            )
 
             review_result = {
                 "ok": True,
@@ -103,7 +117,11 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
                                 "summary": "unified review summary",
                                 "current_version": "0.1.0",
                                 "planned_version": "0.2.0",
-                                "plan": {"findings": [{"lane": "bug"}, {"lane": "feature"}], "ci_actions": ["pytest"], "notes": ["review-note"]},
+                                "plan": {
+                                    "findings": [{"lane": "bug"}, {"lane": "feature"}],
+                                    "ci_actions": ["pytest"],
+                                    "notes": ["review-note"],
+                                },
                                 "records": [{"task_id": "BUG-1"}],
                                 "pending_proposals": [{"proposal_id": "PROP-1"}],
                                 "panel_sync": {"ok": True},
@@ -155,7 +173,7 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
 
         self.assertEqual(out["errors"], 0)
 
-    def test_crewai_llm_marks_openrouter_models_as_litellm(self):
+    def test_crewai_llm_marks_gateway_models_as_litellm(self):
         captured: dict[str, object] = {}
 
         class _FakeLLM:
@@ -166,20 +184,23 @@ class CrewAIRepoImprovementTests(unittest.TestCase):
         with mock.patch.dict(
             os.environ,
             {
-                "OPENTEAM_LLM_MODEL": "openrouter/openai/gpt-5.4",
-                "OPENTEAM_LLM_BASE_URL": "https://openrouter.ai/api/v1",
-                "OPENTEAM_LLM_API_KEY": "sk-test",
+                "OPENTEAM_LLM_GATEWAY": "litellm_proxy",
+                "OPENTEAM_LLM_MODEL": "openai/gpt-5.4",
                 "OPENTEAM_CREWAI_AUTH_MODE": "",
             },
             clear=False,
-        ), mock.patch("app.domains.team_workflow.proposal_runtime.engine_runtime.require_crewai_importable", return_value={"importable": True}), mock.patch(
+        ), mock.patch(
+            "app.domains.team_workflow.proposal_runtime.engine_runtime.require_crewai_importable",
+            return_value={"importable": True},
+        ), mock.patch(
             "app.domains.team_workflow.proposal_runtime.codex_llm.codex_login_status",
             return_value=(False, {}),
         ), mock.patch.dict(sys.modules, {"crewai.llm": fake_module}):
             proposal_runtime._crewai_llm()
 
-        self.assertEqual(captured["model"], "openrouter/openai/gpt-5.4")
+        self.assertEqual(captured["model"], "openai/gpt-5.4")
         self.assertTrue(captured["is_litellm"])
+        self.assertEqual(captured["base_url"], "http://127.0.0.1:4000/v1")
 
 
 if __name__ == "__main__":

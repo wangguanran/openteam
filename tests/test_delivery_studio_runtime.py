@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+import importlib.machinery
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -35,6 +36,7 @@ def _install_main_import_stubs() -> None:
 
     if "fastapi" not in sys.modules:
         fastapi_module = types.ModuleType("fastapi")
+        fastapi_module.__spec__ = importlib.machinery.ModuleSpec("fastapi", loader=None)
 
         class HTTPException(Exception):
             def __init__(self, status_code: int, detail=None) -> None:
@@ -84,7 +86,8 @@ def _install_main_import_stubs() -> None:
             pass
 
         class Response:
-            pass
+            def __init__(self) -> None:
+                self.status_code = 200
 
         fastapi_module.FastAPI = FastAPI
         fastapi_module.HTTPException = HTTPException
@@ -95,6 +98,7 @@ def _install_main_import_stubs() -> None:
         sys.modules["fastapi"] = fastapi_module
 
         responses_module = types.ModuleType("fastapi.responses")
+        responses_module.__spec__ = importlib.machinery.ModuleSpec("fastapi.responses", loader=None)
 
         class StreamingResponse:
             def __init__(self, *args, **kwargs) -> None:
@@ -272,6 +276,44 @@ class DeliveryStudioRuntimeTests(unittest.TestCase):
             self.assertEqual(ctx.exception.status_code, 409)
             persisted = delivery_store.load_request("demo", req["request_id"])
             self.assertEqual(persisted["stage"], "Discussing")
+
+    def test_get_request_route_returns_persisted_delivery_request(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+            req = delivery_runtime.create_request(
+                project_id="demo",
+                title="Booking app",
+                text="Need three UI options before coding.",
+                created_by="user",
+            )
+
+            loaded = app_main.v1_team_request_get(
+                "delivery-studio",
+                req["request_id"],
+                project_id="demo",
+            )
+
+            self.assertEqual(loaded["request_id"], req["request_id"])
+            self.assertEqual(loaded["stage"], "Discussing")
+            self.assertEqual(loaded["title"], "Booking app")
+            self.assertTrue(str(loaded["request_path"]).endswith("request.yaml"))
+
+    def test_get_request_route_returns_404_for_missing_request(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENTEAM_RUNTIME_ROOT"] = str(Path(td) / "runtime")
+            os.environ["OPENTEAM_WORKSPACE_ROOT"] = str(Path(td) / "workspace")
+            workspace_store.ensure_project_scaffold("demo")
+
+            with self.assertRaises(HTTPException) as ctx:
+                app_main.v1_team_request_get(
+                    "delivery-studio",
+                    "REQ-MISSING",
+                    project_id="demo",
+                )
+
+            self.assertEqual(ctx.exception.status_code, 404)
 
     def test_review_finalize_route_rejects_discussing_stage_with_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as td:

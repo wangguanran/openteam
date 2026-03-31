@@ -96,6 +96,27 @@ def _runtime_db_check() -> dict[str, Any]:
     }
 
 
+def _litellm_state_path() -> Path:
+    return runtime_root() / "state" / "openteam" / "litellm_proxy.json"
+
+
+def _resolved_litellm_base_url() -> str:
+    explicit = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
+    if explicit:
+        return explicit
+    path = _litellm_state_path()
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            saved = str(raw.get("base_url") or "").strip()
+            if saved:
+                return saved
+    return "http://127.0.0.1:4000/v1"
+
+
 def _default_team_check(repo_root: Path) -> dict[str, Any]:
     """
     Best-effort runtime-state check for the default configured team.
@@ -111,20 +132,24 @@ def _default_team_check(repo_root: Path) -> dict[str, Any]:
 
 
 def _llm_config_check() -> dict[str, Any]:
-    base = str(
-        os.getenv("OPENTEAM_LLM_BASE_URL")
-        or ""
-    ).strip()
+    gateway = str(os.getenv("OPENTEAM_LLM_GATEWAY") or "").strip().lower()
+    if gateway == "litellm_proxy":
+        base = _resolved_litellm_base_url()
+    else:
+        base = str(os.getenv("OPENTEAM_LLM_BASE_URL") or "").strip()
     key = str(os.getenv("OPENTEAM_LLM_API_KEY") or "").strip()
     model = str(os.getenv("OPENTEAM_LLM_MODEL") or "openai/gpt-5.4").strip()
     needs_codex = "codex" in model.lower()
     codex_ok, codex_msg = _codex_status()
     codex_oauth_ready = bool(needs_codex and codex_ok)
     api_key_ready = bool(base and key)
-    ok = bool(api_key_ready or codex_oauth_ready)
+    proxy_ready = bool(gateway == "litellm_proxy" and base)
+    ok = bool(api_key_ready or codex_oauth_ready or proxy_ready)
     auth_strategy = ""
     if codex_oauth_ready:
         auth_strategy = "codex_oauth"
+    elif proxy_ready:
+        auth_strategy = "litellm_proxy"
     elif api_key_ready:
         auth_strategy = "api_key"
     masked = ""
@@ -132,6 +157,7 @@ def _llm_config_check() -> dict[str, Any]:
         masked = ("*" * len(key)) if len(key) <= 8 else f"{key[:4]}***{key[-4:]}"
     out = {
         "ok": ok,
+        "gateway": gateway,
         "model": model,
         "auth_strategy": auth_strategy,
         "codex_login_status": codex_msg,
@@ -142,11 +168,16 @@ def _llm_config_check() -> dict[str, Any]:
         "api_key_masked": masked,
         "required": [
             "Codex OAuth login via `codex login` for codex models",
+            "or OPENTEAM_LLM_GATEWAY=litellm_proxy (default local proxy at http://127.0.0.1:4000/v1)",
             "or OPENTEAM_LLM_BASE_URL + OPENTEAM_LLM_API_KEY",
         ],
     }
     if not ok:
-        out["hint"] = "run `codex login` for codex models, or export OPENTEAM_LLM_BASE_URL=... and OPENTEAM_LLM_API_KEY=..."
+        out["hint"] = (
+            "run `codex login` for codex models, "
+            "or export OPENTEAM_LLM_GATEWAY=litellm_proxy, "
+            "or set OPENTEAM_LLM_BASE_URL=... and OPENTEAM_LLM_API_KEY=..."
+        )
     return out
 
 

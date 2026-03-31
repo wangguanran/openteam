@@ -45,6 +45,14 @@ def create_request(*, project_id: str, title: str, text: str, created_by: str) -
     return out
 
 
+def get_request(*, project_id: str, request_id: str) -> dict[str, object]:
+    doc = store.load_request(project_id, request_id)
+    request_path = workspace_store.delivery_request_dir(project_id, request_id) / "request.yaml"
+    out = dict(doc)
+    out["request_path"] = str(request_path)
+    return out
+
+
 def _require_request_stage(*, doc: dict[str, object], expected_stage: str, action: str) -> None:
     current_stage = str(doc.get("stage") or "").strip()
     if current_stage != expected_stage:
